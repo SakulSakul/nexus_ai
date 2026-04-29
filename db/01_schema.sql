@@ -5,9 +5,6 @@
 
 create extension if not exists vector;
 create extension if not exists pg_trgm;
--- pg_bigm 은 Supabase 가용성에 따라 활성화. 미가용 시 본 라인 주석 처리하고
---   parser/docx_parser.py 의 한국어 토크나이저 fallback 경로를 사용한다.
-create extension if not exists pg_bigm;
 
 -- ── 카테고리 enum (9개 대분류) ───────────────────────────────
 do $$ begin
@@ -67,15 +64,9 @@ create table if not exists nexus_chunks (
 create index if not exists idx_nexus_chunks_categories
   on nexus_chunks using gin (categories);
 
--- 한국어 BM-style 검색을 위한 bigm/trgm 인덱스. pg_bigm 미가용 환경에서는
--- pg_trgm 인덱스만으로도 동작 가능 (정확도 일부 저하).
-do $$ begin
-  execute 'create index if not exists idx_nexus_chunks_text_bigm '
-       || 'on nexus_chunks using gin (text gin_bigm_ops)';
-exception when undefined_object then
-  execute 'create index if not exists idx_nexus_chunks_text_trgm '
-       || 'on nexus_chunks using gin (text gin_trgm_ops)';
-end $$;
+-- 한국어 trigram 검색 인덱스
+create index if not exists idx_nexus_chunks_text_trgm
+  on nexus_chunks using gin (text gin_trgm_ops);
 
 -- tsvector FTS 인덱스 (영문/숫자 토큰 + 보조용)
 create index if not exists idx_nexus_chunks_tsv
