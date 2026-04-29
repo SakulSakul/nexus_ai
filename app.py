@@ -170,7 +170,7 @@ def main():
 
 _pages = [st.Page(main, title="NEXUS AI", icon="🛡️", default=True)]
 if st.session_state.get("is_admin"):
-    _pages.append(st.Page("pages/admin.py", title="관리자 설정", icon="🔐"))
+    _pages.append(st.Page("pages/_admin.py", title="관리자 설정", icon="🔐"))
 
 pg = st.navigation(_pages)
 pg.run()
