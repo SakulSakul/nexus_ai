@@ -38,69 +38,121 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_parse(file_bytes: bytes) -> list:
+    return parse_docx(file_bytes)
+
+
+_KIND_LABEL = {"rule": "사규", "case": "사례", "penalty": "징계"}
+
+
 def _tab_upload(sb):
     st.subheader("📥 DOCX 업로드 및 적재")
 
-    file = st.file_uploader("워드 파일 업로드", type=["docx"])
-    if not file:
+    files = st.file_uploader(
+        "워드 파일 업로드 (여러 개 선택 가능)",
+        type=["docx"],
+        accept_multiple_files=True,
+    )
+    if not files:
         return
 
-    file_bytes = file.read()
-    title_default = file.name.rsplit(".", 1)[0]
-    chunks = parse_docx(file_bytes)
+    uploader = st.text_input("등록자 (식별용, 전체 공통)", value="", key="ul_uploader")
+    st.markdown(f"**총 {len(files)}개 파일** — 파일별로 카테고리를 확인·수정하세요.")
+    st.markdown("---")
 
-    # 신고절차 문서 자동 차단
-    sample = "\n".join(c.text for c in chunks[:6])
-    if looks_like_hr_procedure(title_default, sample):
-        st.error(
-            "🚫 신고·조사 절차 문서로 판단됩니다. NEXUS DB에는 적재하지 않습니다. "
-            "(인사 챗봇 전용 영역)"
-        )
+    valid_configs: list[dict] = []
+
+    for uf in files:
+        fkey = uf.name
+        file_bytes = uf.read()
+        title_default = uf.name.rsplit(".", 1)[0]
+        chunks = _cached_parse(file_bytes)
+        sample = "\n".join(c.text for c in chunks[:6])
+        blocked = looks_like_hr_procedure(title_default, sample)
+        auto_cats = suggest_categories(sample)
+
+        label = f"🚫 {uf.name}" if blocked else f"📄 {uf.name}  ·  청크 {len(chunks)}개"
+        with st.expander(label, expanded=not blocked):
+            if blocked:
+                st.error("신고·조사 절차 문서로 판단됩니다. 적재에서 제외됩니다.")
+                continue
+
+            st.caption(f"자동 추천 카테고리: **{', '.join(auto_cats)}** — 아래에서 수정")
+            col1, col2 = st.columns(2)
+            with col1:
+                title = st.text_input(
+                    "문서 제목", value=title_default, key=f"ul_title_{fkey}"
+                )
+                kind = st.selectbox(
+                    "문서 종류",
+                    options=["rule", "case", "penalty"],
+                    format_func=lambda x: _KIND_LABEL[x],
+                    key=f"ul_kind_{fkey}",
+                )
+                version = st.text_input(
+                    "개정 차수 (예: v1)", value="v1", key=f"ul_ver_{fkey}"
+                )
+            with col2:
+                eff = st.date_input(
+                    "시행일", value=dt.date.today(), key=f"ul_eff_{fkey}"
+                )
+                cats = st.multiselect(
+                    "카테고리 (다중 선택, 필수)",
+                    options=list(CATEGORIES),
+                    default=auto_cats,
+                    key=f"ul_cats_{fkey}",
+                )
+            with st.expander("청크 미리보기 (5개)", expanded=False):
+                for c in chunks[:5]:
+                    head = c.article_no or (
+                        f"#{c.case_no}" if c.case_no else f"chunk {c.chunk_idx}"
+                    )
+                    st.markdown(f"**{head}**")
+                    st.caption(c.text[:400])
+
+            valid_configs.append({
+                "fname": uf.name,
+                "file_bytes": file_bytes,
+                "title": title,
+                "kind": kind,
+                "version": version,
+                "eff": eff,
+                "cats": cats,
+            })
+
+    if not valid_configs:
         return
 
-    auto_cats = suggest_categories(sample)
-    st.info(f"자동 추천 카테고리: **{', '.join(auto_cats)}** — 아래에서 확정/수정")
+    st.markdown("---")
+    st.markdown(f"적재 대상: **{len(valid_configs)}개 파일**")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        title = st.text_input("문서 제목", value=title_default)
-        kind = st.selectbox("문서 종류", options=["rule", "case", "penalty"],
-                            format_func=lambda x: {"rule":"사규","case":"사례","penalty":"징계"}[x])
-        version = st.text_input("개정 차수 (예: v3, 2026-04 개정)", value="v1")
-    with col2:
-        eff = st.date_input("시행일", value=dt.date.today())
-        cats = st.multiselect("카테고리(다중 선택)", options=list(CATEGORIES), default=auto_cats)
-        uploader = st.text_input("등록자 (식별용)", value="")
-
-    st.markdown(f"**미리보기 — 청크 {len(chunks)}개**")
-    with st.expander("청크 5개 미리보기"):
-        for c in chunks[:5]:
-            head = c.article_no or (f"#{c.case_no}" if c.case_no else f"chunk {c.chunk_idx}")
-            st.markdown(f"**{head}**")
-            st.caption(c.text[:500])
-
-    if st.button("✅ 임베딩 + DB 적재 실행", type="primary"):
-        if not cats:
-            st.error("카테고리를 1개 이상 선택하세요.")
-            return
-        with st.spinner("임베딩 및 적재 중..."):
-            res = ingest_docx(
-                sb,
-                file_bytes=file_bytes,
-                title=title,
-                doc_kind=kind,
-                version=version,
-                effective_date=eff,
-                uploaded_by=uploader or None,
-                confirmed_categories=cats,
-            )
-        if res.skipped_hr_procedure:
-            st.error("신고절차 문서로 판단되어 적재가 차단되었습니다.")
-        else:
-            msg = f"적재 완료: 청크 {res.chunks_inserted}개"
-            if res.archived_previous:
-                msg += " · 이전 버전 자동 archived"
-            st.success(msg)
+    if st.button("✅ 전체 적재 실행", type="primary", key="ul_submit"):
+        for cfg in valid_configs:
+            if not cfg["cats"]:
+                st.error(f"**{cfg['fname']}** — 카테고리를 1개 이상 선택하세요.")
+                continue
+            with st.spinner(f"{cfg['fname']} 임베딩 및 적재 중..."):
+                try:
+                    res = ingest_docx(
+                        sb,
+                        file_bytes=cfg["file_bytes"],
+                        title=cfg["title"],
+                        doc_kind=cfg["kind"],
+                        version=cfg["version"],
+                        effective_date=cfg["eff"],
+                        uploaded_by=uploader or None,
+                        confirmed_categories=cfg["cats"],
+                    )
+                    if res.skipped_hr_procedure:
+                        st.error(f"**{cfg['fname']}** — 신고절차 문서로 차단됨")
+                    else:
+                        msg = f"**{cfg['fname']}** — 청크 {res.chunks_inserted}개 적재 완료"
+                        if res.archived_previous:
+                            msg += " · 이전 버전 자동 archived"
+                        st.success(msg)
+                except Exception as e:
+                    st.error(f"**{cfg['fname']}** — 오류: {e}")
 
 
 def _tab_versions(sb):
