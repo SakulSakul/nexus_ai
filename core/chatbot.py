@@ -8,7 +8,8 @@ temperature/top_p 는 환각 제어를 위해 0/0.1 고정이 기본값이며,
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from .config import settings, load_hotlines
@@ -28,23 +29,47 @@ class Answer:
     critical_kind: str | None
     contexts: list[dict]
     masked_question: str
+    thinking: str = field(default="")
+    elapsed: float = field(default=0.0)
 
 
-def _gen(model: str, system: str, user: str, *, temperature: float, top_p: float) -> str:
+def _gen(model: str, system: str, user: str, *, temperature: float, top_p: float) -> tuple[str, str]:
+    """Returns (answer_text, thinking_text)."""
     from google import genai
     from google.genai import types
     s = settings()
     cli = genai.Client(api_key=s.gemini_api_key)
-    res = cli.models.generate_content(
-        model=model,
-        contents=user,
-        config=types.GenerateContentConfig(
+
+    try:
+        cfg = types.GenerateContentConfig(
             system_instruction=system,
             temperature=temperature,
             top_p=top_p,
-        ),
-    )
-    return (res.text or "").strip()
+            thinking_config=types.ThinkingConfig(include_thoughts=True),
+        )
+    except Exception:
+        cfg = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=temperature,
+            top_p=top_p,
+        )
+
+    res = cli.models.generate_content(model=model, contents=user, config=cfg)
+
+    thinking_parts: list[str] = []
+    text_parts: list[str] = []
+    try:
+        for part in res.candidates[0].content.parts:
+            if getattr(part, "thought", False):
+                thinking_parts.append(part.text or "")
+            else:
+                text_parts.append(part.text or "")
+    except Exception:
+        text_parts = [res.text or ""]
+
+    text = "".join(text_parts).strip() or (res.text or "").strip()
+    thinking = "".join(thinking_parts).strip()
+    return text, thinking
 
 
 def _ensure_citation(answer: str, contexts: list[dict]) -> str:
@@ -98,11 +123,13 @@ def ask(
         elif detection.kind == "harassment":
             cats = list(set((cats or []) + ["공통"]))
 
+    t0 = time.perf_counter()
+
     contexts = hybrid_search(supabase, question=masked, categories=cats, top_k=s.top_k)
 
     user = build_user_prompt(masked, contexts)
-    raw = _gen(s.chat_model, SYSTEM_PROMPT, user,
-               temperature=s.temperature, top_p=s.top_p)
+    raw, thinking = _gen(s.chat_model, SYSTEM_PROMPT, user,
+                         temperature=s.temperature, top_p=s.top_p)
     raw = _ensure_citation(raw, contexts)
 
     if detection.triggered:
@@ -116,6 +143,8 @@ def ask(
         )
     else:
         final = raw
+
+    elapsed = time.perf_counter() - t0
 
     # 질의 로그 (마스킹 후 본문만 저장, 원본은 즉시 폐기)
     try:
@@ -135,4 +164,6 @@ def ask(
         critical_kind=detection.kind,
         contexts=contexts,
         masked_question=masked,
+        thinking=thinking,
+        elapsed=elapsed,
     )

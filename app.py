@@ -139,9 +139,15 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 st.error(f"오류가 발생했습니다: {e}")
                 return
 
+        if ans.thinking:
+            with st.expander("💭 생각 과정 보기", expanded=False):
+                st.markdown(ans.thinking)
+
         if ans.is_critical:
             st.warning("⚠️ 본 사안은 **심각 사안 응답 모드**로 처리되었습니다.")
         st.markdown(ans.text)
+
+        st.caption(f"⏱️ 답변 생성 {ans.elapsed:.1f}초")
 
         if ans.contexts:
             with st.expander("참조 문서 보기"):
@@ -158,7 +164,8 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
 
     st.session_state["history"].append((
         "assistant", ans.text,
-        {"contexts": ans.contexts, "critical": ans.is_critical, "kind": ans.critical_kind},
+        {"contexts": ans.contexts, "critical": ans.is_critical, "kind": ans.critical_kind,
+         "thinking": ans.thinking, "elapsed": ans.elapsed},
     ))
 
 
@@ -180,7 +187,12 @@ def main():
 
     for role, content, meta in st.session_state["history"]:
         with st.chat_message(role):
+            if role == "assistant" and meta.get("thinking"):
+                with st.expander("💭 생각 과정 보기", expanded=False):
+                    st.markdown(meta["thinking"])
             st.markdown(content)
+            if role == "assistant" and meta.get("elapsed"):
+                st.caption(f"⏱️ 답변 생성 {meta['elapsed']:.1f}초")
             if role == "assistant" and meta.get("contexts"):
                 with st.expander("참조 문서 보기"):
                     for c in meta["contexts"]:
