@@ -44,14 +44,29 @@ def _admin_panel(sb, hotlines: dict) -> None:
             st.info("ADMIN_PASSWORD secret을 설정하면 관리자 기능이 활성화됩니다.")
             return
 
-        pw = st.text_input("관리자 비밀번호", type="password", key="admin_pw_input")
-        if not pw:
-            return
-        if pw != admin_pw:
-            st.error("비밀번호가 틀렸습니다.")
+        if not st.session_state.get("admin_authenticated"):
+            with st.form("sidebar_admin_login"):
+                pw = st.text_input("관리자 비밀번호", type="password")
+                submitted = st.form_submit_button("로그인", type="primary")
+            if submitted:
+                if pw == admin_pw:
+                    st.session_state["admin_authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 틀렸습니다.")
             return
 
         st.success("인증 완료")
+
+        col_logout, _ = st.columns([1, 2])
+        if col_logout.button("로그아웃", key="sidebar_logout"):
+            st.session_state["admin_authenticated"] = False
+            st.rerun()
+
+        st.markdown("---")
+        st.page_link("pages/admin.py", label="🛠️ Admin 대시보드 열기", use_container_width=True)
+        st.markdown("---")
+
         st.markdown("**안내 문구 / URL 설정**")
 
         updated: dict[str, str] = {}
