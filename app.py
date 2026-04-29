@@ -144,5 +144,10 @@ def main():
     _run_ask(sb, q, cat, hotlines)
 
 
-if __name__ == "__main__":
-    main()
+pg = st.navigation(
+    [
+        st.Page(main, title="NEXUS AI", icon="🛡️", default=True),
+        st.Page("pages/admin.py", title="관리자 설정", icon="🔐"),
+    ]
+)
+pg.run()

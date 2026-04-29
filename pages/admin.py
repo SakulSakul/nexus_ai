@@ -26,9 +26,6 @@ from parser.docx_parser import (
 from parser.ingest import ingest_docx
 
 
-st.set_page_config(page_title="NEXUS AI · Admin", page_icon="🛠️", layout="wide")
-
-
 @st.cache_resource(show_spinner=False)
 def _supabase():
     from supabase import create_client
