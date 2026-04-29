@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.chatbot import ask
-from core.config import CATEGORIES, get_secret, load_hotlines, settings
+from core.config import CATEGORIES, load_hotlines, settings
 
 
 st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
@@ -19,14 +19,6 @@ _EXAMPLE_QUESTIONS = [
     "공정거래 관련 주의사항이 무엇인가요?",
 ]
 
-_HOTLINE_LABELS = {
-    "internal_report_url": "사내 익명 제보채널 URL",
-    "external_hotline":    "외부 상담채널",
-    "ethics_hotline_url":  "윤리팀 익명 제보채널 URL",
-    "hr_contact_text":     "인사팀 문의 안내 문구",
-    "hr_chatbot_url":      "인사 챗봇 URL",
-}
-
 
 @st.cache_resource(show_spinner=False)
 def _supabase():
@@ -37,44 +29,7 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
-def _admin_panel(sb, hotlines: dict) -> None:
-    with st.expander("🔐 관리자 설정"):
-        admin_pw = get_secret("ADMIN_PASSWORD")
-        if not admin_pw:
-            st.info("ADMIN_PASSWORD secret을 설정하면 관리자 기능이 활성화됩니다.")
-            return
-
-        pw = st.text_input("관리자 비밀번호", type="password", key="admin_pw_input")
-        if not pw:
-            return
-        if pw != admin_pw:
-            st.error("비밀번호가 틀렸습니다.")
-            return
-
-        st.success("인증 완료")
-        st.markdown("**안내 문구 / URL 설정**")
-
-        updated: dict[str, str] = {}
-        for key, label in _HOTLINE_LABELS.items():
-            updated[key] = st.text_input(
-                label, value=hotlines.get(key, ""), key=f"admin_{key}"
-            )
-
-        if st.button("저장", key="admin_save"):
-            if sb is None:
-                st.error("Supabase 연결 없음")
-                return
-            try:
-                for k, v in updated.items():
-                    sb.table("hotline_config").upsert(
-                        {"key": k, "value": v}, on_conflict="key"
-                    ).execute()
-                st.success("저장 완료. 새로고침 후 반영됩니다.")
-            except Exception as e:
-                st.error(f"저장 실패: {e}")
-
-
-def _sidebar(sb, hotlines: dict) -> str:
+def _sidebar(hotlines: dict) -> str:
     with st.sidebar:
         st.markdown("### 🛡️ NEXUS AI")
         st.caption("전사 지능형 사규·사건사고 대응 어시스턴트")
@@ -91,8 +46,6 @@ def _sidebar(sb, hotlines: dict) -> str:
             "본 챗봇은 사규/윤리 관점 답변을 제공합니다. "
             "인사 행정 사항(채용·평가·복무, 신고·조사 절차)은 인사팀으로 문의하세요."
         )
-        st.markdown("---")
-        _admin_panel(sb, hotlines)
         return cat
 
 
@@ -158,7 +111,7 @@ def main():
         st.session_state["history"] = []
 
     hotlines = load_hotlines(sb)
-    cat = _sidebar(sb, hotlines)
+    cat = _sidebar(hotlines)
 
     st.markdown("## 무엇을 도와드릴까요?")
     st.caption("사규/윤리강령/사례집/징계규정을 통합 검색합니다. (출처 자동 표기)")
