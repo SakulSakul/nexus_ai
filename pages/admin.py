@@ -29,6 +29,34 @@ from parser.ingest import ingest_docx
 st.set_page_config(page_title="NEXUS AI · Admin", page_icon="🛠️", layout="wide")
 
 
+def _require_auth() -> None:
+    """Admin 페이지 진입 전 비밀번호 인증. 미인증 시 st.stop()으로 렌더링 차단."""
+    from core.config import get_secret
+
+    if st.session_state.get("admin_authenticated"):
+        return
+
+    st.title("🔐 NEXUS AI · Admin 로그인")
+
+    admin_pw = get_secret("ADMIN_PASSWORD")
+    if not admin_pw:
+        st.error("ADMIN_PASSWORD secret이 설정되지 않았습니다. 관리자에게 문의하세요.")
+        st.stop()
+
+    with st.form("admin_login"):
+        pw = st.text_input("관리자 비밀번호", type="password")
+        submitted = st.form_submit_button("로그인", type="primary")
+
+    if submitted:
+        if pw == admin_pw:
+            st.session_state["admin_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 틀렸습니다.")
+
+    st.stop()
+
+
 @st.cache_resource(show_spinner=False)
 def _supabase():
     from supabase import create_client
@@ -513,12 +541,19 @@ def _tab_keywords(sb):
 
 
 def main():
+    _require_auth()
+
     sb = _supabase()
     if sb is None:
         st.error("⚠️ Supabase 설정이 없습니다.")
         st.stop()
 
-    st.title("🛠️ NEXUS AI · Admin")
+    col_title, col_logout = st.columns([8, 1])
+    col_title.title("🛠️ NEXUS AI · Admin")
+    if col_logout.button("로그아웃", key="admin_logout"):
+        st.session_state["admin_authenticated"] = False
+        st.rerun()
+
     tabs = st.tabs([
         "📥 업로드", "📚 버전", "📡 레이더",
         "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
