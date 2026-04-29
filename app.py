@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.chatbot import ask
-from core.config import CATEGORIES, load_hotlines, settings
+from core.config import CATEGORIES, get_secret, load_hotlines, settings
 
 
 st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
@@ -29,6 +29,28 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
+def _admin_login() -> None:
+    if st.session_state.get("is_admin"):
+        st.caption("🔐 관리자 모드")
+        if st.button("로그아웃", key="admin_logout"):
+            st.session_state["is_admin"] = False
+            st.rerun()
+        return
+
+    admin_pw = get_secret("ADMIN_PASSWORD")
+    if not admin_pw:
+        return
+
+    with st.expander("🔐 관리자"):
+        pw = st.text_input("비밀번호", type="password", key="admin_pw_input")
+        if st.button("로그인", key="admin_login_btn"):
+            if pw == admin_pw:
+                st.session_state["is_admin"] = True
+                st.rerun()
+            else:
+                st.error("비밀번호가 틀렸습니다.")
+
+
 def _sidebar(hotlines: dict) -> str:
     with st.sidebar:
         st.markdown("### 🛡️ NEXUS AI")
@@ -46,6 +68,8 @@ def _sidebar(hotlines: dict) -> str:
             "본 챗봇은 사규/윤리 관점 답변을 제공합니다. "
             "인사 행정 사항(채용·평가·복무, 신고·조사 절차)은 인사팀으로 문의하세요."
         )
+        st.markdown("---")
+        _admin_login()
         return cat
 
 
@@ -144,10 +168,9 @@ def main():
     _run_ask(sb, q, cat, hotlines)
 
 
-pg = st.navigation(
-    [
-        st.Page(main, title="NEXUS AI", icon="🛡️", default=True),
-        st.Page("pages/admin.py", title="관리자 설정", icon="🔐"),
-    ]
-)
+_pages = [st.Page(main, title="NEXUS AI", icon="🛡️", default=True)]
+if st.session_state.get("is_admin"):
+    _pages.append(st.Page("pages/admin.py", title="관리자 설정", icon="🔐"))
+
+pg = st.navigation(_pages)
 pg.run()
