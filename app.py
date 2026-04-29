@@ -5,10 +5,27 @@ from __future__ import annotations
 import streamlit as st
 
 from core.chatbot import ask
-from core.config import CATEGORIES, load_hotlines, settings
+from core.config import CATEGORIES, get_secret, load_hotlines, settings
 
 
 st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
+
+_EXAMPLE_QUESTIONS = [
+    "거래처로부터 선물을 받아도 되나요?",
+    "직장 내 괴롭힘 신고는 어떻게 하나요?",
+    "부서 회식 중 음주 관련 사규는 어떻게 되나요?",
+    "재무 결재 기준이 어떻게 되나요?",
+    "정보보안 위반 시 어떤 처분을 받나요?",
+    "공정거래 관련 주의사항이 무엇인가요?",
+]
+
+_HOTLINE_LABELS = {
+    "internal_report_url": "사내 익명 제보채널 URL",
+    "external_hotline":    "외부 상담채널",
+    "ethics_hotline_url":  "윤리팀 익명 제보채널 URL",
+    "hr_contact_text":     "인사팀 문의 안내 문구",
+    "hr_chatbot_url":      "인사 챗봇 URL",
+}
 
 
 @st.cache_resource(show_spinner=False)
@@ -20,7 +37,44 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
-def _sidebar():
+def _admin_panel(sb, hotlines: dict) -> None:
+    with st.expander("🔐 관리자 설정"):
+        admin_pw = get_secret("ADMIN_PASSWORD")
+        if not admin_pw:
+            st.info("ADMIN_PASSWORD secret을 설정하면 관리자 기능이 활성화됩니다.")
+            return
+
+        pw = st.text_input("관리자 비밀번호", type="password", key="admin_pw_input")
+        if not pw:
+            return
+        if pw != admin_pw:
+            st.error("비밀번호가 틀렸습니다.")
+            return
+
+        st.success("인증 완료")
+        st.markdown("**안내 문구 / URL 설정**")
+
+        updated: dict[str, str] = {}
+        for key, label in _HOTLINE_LABELS.items():
+            updated[key] = st.text_input(
+                label, value=hotlines.get(key, ""), key=f"admin_{key}"
+            )
+
+        if st.button("저장", key="admin_save"):
+            if sb is None:
+                st.error("Supabase 연결 없음")
+                return
+            try:
+                for k, v in updated.items():
+                    sb.table("hotline_config").upsert(
+                        {"key": k, "value": v}, on_conflict="key"
+                    ).execute()
+                st.success("저장 완료. 새로고침 후 반영됩니다.")
+            except Exception as e:
+                st.error(f"저장 실패: {e}")
+
+
+def _sidebar(sb, hotlines: dict) -> str:
     with st.sidebar:
         st.markdown("### 🛡️ NEXUS AI")
         st.caption("전사 지능형 사규·사건사고 대응 어시스턴트")
@@ -37,27 +91,74 @@ def _sidebar():
             "본 챗봇은 사규/윤리 관점 답변을 제공합니다. "
             "인사 행정 사항(채용·평가·복무, 신고·조사 절차)은 인사팀으로 문의하세요."
         )
+        st.markdown("---")
+        _admin_panel(sb, hotlines)
         return cat
 
 
-def _hotline_button(hotlines: dict[str, str]):
+def _hotline_button(hotlines: dict[str, str]) -> None:
     url = hotlines.get("ethics_hotline_url") or hotlines.get("internal_report_url")
     if url:
         st.link_button("🔔 윤리팀 익명 제보 채널로 연결", url, use_container_width=True)
 
 
+def _show_example_questions() -> str | None:
+    st.markdown("#### 💡 이런 질문을 해보세요")
+    cols = st.columns(2)
+    for i, q in enumerate(_EXAMPLE_QUESTIONS):
+        if cols[i % 2].button(q, key=f"eq_{i}", use_container_width=True):
+            return q
+    return None
+
+
+def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
+    st.session_state["history"].append(("user", q, {}))
+    with st.chat_message("user"):
+        st.markdown(q)
+
+    with st.chat_message("assistant"):
+        with st.spinner("관련 사규 검색 및 답변 생성 중..."):
+            try:
+                ans = ask(sb, question=q, category=cat)
+            except Exception as e:
+                st.error(f"오류가 발생했습니다: {e}")
+                return
+
+        if ans.is_critical:
+            st.warning("⚠️ 본 사안은 **심각 사안 응답 모드**로 처리되었습니다.")
+        st.markdown(ans.text)
+
+        if ans.contexts:
+            with st.expander("참조 문서 보기"):
+                for c in ans.contexts:
+                    head = c.get("doc_title") or "문서"
+                    if c.get("article_no"):
+                        head += f" · {c['article_no']}"
+                    elif c.get("case_no"):
+                        head += f" · 사례집 #{c['case_no']}"
+                    st.markdown(f"**{head}**")
+                    st.caption((c.get("text") or "")[:600])
+
+        _hotline_button(hotlines)
+
+    st.session_state["history"].append((
+        "assistant", ans.text,
+        {"contexts": ans.contexts, "critical": ans.is_critical, "kind": ans.critical_kind},
+    ))
+
+
 def main():
     sb = _supabase()
-    cat = _sidebar()
 
     if sb is None:
         st.error("⚠️ Supabase 설정이 없습니다. SUPABASE_URL / SUPABASE_KEY 를 secrets 에 추가하세요.")
         st.stop()
 
     if "history" not in st.session_state:
-        st.session_state["history"] = []  # list[(role, content, meta)]
+        st.session_state["history"] = []
 
     hotlines = load_hotlines(sb)
+    cat = _sidebar(sb, hotlines)
 
     st.markdown("## 무엇을 도와드릴까요?")
     st.caption("사규/윤리강령/사례집/징계규정을 통합 검색합니다. (출처 자동 표기)")
@@ -78,42 +179,16 @@ def main():
             if role == "assistant":
                 _hotline_button(hotlines)
 
-    q = st.chat_input("질문을 입력하세요. 이름·부서 등 식별정보는 자동 마스킹됩니다.")
+    clicked_q: str | None = None
+    if not st.session_state["history"]:
+        clicked_q = _show_example_questions()
+
+    q = st.chat_input("질문을 입력하세요. 이름·부서 등 식별정보는 자동 마스킹됩니다.") or clicked_q
+
     if not q:
         return
 
-    st.session_state["history"].append(("user", q, {}))
-    with st.chat_message("user"):
-        st.markdown(q)
-
-    with st.chat_message("assistant"):
-        with st.spinner("관련 사규 검색 및 답변 생성 중..."):
-            try:
-                ans = ask(sb, question=q, category=cat)
-            except Exception as e:
-                st.error(f"오류가 발생했습니다: {e}")
-                return
-
-        if ans.is_critical:
-            st.warning("⚠️ 본 사안은 **심각 사안 응답 모드**로 처리되었습니다.")
-        st.markdown(ans.text)
-
-        with st.expander("참조 문서 보기"):
-            for c in ans.contexts:
-                head = c.get("doc_title") or "문서"
-                if c.get("article_no"):
-                    head += f" · {c['article_no']}"
-                elif c.get("case_no"):
-                    head += f" · 사례집 #{c['case_no']}"
-                st.markdown(f"**{head}**")
-                st.caption((c.get("text") or "")[:600])
-
-        _hotline_button(hotlines)
-
-    st.session_state["history"].append((
-        "assistant", ans.text,
-        {"contexts": ans.contexts, "critical": ans.is_critical, "kind": ans.critical_kind},
-    ))
+    _run_ask(sb, q, cat, hotlines)
 
 
 if __name__ == "__main__":
