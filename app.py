@@ -28,6 +28,36 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
+/* Material Symbols ligatures only form when the source text is lowercase
+   and untransformed. Any inherited text-transform/letter-spacing breaks
+   them so the raw token (e.g. "keyboard_double_arrow_left") leaks as
+   visible text. Force a safe environment for every Material icon. */
+[data-testid="stIconMaterial"],
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-icons,
+[class*="material-symbols"],
+[class*="material-icons"] {
+  font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Icons',sans-serif !important;
+  font-feature-settings: 'liga' !important;
+  -webkit-font-feature-settings: 'liga' !important;
+  font-variation-settings: 'opsz' 24 !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  white-space: nowrap !important;
+  word-wrap: normal !important;
+  direction: ltr !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Pin the sidebar permanently open: hide the close button inside it.
+   initial_sidebar_state="expanded" handles the default state. */
+[data-testid="stSidebarCollapseButton"] {
+  display: none !important;
+}
+
 
 /* Hide all tooltips (the gray hover labels that show button title text) */
 [data-baseweb="tooltip"],
