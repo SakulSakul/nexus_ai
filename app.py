@@ -617,33 +617,36 @@ def _render_critical_banner() -> None:
 
 
 def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
+    import sys
+    import traceback
     st.session_state["history"].append(("user", q, {}))
     with st.chat_message("user"):
         st.markdown(q)
 
+    ans = None
+    last_err: Exception | None = None
+    tb_str = ""
     with st.chat_message("assistant"):
         with st.spinner("문서 검색 및 답변 생성 중..."):
-            import traceback
-            ans = None
-            last_err: Exception | None = None
-            tb_str = ""
             for attempt in range(3):
                 try:
                     if attempt > 0:
-                        sb = _supabase()  # 매 재시도마다 완전히 새 클라이언트
+                        sb = _supabase()
                     ans = ask(sb, question=q, category=cat)
                     break
                 except Exception as e:
                     last_err = e
                     tb_str = traceback.format_exc()
+                    print(f"\n=== ASK ERROR (attempt {attempt}) ===\n{tb_str}", file=sys.stderr, flush=True)
                     if "client has been closed" in str(e).lower() and attempt < 2:
-                        continue  # 자동 재시도
+                        continue
                     break
-            if ans is None:
-                st.error(f"오류가 발생했습니다: {last_err}")
-                st.markdown("**🔧 디버그 (스택 트레이스)**")
-                st.code(tb_str or "(traceback empty)", language="python")
-                return
+
+    if ans is None:
+        st.error(f"오류가 발생했습니다: {last_err}")
+        st.exception(last_err)
+        st.text_area("RAW TRACEBACK (복사용)", tb_str, height=300)
+        return
 
         if ans.thinking:
             with st.expander("THINKING PROCESS", expanded=False):
