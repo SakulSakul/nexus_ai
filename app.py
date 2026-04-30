@@ -601,6 +601,33 @@ html, body, .stApp {
   line-height: 1.65;
   margin: 0;
 }
+
+/* Material Symbols 아이콘 노드의 폰트를 ligature 변환 가능한 상태로 복구.
+   전역 [data-testid="stSidebar"] span 등에 걸린 Pretendard !important 가
+   stIconMaterial 의 font-family 를 덮어써서 'keyboard_double_arrow_left'
+   같은 raw 텍스트가 노출되는 현상을 차단. 이 블록은 _CSS 의 마지막에
+   위치해 같은 specificity 의 후행 규칙으로 우선 적용되도록 함. */
+[data-testid="stIconMaterial"],
+[data-testid="stIconMaterial"] *,
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-symbols-sharp,
+[class*="material-symbols"] {
+    font-family: 'Material Symbols Outlined', 'Material Symbols Rounded', 'Material Symbols Sharp', 'Material Icons' !important;
+    font-weight: normal !important;
+    font-style: normal !important;
+    font-size: 20px !important;
+    line-height: 1 !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    display: inline-block !important;
+    white-space: nowrap !important;
+    word-wrap: normal !important;
+    direction: ltr !important;
+    -webkit-font-feature-settings: 'liga' !important;
+    -webkit-font-smoothing: antialiased !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
+}
 </style>
 """
 
