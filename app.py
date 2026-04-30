@@ -28,66 +28,22 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* Material icons fallback — hide leaking icon names if font fails to load */
-[data-testid="stSidebarCollapseButton"] *,
-[data-testid="stSidebarCollapsedControl"] *,
-[data-testid="stIconMaterial"] {
-  font-family: 'Material Symbols Rounded','Material Symbols Outlined', sans-serif !important;
-  font-feature-settings: 'liga' !important;
-  -webkit-font-feature-settings: 'liga' !important;
-}
-
-/* Sidebar collapse/expand button — solid black square, no tooltip */
+/* Sidebar pinned permanently open — collapse/expand controls are
+   removed entirely so users can never hide it. */
 [data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapsedControl"] {
-  background: var(--c-bg) !important;
-  border: 1px solid var(--c-border) !important;
-}
-[data-testid="stSidebarCollapseButton"] button,
-[data-testid="stSidebarCollapsedControl"] button {
-  color: var(--c-primary) !important;
-  background: transparent !important;
-  border: none !important;
-  width: 32px !important;
-  height: 32px !important;
-}
-[data-testid="stSidebarCollapseButton"] button:hover,
-[data-testid="stSidebarCollapsedControl"] button:hover {
-  background: var(--c-surface) !important;
-}
-
-/* Floating sidebar expand control — sits above the 4px top frame so the
-   button is reachable when the sidebar is collapsed. Cover both the
-   modern (stSidebarCollapsedControl) and legacy (collapsedControl)
-   Streamlit test ids. */
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {
-  position: fixed !important;
-  top: 12px !important;
-  left: 12px !important;
-  z-index: 2147483647 !important;
-  width: 40px !important;
-  height: 40px !important;
-  display: flex !important;
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div {
   visibility: visible !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-  align-items: center !important;
-  justify-content: center !important;
-  background: var(--c-primary) !important;
-  border: 1px solid var(--c-primary) !important;
+  display: block !important;
   transform: none !important;
-}
-[data-testid="stSidebarCollapsedControl"] button,
-[data-testid="collapsedControl"] button,
-[data-testid="stSidebarCollapsedControl"] svg,
-[data-testid="collapsedControl"] svg {
-  color: #FFFFFF !important;
-  fill: #FFFFFF !important;
-}
-[data-testid="stSidebarCollapsedControl"] button:hover,
-[data-testid="collapsedControl"] button:hover {
-  background: #333333 !important;
+  margin-left: 0 !important;
+  min-width: 244px !important;
 }
 
 /* Hide all tooltips (the gray hover labels that show button title text) */
@@ -121,8 +77,6 @@ html, body, .stApp {
 }
 #MainMenu, footer { visibility: hidden; }
 [data-testid="stHeader"] { background: transparent !important; }
-[data-testid="stSidebarCollapsedControl"] { visibility: visible !important; display: flex !important; }
-[data-testid="stSidebarCollapseButton"]   { visibility: visible !important; }
 [data-testid="stToolbar"] { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
 * { box-sizing: border-box; }
