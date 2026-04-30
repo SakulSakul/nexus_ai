@@ -52,6 +52,19 @@ _CSS = """
   -webkit-font-smoothing: antialiased;
 }
 
+/* Defensive nuke: if Streamlit Cloud blocks Google Fonts (CSP / network)
+   the ligatures never form and the raw token leaks. Hide every Material
+   icon container so the leaked text never shows. The icons are purely
+   decorative (chevrons, gears) and the UI works fine without them. */
+[data-testid="stIconMaterial"],
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-icons,
+[class*="material-symbols"],
+[class*="material-icons"] {
+  display: none !important;
+}
+
 /* Pin the sidebar permanently open: hide the close button inside it.
    initial_sidebar_state="expanded" handles the default state. */
 [data-testid="stSidebarCollapseButton"] {
