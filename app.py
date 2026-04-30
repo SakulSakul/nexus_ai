@@ -63,6 +63,20 @@ _CSS = """
 [class*="material-symbols"],
 [class*="material-icons"] {
   display: none !important;
+  font-size: 0 !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Hide Streamlit's auto-generated multipage navigation ("app" / "admin"
+   links at the top of the sidebar) — users reach admin via the in-app
+   ADMIN expander, not this nav. */
+[data-testid="stSidebarNav"],
+[data-testid="stSidebarNavItems"],
+[data-testid="stSidebarNavSeparator"] {
+  display: none !important;
 }
 
 /* Pin the sidebar permanently open: hide the close button inside it.
