@@ -133,8 +133,7 @@ html, body, .stApp {
   top: 0; left: 0; right: 0;
   height: 4px;
   background: var(--c-primary);
-  z-index: 1;
-  pointer-events: none;
+  z-index: 9999;
 }
 
 /* ── Sidebar ── */
@@ -785,13 +784,10 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
 
 
 _SIDEBAR_TOGGLE_JS = """
-<div></div>
+<div id="nx-expand-host"></div>
 <script>
 (function () {
-  let doc;
-  try { doc = window.parent.document; }
-  catch (e) { console.error('[nx-expand] cannot reach parent doc', e); return; }
-
+  const doc = window.parent.document;
   if (doc.getElementById('nx-expand-btn')) return;
 
   const btn = doc.createElement('button');
@@ -801,43 +797,36 @@ _SIDEBAR_TOGGLE_JS = """
   btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
   Object.assign(btn.style, {
     position: 'fixed', top: '12px', left: '12px',
-    width: '40px', height: '40px',
+    width: '36px', height: '36px',
     background: '#1A1A1A', color: '#FFFFFF',
-    border: 'none', borderRadius: '0',
+    border: '1px solid #1A1A1A', borderRadius: '0',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    cursor: 'pointer', zIndex: '2147483647', padding: '0',
-    boxShadow: 'none',
+    cursor: 'pointer', zIndex: '100000', padding: '0',
   });
   btn.addEventListener('mouseenter', () => { btn.style.background = '#333333'; });
   btn.addEventListener('mouseleave', () => { btn.style.background = '#1A1A1A'; });
   btn.addEventListener('click', () => {
-    const selectors = [
-      '[data-testid="stSidebarCollapsedControl"] button',
-      '[data-testid="collapsedControl"] button',
-      '[data-testid="stSidebarCollapseButton"] button',
-      'button[kind="header"]',
-      'button[aria-label*="sidebar" i]',
-    ];
-    for (const sel of selectors) {
-      const el = doc.querySelector(sel);
-      if (el) { el.click(); return; }
-    }
-    console.warn('[nx-expand] no streamlit toggle found');
+    const target = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button')
+                || doc.querySelector('[data-testid="stSidebarCollapseButton"] button')
+                || doc.querySelector('[data-testid="collapsedControl"] button')
+                || doc.querySelector('button[aria-label*="sidebar" i]')
+                || doc.querySelector('button[kind="header"]');
+    if (target) target.click();
   });
 
-  doc.body.appendChild(btn);
-  console.log('[nx-expand] button injected');
-
-  function isSidebarOpen() {
-    const sb = doc.querySelector('[data-testid="stSidebar"]');
-    if (!sb) return false;
-    const r = sb.getBoundingClientRect();
-    return r.width > 30 && r.right > 10;
+  function sync() {
+    const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+    if (!sidebar) { btn.style.display = 'flex'; return; }
+    const collapsed = sidebar.getAttribute('aria-expanded') === 'false'
+                   || sidebar.offsetWidth < 30
+                   || getComputedStyle(sidebar).visibility === 'hidden';
+    btn.style.display = collapsed ? 'flex' : 'none';
   }
-  function sync() { btn.style.display = isSidebarOpen() ? 'none' : 'flex'; }
+
+  doc.body.appendChild(btn);
   sync();
   const obs = new MutationObserver(sync);
-  obs.observe(doc.body, { attributes: true, subtree: true, childList: true,
+  obs.observe(doc.body, { attributes: true, subtree: true,
     attributeFilter: ['aria-expanded', 'style', 'class'] });
   window.addEventListener('resize', sync);
 })();
