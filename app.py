@@ -80,7 +80,10 @@ html, body, .stApp {
   background: var(--c-bg) !important;
   color: var(--c-text) !important;
 }
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer { visibility: hidden; }
+header { visibility: hidden; }
+[data-testid="stSidebarCollapsedControl"] { visibility: visible !important; display: flex !important; }
+[data-testid="stSidebarCollapseButton"]   { visibility: visible !important; }
 [data-testid="stToolbar"] { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
 * { box-sizing: border-box; }
