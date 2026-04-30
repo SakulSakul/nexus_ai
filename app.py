@@ -20,6 +20,14 @@ st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
 _CSS = """
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+
+/* Material icons fallback — hide leaking icon names if font fails to load */
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="stSidebarCollapsedControl"] * {
+  font-family: 'Material Symbols Rounded','Material Symbols Outlined', sans-serif !important;
+}
 
 :root {
   --c-primary:  #1A1A1A;
@@ -626,6 +634,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     ans = None
     last_err: Exception | None = None
     tb_str = ""
+    friendly_msg = ""
     with st.chat_message("assistant"):
         with st.spinner("문서 검색 및 답변 생성 중..."):
             for attempt in range(3):
@@ -642,10 +651,35 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                         continue
                     break
 
+        if ans is None:
+            err_text = str(last_err or "")
+            if "double precision" in err_text or "structure of query" in err_text:
+                friendly_msg = (
+                    "⚠️ 데이터베이스의 검색 함수 버전이 코드와 일치하지 않습니다.\n\n"
+                    "관리자에게 다음 SQL 마이그레이션 실행을 요청해 주세요:\n"
+                    "`db/02_hybrid_search.sql` 최신 버전 재실행"
+                )
+            elif "Could not find the function" in err_text or "PGRST202" in err_text:
+                friendly_msg = (
+                    "⚠️ 데이터베이스의 검색 함수가 설치되지 않았습니다.\n\n"
+                    "관리자에게 `db/02_hybrid_search.sql` 실행을 요청해 주세요."
+                )
+            elif "no rows" in err_text.lower() or "검색 결과 없음" in err_text:
+                friendly_msg = (
+                    "ℹ️ 아직 사규·사례 등 문서가 업로드되지 않았습니다.\n\n"
+                    "관리자가 문서를 적재한 뒤 다시 시도해 주세요."
+                )
+            else:
+                friendly_msg = "⚠️ 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+            st.markdown(friendly_msg)
+            with st.expander("🔧 기술 세부정보 (관리자용)", expanded=False):
+                st.code(tb_str or str(last_err) or "(no traceback)", language="python")
+
     if ans is None:
-        st.error(f"오류가 발생했습니다: {last_err}")
-        st.exception(last_err)
-        st.text_area("RAW TRACEBACK (복사용)", tb_str, height=300)
+        st.session_state["history"].append((
+            "assistant", friendly_msg,
+            {"contexts": [], "critical": False, "kind": None, "thinking": "", "elapsed": 0.0},
+        ))
         return
 
         if ans.thinking:
