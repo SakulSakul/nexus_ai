@@ -18,7 +18,10 @@ def main() -> int:
         return 0
     from supabase import create_client
     sb = create_client(url, key)
-    rows = sb.table("hotline_config").select("key").limit(1).execute().data
+    # anon 키 기반 keepalive 는 hotline_config_public view 로 ping 한다.
+    # 원본 hotline_config 테이블은 RLS 가 anon SELECT 를 차단하므로 직접
+    # 조회하면 빈 결과가 떨어져 keepalive 의의가 없어진다.
+    rows = sb.table("hotline_config_public").select("key").limit(1).execute().data
     print(f"keepalive ok: {len(rows or [])} row(s)")
     return 0
 
