@@ -599,7 +599,7 @@ def _sidebar(sb, hotlines: dict) -> str:
 def _hotline_button(hotlines: dict[str, str]) -> None:
     url = hotlines.get("ethics_hotline_url") or hotlines.get("internal_report_url")
     if url:
-        st.link_button("윤리팀 익명 제보 채널", url, use_container_width=True)
+        st.link_button("신세계면세점 핫라인 제보하기", url, use_container_width=True)
 
 
 def _render_contexts(contexts: list[dict]) -> None:
