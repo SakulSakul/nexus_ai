@@ -39,6 +39,8 @@ html, body, .stApp {
   color: var(--c-text) !important;
 }
 #MainMenu, footer, header { visibility: hidden; }
+[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
 * { box-sizing: border-box; }
 
 /* ── 4px top frame ── */
