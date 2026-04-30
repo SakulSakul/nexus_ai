@@ -529,11 +529,19 @@ def _tab_hotlines(sb):
         "인사 챗봇 오픈 시 `hr_chatbot_url` 만 채우면 자동 전환됩니다."
     )
 
-    # hotline_config 는 RLS 적용 테이블. write 작업은 service_role 키로
-    # 만든 admin 클라이언트를 사용해야 한다 (anon 키는 42501 차단).
+    # hotline_config 는 RLS 적용 테이블. read · write 모두 service_role 키로
+    # 만든 admin 클라이언트를 사용한다. anon 키는 RLS 정책상 SELECT 도
+    # 차단되어 폼 prefill 이 비기 때문 (사용자 측 app.py 의 load_hotlines
+    # read 만 별도 anon SELECT 정책으로 허용).
     admin_sb = _supabase_admin()
+    if admin_sb is None:
+        st.error(
+            "SUPABASE_SERVICE_ROLE_KEY secret 이 설정되지 않았습니다. "
+            "Streamlit Cloud → Manage app → Settings → Secrets 에서 추가 후 Reboot 하세요."
+        )
+        return
 
-    rows = sb.table("hotline_config").select("*").order("key").execute().data or []
+    rows = admin_sb.table("hotline_config").select("*").order("key").execute().data or []
     existing = {r["key"]: r for r in rows}
 
     LABELS = {
