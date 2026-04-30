@@ -11,226 +11,424 @@ from core.config import CATEGORIES, get_secret, load_hotlines, settings
 st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Global CSS
+#  Design System: Shinsegae Newsroom Editorial
+#  - Monochrome: #1A1A1A / #333 / #767 / #AEAEAE / #E0E0E0 / #F7F7F7 / #FFF
+#  - Font: Pretendard
+#  - No gradients · No shadows · No border-radius · No color accents
+#  - 4px black top frame · 1px #E0E0E0 borders · 4px #1A1A1A card accents
 # ──────────────────────────────────────────────────────────────────────────────
 _CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 
+:root {
+  --c-primary:  #1A1A1A;
+  --c-text:     #333333;
+  --c-caption:  #767676;
+  --c-muted:    #AEAEAE;
+  --c-border:   #E0E0E0;
+  --c-surface:  #F7F7F7;
+  --c-bg:       #FFFFFF;
+  --font: 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+
+/* ── Reset ── */
 html, body, .stApp {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font) !important;
+  background: var(--c-bg) !important;
+  color: var(--c-text) !important;
 }
 #MainMenu, footer, header { visibility: hidden; }
+* { box-sizing: border-box; }
+
+/* ── 4px top frame ── */
+.nx-topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: var(--c-primary);
+  z-index: 9999;
+}
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0f172a 0%, #1a2744 100%) !important;
+  background: var(--c-surface) !important;
+  border-right: 1px solid var(--c-border) !important;
 }
 [data-testid="stSidebar"] > div { background: transparent !important; }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stMarkdown { color: #94a3b8 !important; }
-[data-testid="stSidebar"] h3 { color: #f1f5f9 !important; }
-[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.07) !important; }
-[data-testid="stSidebar"] [data-testid="stSelectbox"] > div > div {
-    background: rgba(255,255,255,0.07) !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-    color: #f1f5f9 !important;
-    border-radius: 8px !important;
+[data-testid="stSidebar"] .stMarkdown,
+[data-testid="stSidebar"] .stCaption {
+  font-family: var(--font) !important;
+  color: var(--c-caption) !important;
 }
-[data-testid="stSidebar"] .stSelectbox svg { fill: #94a3b8 !important; }
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 { color: var(--c-primary) !important; }
+[data-testid="stSidebar"] hr {
+  border: none !important;
+  border-top: 1px solid var(--c-border) !important;
+  margin: 20px 0 !important;
+}
+
+/* Sidebar selectbox */
+[data-testid="stSidebar"] [data-testid="stSelectbox"] > div > div {
+  background: var(--c-bg) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  color: var(--c-primary) !important;
+  font-family: var(--font) !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stSelectbox"] > div > div:focus-within {
+  border-color: var(--c-primary) !important;
+}
+
+/* Sidebar buttons */
 [data-testid="stSidebar"] .stButton > button {
-    background: rgba(255,255,255,0.07) !important;
-    border: 1px solid rgba(255,255,255,0.13) !important;
-    color: #e2e8f0 !important;
-    border-radius: 8px !important;
-    font-size: 0.85rem !important;
+  background: var(--c-bg) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  color: var(--c-primary) !important;
+  font-family: var(--font) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+  letter-spacing: 0.03em !important;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
-    background: rgba(255,255,255,0.13) !important;
-    border-color: rgba(255,255,255,0.22) !important;
+  background: var(--c-surface) !important;
+  border-color: var(--c-primary) !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
+[data-testid="stSidebar"] input,
 [data-testid="stSidebar"] input[type="password"] {
-    background: rgba(255,255,255,0.07) !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-    color: #f1f5f9 !important;
-    border-radius: 8px !important;
+  background: var(--c-bg) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  color: var(--c-primary) !important;
+  font-family: var(--font) !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+}
+[data-testid="stSidebar"] input:focus {
+  border-bottom: 2px solid var(--c-primary) !important;
 }
 
-/* ── Main area background ── */
-[data-testid="stMain"] { background: #f1f5f9; }
-[data-testid="block-container"] { padding-top: 1.5rem !important; }
+/* ── Main area ── */
+[data-testid="stMain"] { background: var(--c-bg) !important; }
+[data-testid="block-container"] { padding-top: 2rem !important; }
 
-/* ── All default buttons (example Qs, etc.) ── */
+/* ── All buttons (default) ── */
 .stButton > button {
-    text-align: left !important;
-    white-space: normal !important;
-    height: auto !important;
-    padding: 0.8rem 1rem !important;
-    border-radius: 10px !important;
-    border: 1px solid #e2e8f0 !important;
-    background: #ffffff !important;
-    color: #334155 !important;
-    font-size: 0.875rem !important;
-    font-weight: 500 !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
-    transition: all 0.15s ease !important;
-    line-height: 1.45 !important;
+  font-family: var(--font) !important;
+  background: var(--c-bg) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  color: var(--c-primary) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 0.75rem 1rem !important;
+  text-align: left !important;
+  white-space: normal !important;
+  height: auto !important;
+  line-height: 1.6 !important;
+  box-shadow: none !important;
+  transition: background 0.12s ease, border-color 0.12s ease !important;
 }
 .stButton > button:hover {
-    border-color: #3b82f6 !important;
-    color: #1d4ed8 !important;
-    background: #eff6ff !important;
-    box-shadow: 0 4px 14px rgba(59,130,246,0.18) !important;
-    transform: translateY(-1px) !important;
+  background: var(--c-surface) !important;
+  border-color: var(--c-primary) !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
+
+/* Primary button */
 .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
-    border: none !important;
-    color: #ffffff !important;
-    font-weight: 600 !important;
-    box-shadow: 0 2px 8px rgba(59,130,246,0.38) !important;
+  background: var(--c-primary) !important;
+  border: 1px solid var(--c-primary) !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.03em !important;
+  box-shadow: none !important;
 }
 .stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #1e40af, #2563eb) !important;
-    color: #ffffff !important;
-    box-shadow: 0 4px 16px rgba(59,130,246,0.46) !important;
+  background: #333333 !important;
+  border-color: #333333 !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 /* ── Chat messages ── */
 [data-testid="stChatMessage"] {
-    border-radius: 14px !important;
-    padding: 1rem 1.25rem !important;
-    margin-bottom: 0.75rem !important;
-    border: 1px solid #e2e8f0 !important;
-    background: #ffffff !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  padding: 1.25rem 1.5rem !important;
+  margin-bottom: 2px !important;
+  background: var(--c-bg) !important;
+  box-shadow: none !important;
 }
 
 /* ── Chat input ── */
 [data-testid="stChatInput"] textarea {
-    border-radius: 12px !important;
-    border: 1.5px solid #e2e8f0 !important;
-    background: #ffffff !important;
-    font-family: inherit !important;
-    font-size: 0.93rem !important;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.07) !important;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+  font-family: var(--font) !important;
+  border: 0 !important;
+  border-top: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  background: var(--c-bg) !important;
+  font-size: 13px !important;
+  color: var(--c-text) !important;
+  box-shadow: none !important;
+  resize: none !important;
 }
 [data-testid="stChatInput"] textarea:focus {
-    border-color: #3b82f6 !important;
-    box-shadow: 0 2px 16px rgba(59,130,246,0.14) !important;
+  border-top: 2px solid var(--c-primary) !important;
+  box-shadow: none !important;
+}
+[data-testid="stChatInput"] {
+  border: 0 !important;
+  border-top: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: var(--c-bg) !important;
 }
 
 /* ── Expander ── */
 [data-testid="stExpander"] {
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 10px !important;
-    background: #ffffff !important;
-    box-shadow: none !important;
-    margin-top: 0.5rem !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  background: var(--c-bg) !important;
+  box-shadow: none !important;
+  margin-top: 12px !important;
 }
 [data-testid="stExpander"] summary {
-    font-size: 0.82rem !important;
-    color: #64748b !important;
-    font-weight: 500 !important;
+  font-family: var(--font) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  color: var(--c-caption) !important;
 }
 
 /* ── Alert ── */
-[data-testid="stAlert"] { border-radius: 10px !important; }
+[data-testid="stAlert"] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--font) !important;
+}
 
-/* ── Link button ── */
+/* ── Link button (hotline) ── */
 [data-testid="stLinkButton"] > a {
-    border-radius: 10px !important;
-    border: 1.5px solid #e2e8f0 !important;
-    background: #ffffff !important;
-    color: #1d4ed8 !important;
-    font-weight: 500 !important;
-    font-size: 0.875rem !important;
-    transition: all 0.15s ease !important;
+  font-family: var(--font) !important;
+  background: var(--c-primary) !important;
+  border: 1px solid var(--c-primary) !important;
+  border-radius: 0 !important;
+  color: #FFFFFF !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.05em !important;
+  box-shadow: none !important;
 }
 [data-testid="stLinkButton"] > a:hover {
-    background: #eff6ff !important;
-    border-color: #3b82f6 !important;
+  background: #333333 !important;
+  border-color: #333333 !important;
 }
 
 /* ── Caption ── */
-.stCaption { color: #94a3b8 !important; font-size: 0.78rem !important; }
+.stCaption {
+  font-family: var(--font) !important;
+  font-size: 11px !important;
+  color: var(--c-caption) !important;
+  letter-spacing: 0.05em !important;
+}
 
-/* ── Custom HTML components ── */
-.nexus-section-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #94a3b8;
-    margin-bottom: 0.65rem;
+/* ────────────────────────────────────────
+   Custom HTML component styles
+──────────────────────────────────────── */
+
+/* Section label with 2px underline accent */
+.nx-label {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #767676;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #1A1A1A;
+  display: inline-block;
 }
-.doc-ref-card {
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 0.75rem 1rem;
-    background: #f8fafc;
-    margin-bottom: 0.5rem;
+
+/* Hero */
+.nx-hero {
+  padding: 48px 0 40px;
+  border-bottom: 1px solid #E0E0E0;
+  margin-bottom: 40px;
 }
-.doc-ref-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #1e293b;
-    margin-bottom: 0.3rem;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+.nx-hero-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #767676;
+  margin: 0 0 16px;
 }
-.doc-ref-text {
-    font-size: 0.8rem;
-    color: #64748b;
-    line-height: 1.5;
-    margin: 0;
+.nx-hero-title {
+  font-size: 36px;
+  font-weight: 700;
+  color: #1A1A1A;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 14px;
 }
-.badge {
-    display: inline-block;
-    font-size: 0.67rem;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 5px;
-    letter-spacing: 0.04em;
-    vertical-align: middle;
-    flex-shrink: 0;
+.nx-hero-sub {
+  font-size: 14px;
+  color: #767676;
+  line-height: 1.7;
+  margin: 0;
+  font-weight: 400;
 }
-.badge-rule    { background: #dbeafe; color: #1d4ed8; }
-.badge-case    { background: #dcfce7; color: #166534; }
-.badge-penalty { background: #fef3c7; color: #92400e; }
-.critical-banner {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: linear-gradient(135deg, #fef2f2, #fee2e2);
-    border: 1.5px solid #fca5a5;
-    border-left: 4px solid #ef4444;
-    border-radius: 10px;
-    padding: 0.7rem 1rem;
-    margin-bottom: 0.75rem;
-    color: #991b1b;
-    font-weight: 600;
-    font-size: 0.875rem;
+
+/* Example Q section header */
+.nx-eq-header {
+  padding-bottom: 10px;
+  margin-bottom: 0;
+  border-bottom: 2px solid #1A1A1A;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
 }
-.nexus-hero {
-    padding: 0.5rem 0 1.5rem;
+.nx-eq-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #767676;
+  margin: 0;
 }
-.nexus-hero-title {
-    font-size: 1.85rem;
-    font-weight: 700;
-    color: #0f172a;
-    letter-spacing: -0.025em;
-    margin: 0 0 0.3rem;
-    line-height: 1.2;
+.nx-eq-sub {
+  font-size: 11px;
+  color: #AEAEAE;
+  margin: 0;
 }
-.nexus-hero-sub {
-    font-size: 0.92rem;
-    color: #64748b;
-    margin: 0;
+
+/* Doc reference card */
+.nx-doc-card {
+  border: 1px solid #E0E0E0;
+  border-top: 4px solid #1A1A1A;
+  padding: 16px;
+  margin-bottom: 4px;
+  background: #FFFFFF;
+}
+.nx-doc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.nx-doc-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #1A1A1A;
+  color: #FFFFFF;
+  padding: 2px 7px;
+  flex-shrink: 0;
+}
+.nx-doc-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1A1A1A;
+}
+.nx-doc-cite {
+  font-size: 11px;
+  color: #767676;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.nx-doc-text {
+  font-size: 12px;
+  color: #767676;
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* Critical alert — inverted block */
+.nx-critical {
+  background: #1A1A1A;
+  color: #FFFFFF;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.nx-critical-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  background: #FFFFFF;
+  color: #1A1A1A;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+/* Elapsed time */
+.nx-elapsed {
+  font-size: 11px;
+  color: #AEAEAE;
+  letter-spacing: 0.05em;
+  margin-top: 10px;
+}
+
+/* Sidebar brand block */
+.nx-brand {
+  padding: 28px 0 20px;
+  border-bottom: 2px solid #1A1A1A;
+  margin-bottom: 24px;
+}
+.nx-brand-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #AEAEAE;
+  margin: 0 0 6px;
+}
+.nx-brand-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1A1A1A;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+/* Sidebar section label */
+.nx-sidebar-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #AEAEAE;
+  margin: 0 0 10px;
+}
+
+/* Sidebar disclaimer */
+.nx-disclaimer {
+  font-size: 11px;
+  color: #AEAEAE;
+  line-height: 1.65;
+  margin: 0;
 }
 </style>
 """
@@ -252,10 +450,10 @@ _HOTLINE_LABELS = {
     "hr_chatbot_url":      "인사 챗봇 URL",
 }
 
-_KIND_BADGE = {
-    "rule":    ('<span class="badge badge-rule">사규</span>', "사규"),
-    "case":    ('<span class="badge badge-case">사례</span>', "사례"),
-    "penalty": ('<span class="badge badge-penalty">징계기준</span>', "징계기준"),
+_KIND_BADGE_TEXT = {
+    "rule":    "사규",
+    "case":    "사례",
+    "penalty": "징계기준",
 }
 
 
@@ -269,7 +467,7 @@ def _supabase():
 
 
 def _admin_panel(sb, hotlines: dict) -> None:
-    with st.expander("🔐 관리자 설정"):
+    with st.expander("ADMIN"):
         admin_pw = get_secret("ADMIN_PASSWORD")
         if not admin_pw:
             st.info("ADMIN_PASSWORD secret을 설정하면 관리자 기능이 활성화됩니다.")
@@ -277,7 +475,7 @@ def _admin_panel(sb, hotlines: dict) -> None:
 
         if not st.session_state.get("admin_authenticated"):
             with st.form("sidebar_admin_login"):
-                pw = st.text_input("관리자 비밀번호", type="password")
+                pw = st.text_input("비밀번호", type="password")
                 submitted = st.form_submit_button("로그인", type="primary")
             if submitted:
                 if pw == admin_pw:
@@ -294,9 +492,8 @@ def _admin_panel(sb, hotlines: dict) -> None:
             st.rerun()
 
         st.markdown("---")
-        st.page_link("pages/admin.py", label="🛠️ Admin 대시보드 열기", use_container_width=True)
+        st.page_link("pages/admin.py", label="Admin 대시보드 열기", use_container_width=True)
         st.markdown("---")
-        st.markdown("**안내 문구 / URL 설정**")
 
         updated: dict[str, str] = {}
         for key, label in _HOTLINE_LABELS.items():
@@ -321,21 +518,15 @@ def _sidebar(sb, hotlines: dict) -> str:
     with st.sidebar:
         st.markdown(
             """
-            <div style="padding:1.25rem 0 0.5rem">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-                <span style="font-size:1.5rem">🛡️</span>
-                <span style="font-size:1.2rem;font-weight:700;color:#f1f5f9;letter-spacing:-0.01em">NEXUS AI</span>
-              </div>
-              <p style="font-size:0.78rem;color:#64748b;margin:0;padding-left:2px">
-                전사 컴플라이언스 어시스턴트
-              </p>
+            <div class="nx-brand">
+              <p class="nx-brand-eyebrow">Compliance Assistant</p>
+              <p class="nx-brand-title">NEXUS AI</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.markdown("---")
         st.markdown(
-            '<p class="nexus-section-label">질의 범위</p>',
+            '<p class="nx-sidebar-label">질의 범위</p>',
             unsafe_allow_html=True,
         )
         cat = st.selectbox(
@@ -345,9 +536,12 @@ def _sidebar(sb, hotlines: dict) -> str:
             label_visibility="collapsed",
         )
         st.markdown("---")
-        st.caption(
-            "본 챗봇은 사규·윤리강령·사례집 기반 답변을 제공합니다. "
-            "인사 행정·신고 절차는 인사팀으로 문의하세요."
+        st.markdown(
+            '<p class="nx-disclaimer">'
+            '본 챗봇은 사규·윤리강령·사례집 기반 답변을 제공합니다.<br>'
+            '인사 행정·신고 절차는 인사팀으로 문의하세요.'
+            '</p>',
+            unsafe_allow_html=True,
         )
         st.markdown("---")
         _admin_panel(sb, hotlines)
@@ -357,29 +551,32 @@ def _sidebar(sb, hotlines: dict) -> str:
 def _hotline_button(hotlines: dict[str, str]) -> None:
     url = hotlines.get("ethics_hotline_url") or hotlines.get("internal_report_url")
     if url:
-        st.link_button("🔔 윤리팀 익명 제보 채널로 연결", url, use_container_width=True)
+        st.link_button("윤리팀 익명 제보 채널", url, use_container_width=True)
 
 
 def _render_contexts(contexts: list[dict]) -> None:
     if not contexts:
         return
-    with st.expander("📎 참조 문서 보기", expanded=False):
+    with st.expander("REFERENCE DOCUMENTS", expanded=False):
         for c in contexts:
-            kind = c.get("doc_kind", "")
-            badge_html, _ = _KIND_BADGE.get(kind, ("", ""))
+            badge = _KIND_BADGE_TEXT.get(c.get("doc_kind", ""), "DOC")
             title = c.get("doc_title") or "문서"
             cite = ""
             if c.get("article_no"):
                 cite = c["article_no"]
             elif c.get("case_no"):
-                cite = f"사례집 #{c['case_no']}"
-            cite_html = f'<span style="color:#94a3b8;font-size:0.78rem;margin-left:4px">{cite}</span>' if cite else ""
-            text = (c.get("text") or "")[:500]
+                cite = f"#{c['case_no']}"
+            cite_html = f'<span class="nx-doc-cite">{cite}</span>' if cite else ""
+            text = (c.get("text") or "")[:480]
             st.markdown(
                 f"""
-                <div class="doc-ref-card">
-                  <div class="doc-ref-title">{badge_html}{title}{cite_html}</div>
-                  <p class="doc-ref-text">{text}</p>
+                <div class="nx-doc-card">
+                  <div class="nx-doc-header">
+                    <span class="nx-doc-badge">{badge}</span>
+                    <span class="nx-doc-title">{title}</span>
+                    {cite_html}
+                  </div>
+                  <p class="nx-doc-text">{text}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -388,14 +585,32 @@ def _render_contexts(contexts: list[dict]) -> None:
 
 def _show_example_questions() -> str | None:
     st.markdown(
-        '<p class="nexus-section-label" style="margin-top:1rem">이런 질문을 해보세요</p>',
+        """
+        <div class="nx-eq-header">
+          <p class="nx-eq-title">Sample Questions</p>
+          <p class="nx-eq-sub">클릭하면 바로 질문됩니다</p>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
+    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
     cols = st.columns(2)
     for i, q in enumerate(_EXAMPLE_QUESTIONS):
         if cols[i % 2].button(q, key=f"eq_{i}", use_container_width=True):
             return q
     return None
+
+
+def _render_critical_banner() -> None:
+    st.markdown(
+        """
+        <div class="nx-critical">
+          <span class="nx-critical-label">ALERT</span>
+          본 사안은 심각 사안 응답 모드로 처리되었습니다
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
@@ -404,7 +619,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
         st.markdown(q)
 
     with st.chat_message("assistant"):
-        with st.spinner("관련 문서 검색 및 답변 생성 중..."):
+        with st.spinner("문서 검색 및 답변 생성 중..."):
             try:
                 ans = ask(sb, question=q, category=cat)
             except Exception as e:
@@ -412,19 +627,17 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 return
 
         if ans.thinking:
-            with st.expander("💭 생각 과정 보기", expanded=False):
+            with st.expander("THINKING PROCESS", expanded=False):
                 st.markdown(ans.thinking)
 
         if ans.is_critical:
-            st.markdown(
-                '<div class="critical-banner">'
-                '⚠️&nbsp; 본 사안은 <strong>심각 사안 응답 모드</strong>로 처리되었습니다.'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            _render_critical_banner()
 
         st.markdown(ans.text)
-        st.caption(f"⏱ {ans.elapsed:.1f}s")
+        st.markdown(
+            f'<p class="nx-elapsed">{ans.elapsed:.1f}s</p>',
+            unsafe_allow_html=True,
+        )
         _render_contexts(ans.contexts)
         _hotline_button(hotlines)
 
@@ -442,10 +655,12 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
 
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
+    # 4px top frame line
+    st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
 
     sb = _supabase()
     if sb is None:
-        st.error("⚠️ Supabase 설정이 없습니다. SUPABASE_URL / SUPABASE_KEY 를 secrets 에 추가하세요.")
+        st.error("Supabase 설정이 없습니다. SUPABASE_URL / SUPABASE_KEY 를 secrets에 추가하세요.")
         st.stop()
 
     if "history" not in st.session_state:
@@ -454,14 +669,15 @@ def main():
     hotlines = load_hotlines(sb)
     cat = _sidebar(sb, hotlines)
 
-    # Hero
+    # Hero section
     st.markdown(
         """
-        <div class="nexus-hero">
-          <p class="nexus-hero-title">무엇을 도와드릴까요?</p>
-          <p class="nexus-hero-sub">
-            사규 · 윤리강령 · 사례집 · 징계규정을 통합 검색합니다.
-            &nbsp;|&nbsp; 이름·부서 등 식별정보는 자동 마스킹됩니다.
+        <div class="nx-hero">
+          <p class="nx-hero-eyebrow">NEXUS AI · Compliance Intelligence</p>
+          <h1 class="nx-hero-title">무엇을 도와드릴까요?</h1>
+          <p class="nx-hero-sub">
+            사규 · 윤리강령 · 사건사고 사례 · 징계규정을 통합 검색합니다.<br>
+            이름 · 부서 등 식별정보는 자동 마스킹됩니다.
           </p>
         </div>
         """,
@@ -472,24 +688,22 @@ def main():
     for role, content, meta in st.session_state["history"]:
         with st.chat_message(role):
             if role == "assistant" and meta.get("thinking"):
-                with st.expander("💭 생각 과정 보기", expanded=False):
+                with st.expander("THINKING PROCESS", expanded=False):
                     st.markdown(meta["thinking"])
             if role == "assistant" and meta.get("critical"):
-                st.markdown(
-                    '<div class="critical-banner">'
-                    '⚠️&nbsp; 본 사안은 <strong>심각 사안 응답 모드</strong>로 처리되었습니다.'
-                    '</div>',
-                    unsafe_allow_html=True,
-                )
+                _render_critical_banner()
             st.markdown(content)
             if role == "assistant" and meta.get("elapsed"):
-                st.caption(f"⏱ {meta['elapsed']:.1f}s")
+                st.markdown(
+                    f'<p class="nx-elapsed">{meta["elapsed"]:.1f}s</p>',
+                    unsafe_allow_html=True,
+                )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
             if role == "assistant":
                 _hotline_button(hotlines)
 
-    # Example questions (shown only when no history)
+    # Example questions (empty state only)
     clicked_q: str | None = None
     if not st.session_state["history"]:
         clicked_q = _show_example_questions()
