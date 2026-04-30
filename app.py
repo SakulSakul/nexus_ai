@@ -898,7 +898,6 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 unsafe_allow_html=True,
             )
             _render_contexts(ans.contexts)
-            _hotline_button(hotlines)
 
     if ans is None:
         st.session_state["history"].append((
@@ -966,8 +965,6 @@ def main():
                 )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
-            if role == "assistant":
-                _hotline_button(hotlines)
 
     # Example questions (empty state only)
     clicked_q: str | None = None
