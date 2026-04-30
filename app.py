@@ -460,14 +460,13 @@ _KIND_BADGE_TEXT = {
 
 
 def _supabase():
-    """브라우저 세션별 독립 클라이언트. 연결 오류 시 session_state 초기화로 재생성."""
-    if st.session_state.get("_sb") is None:
-        from supabase import create_client
-        s = settings()
-        if not s.supabase_url or not s.supabase_key:
-            return None
-        st.session_state["_sb"] = create_client(s.supabase_url, s.supabase_key)
-    return st.session_state["_sb"]
+    """매 스크립트 실행마다 새 클라이언트 생성. 캐시·session_state 어디에도 보관하지 않음.
+    httpx 연결이 다른 사용자 세션에서 닫혀 공유 객체가 망가지는 문제를 원천 차단."""
+    from supabase import create_client
+    s = settings()
+    if not s.supabase_url or not s.supabase_key:
+        return None
+    return create_client(s.supabase_url, s.supabase_key)
 
 
 def _admin_panel(sb, hotlines: dict) -> None:
@@ -624,14 +623,26 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
 
     with st.chat_message("assistant"):
         with st.spinner("문서 검색 및 답변 생성 중..."):
-            try:
-                ans = ask(sb, question=q, category=cat)
-            except Exception as e:
-                if "client has been closed" in str(e).lower():
-                    st.session_state["_sb"] = None  # 다음 질문 시 자동 재생성
-                    st.warning("연결이 초기화되었습니다. 같은 질문을 다시 입력해 주세요.")
-                else:
-                    st.error(f"오류가 발생했습니다: {e}")
+            import traceback
+            ans = None
+            last_err: Exception | None = None
+            tb_str = ""
+            for attempt in range(3):
+                try:
+                    if attempt > 0:
+                        sb = _supabase()  # 매 재시도마다 완전히 새 클라이언트
+                    ans = ask(sb, question=q, category=cat)
+                    break
+                except Exception as e:
+                    last_err = e
+                    tb_str = traceback.format_exc()
+                    if "client has been closed" in str(e).lower() and attempt < 2:
+                        continue  # 자동 재시도
+                    break
+            if ans is None:
+                st.error(f"오류가 발생했습니다: {last_err}")
+                with st.expander("🔧 디버그 (스택 트레이스)", expanded=True):
+                    st.code(tb_str, language="python")
                 return
 
         if ans.thinking:
