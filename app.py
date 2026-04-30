@@ -164,6 +164,42 @@ html, body, .stApp {
   box-shadow: none !important;
   transform: none !important;
 }
+
+/* Sidebar 안의 모든 버튼(stButton + stFormSubmitButton) 라벨이 회색
+   상속을 받지 않도록 명시적으로 검정색 지정. Primary kind는 흰 텍스트. */
+[data-testid="stSidebar"] .stButton > button p,
+[data-testid="stSidebar"] .stButton > button span,
+[data-testid="stSidebar"] .stFormSubmitButton > button,
+[data-testid="stSidebar"] .stFormSubmitButton > button p,
+[data-testid="stSidebar"] .stFormSubmitButton > button span {
+  color: var(--c-primary) !important;
+  font-weight: 600 !important;
+}
+[data-testid="stSidebar"] .stFormSubmitButton > button {
+  background: var(--c-bg) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  font-family: var(--font) !important;
+  font-size: 12px !important;
+  letter-spacing: 0.03em !important;
+  box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stFormSubmitButton > button[kind="primary"],
+[data-testid="stSidebar"] .stFormSubmitButton > button[kind="primary"] p,
+[data-testid="stSidebar"] .stFormSubmitButton > button[kind="primary"] span,
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+[data-testid="stSidebar"] .stButton > button[kind="primary"] span {
+  background: var(--c-primary) !important;
+  border-color: var(--c-primary) !important;
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+}
+[data-testid="stSidebar"] .stFormSubmitButton > button[kind="primary"]:hover,
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+  background: #333333 !important;
+  border-color: #333333 !important;
+}
 [data-testid="stSidebar"] input,
 [data-testid="stSidebar"] input[type="password"] {
   background: var(--c-bg) !important;
