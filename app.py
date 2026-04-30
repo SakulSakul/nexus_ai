@@ -28,22 +28,14 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* Sidebar pinned permanently open — collapse/expand controls are
-   removed entirely so users can never hide it. */
+/* Hide only the collapse buttons so users cannot hide the sidebar.
+   Do NOT force display/visibility on the sidebar itself — that breaks
+   Streamlit's internal flex layout. The sidebar already starts open
+   via initial_sidebar_state="expanded". */
 [data-testid="stSidebarCollapseButton"],
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {
   display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-[data-testid="stSidebar"],
-[data-testid="stSidebar"] > div {
-  visibility: visible !important;
-  display: block !important;
-  transform: none !important;
-  margin-left: 0 !important;
-  min-width: 244px !important;
 }
 
 /* Hide all tooltips (the gray hover labels that show button title text) */
