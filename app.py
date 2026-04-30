@@ -51,6 +51,30 @@ _CSS = """
   background: var(--c-surface) !important;
 }
 
+/* Floating sidebar expand control — sits above the 4px top frame so the
+   button is reachable when the sidebar is collapsed. */
+[data-testid="stSidebarCollapsedControl"] {
+  position: fixed !important;
+  top: 12px !important;
+  left: 12px !important;
+  z-index: 10000 !important;
+  width: 36px !important;
+  height: 36px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: var(--c-primary) !important;
+  border: 1px solid var(--c-primary) !important;
+}
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="stSidebarCollapsedControl"] svg {
+  color: #FFFFFF !important;
+  fill: #FFFFFF !important;
+}
+[data-testid="stSidebarCollapsedControl"] button:hover {
+  background: #333333 !important;
+}
+
 /* Hide all tooltips (the gray hover labels that show button title text) */
 [data-baseweb="tooltip"],
 [role="tooltip"],
@@ -492,7 +516,7 @@ _EXAMPLE_QUESTIONS = [
 _HOTLINE_LABELS = {
     "internal_report_url": "사내 익명 제보채널 URL",
     "external_hotline":    "외부 상담채널",
-    "ethics_hotline_url":  "윤리팀 익명 제보채널 URL",
+    "ethics_hotline_url":  "신세계면세점 핫라인 제보하기 URL",
     "hr_contact_text":     "인사팀 문의 안내 문구",
     "hr_chatbot_url":      "인사 챗봇 URL",
 }

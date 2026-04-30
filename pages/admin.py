@@ -438,7 +438,7 @@ def _tab_hotlines(sb):
     LABELS = {
         "internal_report_url": "사내 익명 제보채널 URL",
         "external_hotline":    "외부 상담채널 (예: 고용노동부 1350)",
-        "ethics_hotline_url":  "윤리팀 익명 제보채널 URL",
+        "ethics_hotline_url":  "신세계면세점 핫라인 제보하기 URL",
         "hr_contact_text":     "인사팀 안내 문구 (인사 챗봇 미오픈 시)",
         "hr_chatbot_url":      "인사 챗봇 URL (채우면 자동 전환)",
     }
