@@ -628,6 +628,31 @@ html, body, .stApp {
     -webkit-font-smoothing: antialiased !important;
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
 }
+
+/* `html body ...` 셀렉터로 specificity 를 0,3,1 수준까지 끌어올려
+   기존 `[data-testid="stSidebar"] span { font-family: Pretendard !important }`
+   (0,2,1) 등 컨테이너 단위 폰트 강제를 명확히 이기도록 보강.
+   이로써 사이드바 / chat input / 사이드바 토글 위치의 stIconMaterial
+   노드가 Material Symbols 폰트를 실제로 적용받아 ligature 가 글리프로
+   변환되고, 브라우저의 lazy 폰트 로드 트리거가 정상 발동됨. */
+html body [data-testid="stIconMaterial"],
+html body [data-testid="stSidebar"] [data-testid="stIconMaterial"],
+html body [data-testid="stChatInput"] [data-testid="stIconMaterial"],
+html body [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+html body [data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"] {
+    font-family: 'Material Symbols Outlined', 'Material Symbols Rounded' !important;
+    font-weight: normal !important;
+    font-style: normal !important;
+    line-height: 1 !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    white-space: nowrap !important;
+    word-wrap: normal !important;
+    direction: ltr !important;
+    -webkit-font-feature-settings: 'liga' !important;
+    -webkit-font-smoothing: antialiased !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
+}
 </style>
 """
 
