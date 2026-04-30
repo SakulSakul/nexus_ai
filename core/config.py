@@ -74,11 +74,16 @@ _DEFAULT_HOTLINES: dict[str, str] = {
 
 
 def load_hotlines(supabase: Any | None = None) -> dict[str, str]:
+    # 사용자(anon) 측 read 는 hotline_config_public view 를 통해서만 한다.
+    # view 는 key/value 두 컬럼만 노출하므로 description / updated_at 같은
+    # 운영 메타데이터는 anon 에 누설되지 않는다. 원본 hotline_config 테이블
+    # 은 RLS 로 anon 차단을 유지하고, write 는 admin(service_role)이 원본
+    # 테이블에 직접 수행한다.
     out = dict(_DEFAULT_HOTLINES)
     if supabase is None:
         return out
     try:
-        rows = supabase.table("hotline_config").select("key,value").execute().data or []
+        rows = supabase.table("hotline_config_public").select("key,value").execute().data or []
         for r in rows:
             k = r.get("key"); v = r.get("value")
             if k and v is not None:
