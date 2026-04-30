@@ -61,7 +61,7 @@ begin
   ),
   fused as (
     select coalesce(vec.id, kw.id) as id,
-           coalesce(1.0/(rrf_k + vec.r), 0) + coalesce(1.0/(rrf_k + kw.r), 0) as s
+           (coalesce(1.0/(rrf_k + vec.r), 0) + coalesce(1.0/(rrf_k + kw.r), 0))::double precision as s
       from vec full outer join kw on vec.id = kw.id
   )
   select c.id, c.document_id, d.title, d.doc_kind, c.article_no, c.case_no, c.text, f.s
