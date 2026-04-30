@@ -18,15 +18,23 @@ def hybrid_search(
 ) -> list[dict]:
     s = settings()
     emb = embed_one(question, task_type="RETRIEVAL_QUERY")
-    payload = {
+    payload: dict = {
         "query_text": question,
         "query_embed": emb,
         "filter_categories": categories or None,
-        "filter_doc_kinds": doc_kinds or None,
         "top_k": top_k or s.top_k,
         "fanout": max(20, (top_k or s.top_k) * 10),
         "rrf_k": 60,
         "fallback_to_common": True,
     }
-    res = supabase.rpc("nexus_hybrid_search", payload).execute()
+    if doc_kinds:
+        payload["filter_doc_kinds"] = doc_kinds
+    try:
+        res = supabase.rpc("nexus_hybrid_search", payload).execute()
+    except Exception as e:
+        if "filter_doc_kinds" in str(e) and "filter_doc_kinds" in payload:
+            payload.pop("filter_doc_kinds", None)
+            res = supabase.rpc("nexus_hybrid_search", payload).execute()
+        else:
+            raise
     return res.data or []
