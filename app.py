@@ -457,13 +457,15 @@ _KIND_BADGE_TEXT = {
 }
 
 
-@st.cache_resource(show_spinner=False, ttl=300)
 def _supabase():
-    from supabase import create_client
-    s = settings()
-    if not s.supabase_url or not s.supabase_key:
-        return None
-    return create_client(s.supabase_url, s.supabase_key)
+    """브라우저 세션별 독립 클라이언트. 연결 오류 시 session_state 초기화로 재생성."""
+    if st.session_state.get("_sb") is None:
+        from supabase import create_client
+        s = settings()
+        if not s.supabase_url or not s.supabase_key:
+            return None
+        st.session_state["_sb"] = create_client(s.supabase_url, s.supabase_key)
+    return st.session_state["_sb"]
 
 
 def _admin_panel(sb, hotlines: dict) -> None:
@@ -624,8 +626,8 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 ans = ask(sb, question=q, category=cat)
             except Exception as e:
                 if "client has been closed" in str(e).lower():
-                    st.cache_resource.clear()
-                    st.error("서버 연결이 끊어졌습니다. 페이지를 새로고침(F5)하면 다시 사용할 수 있습니다.")
+                    st.session_state["_sb"] = None  # 다음 질문 시 자동 재생성
+                    st.warning("연결이 초기화되었습니다. 같은 질문을 다시 입력해 주세요.")
                 else:
                     st.error(f"오류가 발생했습니다: {e}")
                 return
