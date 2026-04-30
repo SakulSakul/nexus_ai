@@ -28,6 +28,18 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
+/* 사이드바 close X 만 숨겨 사용자가 능동적으로 사이드바를 닫지 못하게 함.
+   Streamlit 일부 버전에서 사이드바를 닫으면 [data-testid="stSidebar"]
+   컨테이너가 DOM 에서 제거되고 그 상태가 브라우저 localStorage 에
+   저장되어 새로고침해도 복구되지 않는 시나리오를 차단. 모바일에서
+   자동으로 collapsed 되는 경우는 막을 수 없으므로, 그때 reopen 용
+   prominent 토글(아래 stSidebarCollapsedControl 등) 이 좌상단에 떠서
+   사용자가 다시 열 수 있도록 함. 즉 *닫기 버튼만* 숨기고 *열기 버튼*
+   셀렉터는 절대 여기 추가하지 말 것. */
+[data-testid="stSidebarCollapseButton"] {
+    display: none !important;
+}
+
 /* 사이드바 닫힘 상태에서 표시되는 reopen 토글을 prominent 하게 강화.
    Streamlit 기본 토글은 작고 회색이라 사용자가 못 찾는 경우가 많아,
    화면 좌상단 고정 + 흰 배경/검정 테두리/햄버거 아이콘으로 시인성을 높임.
