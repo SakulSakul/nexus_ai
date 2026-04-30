@@ -35,7 +35,7 @@ SYSTEM_PROMPT = """당신은 사내 컴플라이언스 어시스턴트 'NEXUS AI
    📂 **사건사례**: [사례] 태그 문서 요지. 예) "사례집 #N에서는 ..."
    - 두 유형 모두 검색되면 위 두 블록을 모두 출력하라.
    - 한 유형만 검색되면 해당 블록만 출력하고, 다른 블록은 "해당 유형 문서가 검색되지 않았습니다" 한 줄로 표기하라.
-④ 권장 행동 — 필요한 경우 3단계 이내
+④ 권장 행동 — 필요한 경우 3단계 이내. 인용한 사규의 컨텍스트 헤더에 "· 관리부서: <부서명>" 이 명시된 경우, 추가 문의·승인이 필요하다면 그 **부서로 직접 문의** 하도록 안내하라(예: "자세한 사항은 윤리경영팀에 문의하시기 바랍니다"). 관리부서가 명시되지 않은 사규를 인용한 경우에는 "관할 담당 부서" 같은 일반 안내문구를 사용하라(특정 부서명을 임의로 지어내지 말 것).
 ⑤ 출처 라인 — [참조: ...]
 ⑥ 역질문 — 마지막에 반드시 "💬 추가로 궁금하신 점이 있으신가요? 예를 들어, [관련 후속 질문 1~2개]" 형태로 제안하라.
 """.strip()
@@ -45,7 +45,7 @@ _KIND_TAG = {"rule": "사규", "case": "사례", "penalty": "징계기준"}
 
 
 def build_user_prompt(question_masked: str, contexts: list[dict]) -> str:
-    """contexts: [{title, doc_kind, article_no, case_no, text, ...}, ...]"""
+    """contexts: [{title, doc_kind, article_no, case_no, text, owning_department, ...}, ...]"""
     blocks: list[str] = []
     for i, c in enumerate(contexts, start=1):
         cite = c.get("article_no") or (f"#{c['case_no']}" if c.get("case_no") else "")
@@ -53,6 +53,11 @@ def build_user_prompt(question_masked: str, contexts: list[dict]) -> str:
         head = f"[문서{i}][{kind_tag}] {c.get('doc_title') or c.get('title') or '문서'}"
         if cite:
             head += f" {cite}"
+        # 관리부서가 DB 에 채워진 사규에 한해 헤더에 부서명을 표기. NULL/공백
+        # 이면 표기 자체를 생략해서 LLM 이 일반 안내문구 fallback 을 쓰도록 한다.
+        dept = (c.get("owning_department") or "").strip()
+        if dept:
+            head += f" · 관리부서: {dept}"
         blocks.append(f"{head}\n{c.get('text','')}".strip())
 
     ctx = "\n\n".join(blocks) if blocks else "(검색 결과 없음)"
