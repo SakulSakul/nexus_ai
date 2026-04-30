@@ -79,9 +79,35 @@ _CSS = """
   display: none !important;
 }
 
-/* Pin the sidebar permanently open: hide the close button inside it.
-   initial_sidebar_state="expanded" handles the default state. */
-[data-testid="stSidebarCollapseButton"] {
+/* Pin the sidebar permanently open: hide every collapse/expand control
+   regardless of which test id this Streamlit version uses. */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+button[aria-label="Close sidebar" i],
+button[aria-label="Expand sidebar" i],
+button[aria-label*="sidebar" i] {
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Belt-and-braces for st.page_link icons specifically (their material
+   span sometimes leaks the ligature name inside the link). */
+[data-testid="stPageLink"] [data-testid="stIconMaterial"],
+[data-testid="stPageLink"] span[class*="material"],
+a[data-testid="stPageLink"] svg + span,
+a[data-testid="stPageLink"] > span:first-child {
+  display: none !important;
+  font-size: 0 !important;
+}
+
+/* Final safety: any button whose only content is a Material icon span
+   (i.e. an icon-only button, used by Streamlit for chevrons) gets
+   collapsed entirely so a leaked ligature name can't peek out. */
+button:has(> [data-testid="stIconMaterial"]:only-child),
+button:has(> span:only-child > [data-testid="stIconMaterial"]) {
   display: none !important;
 }
 
