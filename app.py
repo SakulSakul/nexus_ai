@@ -28,46 +28,27 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* Material Symbols ligatures only form when the source text is lowercase
-   and untransformed. Any inherited text-transform/letter-spacing breaks
-   them so the raw token (e.g. "keyboard_double_arrow_left") leaks as
-   visible text. Force a safe environment for every Material icon. */
-[data-testid="stIconMaterial"],
-.material-symbols-outlined,
-.material-symbols-rounded,
-.material-icons,
-[class*="material-symbols"],
-[class*="material-icons"] {
-  font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Icons',sans-serif !important;
-  font-feature-settings: 'liga' !important;
-  -webkit-font-feature-settings: 'liga' !important;
-  font-variation-settings: 'opsz' 24 !important;
-  text-transform: none !important;
-  letter-spacing: normal !important;
-  font-style: normal !important;
-  font-weight: normal !important;
-  white-space: nowrap !important;
-  word-wrap: normal !important;
-  direction: ltr !important;
-  -webkit-font-smoothing: antialiased;
+/* 사이드바 collapse/expand 버튼 텍스트 누출 방지 */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    overflow: hidden !important;
 }
 
-/* Defensive nuke: if Streamlit Cloud blocks Google Fonts (CSP / network)
-   the ligatures never form and the raw token leaks. Hide every Material
-   icon container so the leaked text never shows. The icons are purely
-   decorative (chevrons, gears) and the UI works fine without them. */
-[data-testid="stIconMaterial"],
-.material-symbols-outlined,
-.material-symbols-rounded,
-.material-icons,
-[class*="material-symbols"],
-[class*="material-icons"] {
-  display: none !important;
-  font-size: 0 !important;
-  visibility: hidden !important;
-  width: 0 !important;
-  height: 0 !important;
-  overflow: hidden !important;
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="stSidebarCollapsedControl"] *,
+[data-testid="collapsedControl"] * {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+    font-feature-settings: 'liga' !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    max-width: 32px !important;
+}
+
+/* 사이드바 자체 overflow 차단 (안전망) */
+section[data-testid="stSidebar"] {
+    overflow-x: hidden !important;
 }
 
 /* Hide Streamlit's auto-generated multipage navigation ("app" / "admin"
@@ -76,38 +57,6 @@ _CSS = """
 [data-testid="stSidebarNav"],
 [data-testid="stSidebarNavItems"],
 [data-testid="stSidebarNavSeparator"] {
-  display: none !important;
-}
-
-/* Pin the sidebar permanently open: hide every collapse/expand control
-   regardless of which test id this Streamlit version uses. */
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"],
-button[aria-label="Close sidebar" i],
-button[aria-label="Expand sidebar" i],
-button[aria-label*="sidebar" i] {
-  display: none !important;
-  visibility: hidden !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-/* Belt-and-braces for st.page_link icons specifically (their material
-   span sometimes leaks the ligature name inside the link). */
-[data-testid="stPageLink"] [data-testid="stIconMaterial"],
-[data-testid="stPageLink"] span[class*="material"],
-a[data-testid="stPageLink"] svg + span,
-a[data-testid="stPageLink"] > span:first-child {
-  display: none !important;
-  font-size: 0 !important;
-}
-
-/* Final safety: any button whose only content is a Material icon span
-   (i.e. an icon-only button, used by Streamlit for chevrons) gets
-   collapsed entirely so a leaked ligature name can't peek out. */
-button:has(> [data-testid="stIconMaterial"]:only-child),
-button:has(> span:only-child > [data-testid="stIconMaterial"]) {
   display: none !important;
 }
 
