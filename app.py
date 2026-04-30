@@ -25,8 +25,42 @@ _CSS = """
 
 /* Material icons fallback — hide leaking icon names if font fails to load */
 [data-testid="stSidebarCollapseButton"] *,
-[data-testid="stSidebarCollapsedControl"] * {
+[data-testid="stSidebarCollapsedControl"] *,
+[data-testid="stIconMaterial"] {
   font-family: 'Material Symbols Rounded','Material Symbols Outlined', sans-serif !important;
+  font-feature-settings: 'liga' !important;
+  -webkit-font-feature-settings: 'liga' !important;
+}
+
+/* Sidebar collapse/expand button — solid black square, no tooltip */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"] {
+  background: var(--c-bg) !important;
+  border: 1px solid var(--c-border) !important;
+}
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapsedControl"] button {
+  color: var(--c-primary) !important;
+  background: transparent !important;
+  border: none !important;
+  width: 32px !important;
+  height: 32px !important;
+}
+[data-testid="stSidebarCollapseButton"] button:hover,
+[data-testid="stSidebarCollapsedControl"] button:hover {
+  background: var(--c-surface) !important;
+}
+
+/* Hide all tooltips (the gray hover labels that show button title text) */
+[data-baseweb="tooltip"],
+[role="tooltip"],
+.stTooltipIcon,
+.stTooltipContent {
+  display: none !important;
+}
+button[title]:hover::after,
+button[aria-label]:hover::after {
+  display: none !important;
 }
 
 :root {
@@ -674,6 +708,19 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             st.markdown(friendly_msg)
             with st.expander("🔧 기술 세부정보 (관리자용)", expanded=False):
                 st.code(tb_str or str(last_err) or "(no traceback)", language="python")
+        else:
+            if ans.thinking:
+                with st.expander("THINKING PROCESS", expanded=False):
+                    st.markdown(ans.thinking)
+            if ans.is_critical:
+                _render_critical_banner()
+            st.markdown(ans.text)
+            st.markdown(
+                f'<p class="nx-elapsed">{ans.elapsed:.1f}s</p>',
+                unsafe_allow_html=True,
+            )
+            _render_contexts(ans.contexts)
+            _hotline_button(hotlines)
 
     if ans is None:
         st.session_state["history"].append((
@@ -681,21 +728,6 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             {"contexts": [], "critical": False, "kind": None, "thinking": "", "elapsed": 0.0},
         ))
         return
-
-        if ans.thinking:
-            with st.expander("THINKING PROCESS", expanded=False):
-                st.markdown(ans.thinking)
-
-        if ans.is_critical:
-            _render_critical_banner()
-
-        st.markdown(ans.text)
-        st.markdown(
-            f'<p class="nx-elapsed">{ans.elapsed:.1f}s</p>',
-            unsafe_allow_html=True,
-        )
-        _render_contexts(ans.contexts)
-        _hotline_button(hotlines)
 
     st.session_state["history"].append((
         "assistant", ans.text,
