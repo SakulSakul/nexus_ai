@@ -8,7 +8,12 @@ from core.chatbot import ask
 from core.config import CATEGORIES, get_secret, load_hotlines, settings
 
 
-st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
+st.set_page_config(
+    page_title="NEXUS AI",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Design System: Shinsegae Newsroom Editorial
@@ -23,33 +28,38 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* Material icons fallback — hide leaking icon names if font fails to load */
-[data-testid="stSidebarCollapseButton"] *,
-[data-testid="stSidebarCollapsedControl"] *,
-[data-testid="stIconMaterial"] {
-  font-family: 'Material Symbols Rounded','Material Symbols Outlined', sans-serif !important;
-  font-feature-settings: 'liga' !important;
-  -webkit-font-feature-settings: 'liga' !important;
+/* 사이드바 collapse/expand 버튼 텍스트 누출 방지 */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    overflow: hidden !important;
 }
 
-/* Sidebar collapse/expand button — solid black square, no tooltip */
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapsedControl"] {
-  background: var(--c-bg) !important;
-  border: 1px solid var(--c-border) !important;
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="stSidebarCollapsedControl"] *,
+[data-testid="collapsedControl"] * {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+    font-feature-settings: 'liga' !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    max-width: 32px !important;
 }
-[data-testid="stSidebarCollapseButton"] button,
-[data-testid="stSidebarCollapsedControl"] button {
-  color: var(--c-primary) !important;
-  background: transparent !important;
-  border: none !important;
-  width: 32px !important;
-  height: 32px !important;
+
+/* 사이드바 자체 overflow 차단 (안전망) */
+section[data-testid="stSidebar"] {
+    overflow-x: hidden !important;
 }
-[data-testid="stSidebarCollapseButton"] button:hover,
-[data-testid="stSidebarCollapsedControl"] button:hover {
-  background: var(--c-surface) !important;
+
+/* Hide Streamlit's auto-generated multipage navigation ("app" / "admin"
+   links at the top of the sidebar) — users reach admin via the in-app
+   ADMIN expander, not this nav. */
+[data-testid="stSidebarNav"],
+[data-testid="stSidebarNavItems"],
+[data-testid="stSidebarNavSeparator"] {
+  display: none !important;
 }
+
 
 /* Hide all tooltips (the gray hover labels that show button title text) */
 [data-baseweb="tooltip"],
@@ -81,9 +91,7 @@ html, body, .stApp {
   color: var(--c-text) !important;
 }
 #MainMenu, footer { visibility: hidden; }
-header { visibility: hidden; }
-[data-testid="stSidebarCollapsedControl"] { visibility: visible !important; display: flex !important; }
-[data-testid="stSidebarCollapseButton"]   { visibility: visible !important; }
+[data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stToolbar"] { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
 * { box-sizing: border-box; }
@@ -492,7 +500,7 @@ _EXAMPLE_QUESTIONS = [
 _HOTLINE_LABELS = {
     "internal_report_url": "사내 익명 제보채널 URL",
     "external_hotline":    "외부 상담채널",
-    "ethics_hotline_url":  "윤리팀 익명 제보채널 URL",
+    "ethics_hotline_url":  "신세계면세점 핫라인 제보하기 URL",
     "hr_contact_text":     "인사팀 문의 안내 문구",
     "hr_chatbot_url":      "인사 챗봇 URL",
 }
@@ -599,7 +607,7 @@ def _sidebar(sb, hotlines: dict) -> str:
 def _hotline_button(hotlines: dict[str, str]) -> None:
     url = hotlines.get("ethics_hotline_url") or hotlines.get("internal_report_url")
     if url:
-        st.link_button("윤리팀 익명 제보 채널", url, use_container_width=True)
+        st.link_button("신세계면세점 핫라인 제보하기", url, use_container_width=True)
 
 
 def _render_contexts(contexts: list[dict]) -> None:
