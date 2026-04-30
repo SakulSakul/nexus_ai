@@ -18,7 +18,11 @@ def _client():
 
 def embed_one(text: str, *, task_type: str = "RETRIEVAL_QUERY") -> list[float]:
     s = settings()
-    res = _client().models.embed_content(
+    # NOTE: genai.Client 를 임시 객체로 두면 호출 직전에 GC 되며
+    # 내부 httpx 클라이언트가 닫혀 "Cannot send a request, as the client
+    # has been closed" 가 발생한다. 반드시 로컬 변수로 잡아둘 것.
+    cli = _client()
+    res = cli.models.embed_content(
         model=s.embed_model,
         contents=text,
         config={"task_type": task_type, "output_dimensionality": s.embed_dim},
