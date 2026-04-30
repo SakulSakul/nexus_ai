@@ -304,6 +304,46 @@ def _tab_versions(sb):
         return
     st.dataframe(rows, use_container_width=True)
 
+    # 관리부서 인라인 편집기. 적재 시 비워뒀거나 사규 본문 표기가
+    # 바뀐 경우 admin 이 코드 수정 없이 즉시 갱신할 수 있도록 제공.
+    # 빈 입력은 NULL 로 정규화. 업데이트는 service_role 키로만 가능.
+    st.markdown("---")
+    st.markdown("#### 🏢 관리부서 인라인 편집")
+    admin_sb = _supabase_admin()
+    if admin_sb is None:
+        st.caption(
+            "SUPABASE_SERVICE_ROLE_KEY secret 이 설정되지 않아 부서 편집을 사용할 수 없습니다."
+        )
+        return
+    for r in rows:
+        doc_id = r["id"]
+        title = r.get("title") or "(제목 없음)"
+        version = r.get("version") or ""
+        status = r.get("status") or ""
+        current = r.get("owning_department") or ""
+        c1, c2, c3 = st.columns([5, 4, 1])
+        with c1:
+            st.markdown(f"**{title}** · {version} · `{status}`")
+        with c2:
+            new_dept = st.text_input(
+                "관리부서",
+                value=current,
+                placeholder="예: 인사팀, 윤리경영팀",
+                key=f"ver_dept_{doc_id}",
+                label_visibility="collapsed",
+            )
+        with c3:
+            if st.button("저장", key=f"ver_dept_save_{doc_id}"):
+                norm = new_dept.strip() or None
+                if norm == (current or None):
+                    st.toast("변경 사항 없음")
+                else:
+                    admin_sb.table("nexus_documents").update(
+                        {"owning_department": norm}
+                    ).eq("id", doc_id).execute()
+                    st.success(f"저장됨: {title}")
+                    st.rerun()
+
 
 def _tab_radar(sb):
     st.subheader("📡 리스크 트렌드 레이더")
