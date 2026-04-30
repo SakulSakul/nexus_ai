@@ -457,7 +457,7 @@ _KIND_BADGE_TEXT = {
 }
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, ttl=300)
 def _supabase():
     from supabase import create_client
     s = settings()
@@ -623,7 +623,11 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             try:
                 ans = ask(sb, question=q, category=cat)
             except Exception as e:
-                st.error(f"오류가 발생했습니다: {e}")
+                if "client has been closed" in str(e).lower():
+                    st.cache_resource.clear()
+                    st.error("서버 연결이 끊어졌습니다. 페이지를 새로고침(F5)하면 다시 사용할 수 있습니다.")
+                else:
+                    st.error(f"오류가 발생했습니다: {e}")
                 return
 
         if ans.thinking:
