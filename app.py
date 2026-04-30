@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import streamlit as st
-from streamlit.components.v1 import html as _components_html
 
 from core.chatbot import ask
 from core.config import CATEGORIES, get_secret, load_hotlines, settings
@@ -106,22 +105,8 @@ html, body, .stApp {
   color: var(--c-text) !important;
 }
 #MainMenu, footer { visibility: hidden; }
-[data-testid="stHeader"] {
-  background: transparent !important;
-  height: auto !important;
-  visibility: visible !important;
-}
-[data-testid="stHeader"] [data-testid="stToolbar"],
-[data-testid="stHeader"] [data-testid="stDecoration"],
-[data-testid="stHeader"] [data-testid="stStatusWidget"] {
-  display: none !important;
-}
-[data-testid="stSidebarCollapsedControl"] {
-  visibility: visible !important;
-  display: flex !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-}
+header { visibility: hidden; }
+[data-testid="stSidebarCollapsedControl"] { visibility: visible !important; display: flex !important; }
 [data-testid="stSidebarCollapseButton"]   { visibility: visible !important; }
 [data-testid="stToolbar"] { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
@@ -783,63 +768,10 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     ))
 
 
-_SIDEBAR_TOGGLE_JS = """
-<div id="nx-expand-host"></div>
-<script>
-(function () {
-  const doc = window.parent.document;
-  if (doc.getElementById('nx-expand-btn')) return;
-
-  const btn = doc.createElement('button');
-  btn.id = 'nx-expand-btn';
-  btn.type = 'button';
-  btn.setAttribute('aria-label', '사이드바 펼치기');
-  btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
-  Object.assign(btn.style, {
-    position: 'fixed', top: '12px', left: '12px',
-    width: '36px', height: '36px',
-    background: '#1A1A1A', color: '#FFFFFF',
-    border: '1px solid #1A1A1A', borderRadius: '0',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    cursor: 'pointer', zIndex: '100000', padding: '0',
-  });
-  btn.addEventListener('mouseenter', () => { btn.style.background = '#333333'; });
-  btn.addEventListener('mouseleave', () => { btn.style.background = '#1A1A1A'; });
-  btn.addEventListener('click', () => {
-    const target = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button')
-                || doc.querySelector('[data-testid="stSidebarCollapseButton"] button')
-                || doc.querySelector('[data-testid="collapsedControl"] button')
-                || doc.querySelector('button[aria-label*="sidebar" i]')
-                || doc.querySelector('button[kind="header"]');
-    if (target) target.click();
-  });
-
-  function sync() {
-    const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-    if (!sidebar) { btn.style.display = 'flex'; return; }
-    const collapsed = sidebar.getAttribute('aria-expanded') === 'false'
-                   || sidebar.offsetWidth < 30
-                   || getComputedStyle(sidebar).visibility === 'hidden';
-    btn.style.display = collapsed ? 'flex' : 'none';
-  }
-
-  doc.body.appendChild(btn);
-  sync();
-  const obs = new MutationObserver(sync);
-  obs.observe(doc.body, { attributes: true, subtree: true,
-    attributeFilter: ['aria-expanded', 'style', 'class'] });
-  window.addEventListener('resize', sync);
-})();
-</script>
-"""
-
-
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
     # 4px top frame line
     st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
-    # Custom sidebar expand button (visible only when sidebar is collapsed)
-    _components_html(_SIDEBAR_TOGGLE_JS, height=0)
 
     sb = _supabase()
     if sb is None:
