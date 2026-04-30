@@ -792,54 +792,65 @@ _SIDEBAR_TOGGLE_JS = """
   try { doc = window.parent.document; }
   catch (e) { console.error('[nx-expand] cannot reach parent doc', e); return; }
 
-  if (doc.getElementById('nx-expand-btn')) return;
+  function makeBtn() {
+    const btn = doc.createElement('button');
+    btn.id = 'nx-expand-btn';
+    btn.type = 'button';
+    btn.setAttribute('aria-label', '사이드바 펼치기');
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
+    Object.assign(btn.style, {
+      position: 'fixed', top: '12px', left: '12px',
+      width: '40px', height: '40px',
+      background: '#1A1A1A', color: '#FFFFFF',
+      border: 'none', borderRadius: '0',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      cursor: 'pointer', zIndex: '2147483647', padding: '0',
+      boxShadow: 'none',
+    });
+    btn.addEventListener('mouseenter', () => { btn.style.background = '#333333'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = '#1A1A1A'; });
+    btn.addEventListener('click', () => {
+      const selectors = [
+        '[data-testid="stSidebarCollapsedControl"] button',
+        '[data-testid="collapsedControl"] button',
+        '[data-testid="stSidebarCollapseButton"] button',
+        'button[kind="header"]',
+        'button[aria-label*="sidebar" i]',
+      ];
+      for (const sel of selectors) {
+        const el = doc.querySelector(sel);
+        if (el) { el.click(); return; }
+      }
+      console.warn('[nx-expand] no streamlit toggle found');
+    });
+    return btn;
+  }
 
-  const btn = doc.createElement('button');
-  btn.id = 'nx-expand-btn';
-  btn.type = 'button';
-  btn.setAttribute('aria-label', '사이드바 펼치기');
-  btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
-  Object.assign(btn.style, {
-    position: 'fixed', top: '12px', left: '12px',
-    width: '40px', height: '40px',
-    background: '#1A1A1A', color: '#FFFFFF',
-    border: 'none', borderRadius: '0',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    cursor: 'pointer', zIndex: '2147483647', padding: '0',
-    boxShadow: 'none',
-  });
-  btn.addEventListener('mouseenter', () => { btn.style.background = '#333333'; });
-  btn.addEventListener('mouseleave', () => { btn.style.background = '#1A1A1A'; });
-  btn.addEventListener('click', () => {
-    const selectors = [
-      '[data-testid="stSidebarCollapsedControl"] button',
-      '[data-testid="collapsedControl"] button',
-      '[data-testid="stSidebarCollapseButton"] button',
-      'button[kind="header"]',
-      'button[aria-label*="sidebar" i]',
-    ];
-    for (const sel of selectors) {
-      const el = doc.querySelector(sel);
-      if (el) { el.click(); return; }
-    }
-    console.warn('[nx-expand] no streamlit toggle found');
-  });
-
-  doc.body.appendChild(btn);
-  console.log('[nx-expand] button injected');
-
-  function isSidebarOpen() {
+  function isSidebarVisible() {
     const sb = doc.querySelector('[data-testid="stSidebar"]');
     if (!sb) return false;
+    const cs = getComputedStyle(sb);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
     const r = sb.getBoundingClientRect();
-    return r.width > 30 && r.right > 10;
+    return r.width > 100 && r.right > 50;
   }
-  function sync() { btn.style.display = isSidebarOpen() ? 'none' : 'flex'; }
-  sync();
-  const obs = new MutationObserver(sync);
+
+  function ensure() {
+    let btn = doc.getElementById('nx-expand-btn');
+    if (!btn) {
+      btn = makeBtn();
+      doc.body.appendChild(btn);
+      console.log('[nx-expand] button injected');
+    }
+    btn.style.display = isSidebarVisible() ? 'none' : 'flex';
+  }
+
+  ensure();
+  const obs = new MutationObserver(ensure);
   obs.observe(doc.body, { attributes: true, subtree: true, childList: true,
     attributeFilter: ['aria-expanded', 'style', 'class'] });
-  window.addEventListener('resize', sync);
+  window.addEventListener('resize', ensure);
+  setInterval(ensure, 1000);
 })();
 </script>
 """
