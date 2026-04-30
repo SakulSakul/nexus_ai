@@ -28,15 +28,6 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* Hide only the collapse buttons so users cannot hide the sidebar.
-   Do NOT force display/visibility on the sidebar itself — that breaks
-   Streamlit's internal flex layout. The sidebar already starts open
-   via initial_sidebar_state="expanded". */
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"] {
-  display: none !important;
-}
 
 /* Hide all tooltips (the gray hover labels that show button title text) */
 [data-baseweb="tooltip"],
