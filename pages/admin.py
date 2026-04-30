@@ -66,6 +66,20 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
+@st.cache_resource(show_spinner=False)
+def _supabase_admin():
+    """service_role 클라이언트 — RLS 를 우회한다.
+
+    ⚠️ 본 함수는 _require_auth() 로 비밀번호 게이트를 통과한 admin 페이지
+    안에서만 호출할 것. 일반 사용자 코드 경로(app.py 응답)에서는 절대
+    임포트/사용 금지. SUPABASE_SERVICE_ROLE_KEY 미설정 시 None."""
+    from supabase import create_client
+    s = settings()
+    if not s.supabase_url or not s.supabase_service_role_key:
+        return None
+    return create_client(s.supabase_url, s.supabase_service_role_key)
+
+
 @st.cache_data(show_spinner=False)
 def _cached_parse(file_bytes: bytes) -> list:
     return parse_docx(file_bytes)
@@ -432,6 +446,10 @@ def _tab_hotlines(sb):
         "인사 챗봇 오픈 시 `hr_chatbot_url` 만 채우면 자동 전환됩니다."
     )
 
+    # hotline_config 는 RLS 적용 테이블. write 작업은 service_role 키로
+    # 만든 admin 클라이언트를 사용해야 한다 (anon 키는 42501 차단).
+    admin_sb = _supabase_admin()
+
     rows = sb.table("hotline_config").select("*").order("key").execute().data or []
     existing = {r["key"]: r for r in rows}
 
@@ -454,9 +472,15 @@ def _tab_hotlines(sb):
         submit = st.form_submit_button("저장", type="primary")
 
     if submit:
+        if admin_sb is None:
+            st.error(
+                "SUPABASE_SERVICE_ROLE_KEY secret 이 설정되지 않았습니다. "
+                "Streamlit Cloud → Manage app → Settings → Secrets 에서 추가하세요."
+            )
+            return
         ts = dt.datetime.utcnow().isoformat()
         for key, val in edited.items():
-            sb.table("hotline_config").upsert({
+            admin_sb.table("hotline_config").upsert({
                 "key": key,
                 "value": val.strip(),
                 "description": LABELS[key],
@@ -476,8 +500,12 @@ def _tab_hotlines(sb):
         if st.form_submit_button("추가"):
             if not new_key.strip():
                 st.error("key 를 입력하세요.")
+            elif admin_sb is None:
+                st.error(
+                    "SUPABASE_SERVICE_ROLE_KEY secret 이 설정되지 않았습니다."
+                )
             else:
-                sb.table("hotline_config").upsert({
+                admin_sb.table("hotline_config").upsert({
                     "key": new_key.strip(),
                     "value": new_val.strip(),
                     "description": new_desc.strip() or None,

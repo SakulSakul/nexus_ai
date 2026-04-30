@@ -562,6 +562,19 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
+def _supabase_admin():
+    """service_role 키 기반 클라이언트.
+
+    ⚠️ RLS 를 우회하므로 반드시 비밀번호 게이트(`admin_authenticated`)
+    뒤에서만 호출할 것. 일반 사용자 응답 경로에서는 절대 사용 금지.
+    SUPABASE_SERVICE_ROLE_KEY secret 미설정 시 None 반환."""
+    from supabase import create_client
+    s = settings()
+    if not s.supabase_url or not s.supabase_service_role_key:
+        return None
+    return create_client(s.supabase_url, s.supabase_service_role_key)
+
+
 def _admin_panel(sb, hotlines: dict) -> None:
     with st.expander("ADMIN"):
         admin_pw = get_secret("ADMIN_PASSWORD")
@@ -598,12 +611,19 @@ def _admin_panel(sb, hotlines: dict) -> None:
                 label, value=hotlines.get(key, ""), key=f"admin_{key}"
             )
         if st.button("저장", key="admin_save"):
-            if sb is None:
-                st.error("Supabase 연결 없음")
+            # hotline_config 는 RLS 가 걸려 있어 anon 키로는 write 불가.
+            # 이 분기는 admin_authenticated 가 True 일 때만 도달하므로
+            # service_role 클라이언트를 사용해 RLS 를 우회한다.
+            admin_sb = _supabase_admin()
+            if admin_sb is None:
+                st.error(
+                    "SUPABASE_SERVICE_ROLE_KEY secret 이 설정되지 않았습니다. "
+                    "관리자에게 문의하세요."
+                )
                 return
             try:
                 for k, v in updated.items():
-                    sb.table("hotline_config").upsert(
+                    admin_sb.table("hotline_config").upsert(
                         {"key": k, "value": v}, on_conflict="key"
                     ).execute()
                 st.success("저장 완료. 새로고침 후 반영됩니다.")

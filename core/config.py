@@ -33,6 +33,10 @@ def get_secret(key: str, default: str = "") -> str:
 class Settings:
     supabase_url: str
     supabase_key: str
+    # service_role 키는 RLS 를 우회한다. 반드시 비밀번호 게이트 뒤(관리자
+    # 영역)에서만 사용해야 하며, 절대 일반 사용자 응답 경로에서 호출하지
+    # 말 것. st.secrets / 환경변수로만 주입하고 리포지토리에 하드코딩 금지.
+    supabase_service_role_key: str
     gemini_api_key: str
     chat_model: str
     embed_model: str
@@ -47,6 +51,7 @@ def settings() -> Settings:
     return Settings(
         supabase_url=get_secret("SUPABASE_URL"),
         supabase_key=get_secret("SUPABASE_KEY"),
+        supabase_service_role_key=get_secret("SUPABASE_SERVICE_ROLE_KEY"),
         gemini_api_key=get_secret("GEMINI_API_KEY"),
         # 모델 버전은 운영 시점 최신 안정본으로 외부에서 갱신.
         chat_model=get_secret("NEXUS_CHAT_MODEL", "gemini-2.5-pro"),
