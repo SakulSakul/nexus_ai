@@ -677,14 +677,6 @@ _EXAMPLE_QUESTIONS = [
     "공정거래 관련 주의사항이 무엇인가요?",
 ]
 
-_HOTLINE_LABELS = {
-    "internal_report_url": "사내 익명 제보채널 URL",
-    "external_hotline":    "외부 상담채널",
-    "ethics_hotline_url":  "신세계면세점 핫라인 제보하기 URL",
-    "hr_contact_text":     "인사팀 문의 안내 문구",
-    "hr_chatbot_url":      "인사 챗봇 URL",
-}
-
 _KIND_BADGE_TEXT = {
     "rule":    "사규",
     "case":    "사례",
@@ -743,32 +735,6 @@ def _admin_panel(sb, hotlines: dict) -> None:
         st.markdown("---")
         if st.button("▶  Admin 대시보드 열기", use_container_width=True, key="admin_dashboard_link"):
             st.switch_page("pages/admin.py")
-        st.markdown("---")
-
-        updated: dict[str, str] = {}
-        for key, label in _HOTLINE_LABELS.items():
-            updated[key] = st.text_input(
-                label, value=hotlines.get(key, ""), key=f"admin_{key}"
-            )
-        if st.button("저장", key="admin_save"):
-            # hotline_config 는 RLS 가 걸려 있어 anon 키로는 write 불가.
-            # 이 분기는 admin_authenticated 가 True 일 때만 도달하므로
-            # service_role 클라이언트를 사용해 RLS 를 우회한다.
-            admin_sb = _supabase_admin()
-            if admin_sb is None:
-                st.error(
-                    "SUPABASE_SERVICE_ROLE_KEY secret 이 설정되지 않았습니다. "
-                    "관리자에게 문의하세요."
-                )
-                return
-            try:
-                for k, v in updated.items():
-                    admin_sb.table("hotline_config").upsert(
-                        {"key": k, "value": v}, on_conflict="key"
-                    ).execute()
-                st.success("저장 완료. 새로고침 후 반영됩니다.")
-            except Exception as e:
-                st.error(f"저장 실패: {e}")
 
 
 def _sidebar(sb, hotlines: dict) -> str:
