@@ -105,7 +105,7 @@ html, body, .stApp {
   color: var(--c-text) !important;
 }
 #MainMenu, footer { visibility: hidden; }
-header { visibility: hidden; }
+[data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stSidebarCollapsedControl"] { visibility: visible !important; display: flex !important; }
 [data-testid="stSidebarCollapseButton"]   { visibility: visible !important; }
 [data-testid="stToolbar"] { display: none !important; }
