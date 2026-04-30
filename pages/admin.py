@@ -28,10 +28,11 @@ from parser.ingest import ingest_docx
 
 st.set_page_config(page_title="NEXUS AI · Admin", page_icon="🛠️", layout="wide")
 
-# Streamlit이 헤더 옆에 자동 생성하는 anchor 링크 아이콘 제거 (전역).
+# 헤더 anchor 아이콘 제거 + 사이드바 reopen 토글 prominent 스타일 (전역).
 st.markdown(
     """
     <style>
+    /* Streamlit 헤더 anchor 링크 아이콘 제거 */
     [data-testid="stHeaderActionElements"],
     [data-testid="StyledLinkIconContainer"],
     .stMarkdown h1 > a,
@@ -47,6 +48,63 @@ st.markdown(
     h5 > a.anchor-link,
     h6 > a.anchor-link {
         display: none !important;
+    }
+
+    /* 사이드바 닫힘 상태 reopen 토글: 좌상단 고정·흑백 prominent */
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    [data-testid="stExpandSidebarButton"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 12px !important;
+        left: 12px !important;
+        z-index: 999999 !important;
+        width: 44px !important;
+        height: 44px !important;
+        min-width: 44px !important;
+        min-height: 44px !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        border: 1.5px solid #1A1A1A !important;
+        border-radius: 6px !important;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08) !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
+    }
+    [data-testid="stSidebarCollapsedControl"]:hover,
+    [data-testid="collapsedControl"]:hover,
+    [data-testid="stExpandSidebarButton"]:hover {
+        background: #1A1A1A !important;
+    }
+    [data-testid="stSidebarCollapsedControl"] svg,
+    [data-testid="collapsedControl"] svg,
+    [data-testid="stExpandSidebarButton"] svg {
+        width: 22px !important;
+        height: 22px !important;
+        color: #1A1A1A !important;
+        fill: #1A1A1A !important;
+    }
+    [data-testid="stSidebarCollapsedControl"]:hover svg,
+    [data-testid="collapsedControl"]:hover svg,
+    [data-testid="stExpandSidebarButton"]:hover svg {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+    }
+    @media (max-width: 768px) {
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"],
+        [data-testid="stExpandSidebarButton"] {
+            width: 48px !important;
+            height: 48px !important;
+            min-width: 48px !important;
+            min-height: 48px !important;
+            top: 10px !important;
+            left: 10px !important;
+        }
     }
     </style>
     """,
