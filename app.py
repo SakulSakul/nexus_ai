@@ -641,8 +641,8 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     break
             if ans is None:
                 st.error(f"오류가 발생했습니다: {last_err}")
-                with st.expander("🔧 디버그 (스택 트레이스)", expanded=True):
-                    st.code(tb_str, language="python")
+                st.markdown("**🔧 디버그 (스택 트레이스)**")
+                st.code(tb_str or "(traceback empty)", language="python")
                 return
 
         if ans.thinking:
