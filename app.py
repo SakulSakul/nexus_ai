@@ -8,7 +8,12 @@ from core.chatbot import ask
 from core.config import CATEGORIES, get_secret, load_hotlines, settings
 
 
-st.set_page_config(page_title="NEXUS AI", page_icon="🛡️", layout="wide")
+st.set_page_config(
+    page_title="NEXUS AI",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Design System: Shinsegae Newsroom Editorial
@@ -52,26 +57,36 @@ _CSS = """
 }
 
 /* Floating sidebar expand control — sits above the 4px top frame so the
-   button is reachable when the sidebar is collapsed. */
-[data-testid="stSidebarCollapsedControl"] {
+   button is reachable when the sidebar is collapsed. Cover both the
+   modern (stSidebarCollapsedControl) and legacy (collapsedControl)
+   Streamlit test ids. */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
   position: fixed !important;
   top: 12px !important;
   left: 12px !important;
-  z-index: 10000 !important;
-  width: 36px !important;
-  height: 36px !important;
+  z-index: 2147483647 !important;
+  width: 40px !important;
+  height: 40px !important;
   display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
   align-items: center !important;
   justify-content: center !important;
   background: var(--c-primary) !important;
   border: 1px solid var(--c-primary) !important;
+  transform: none !important;
 }
 [data-testid="stSidebarCollapsedControl"] button,
-[data-testid="stSidebarCollapsedControl"] svg {
+[data-testid="collapsedControl"] button,
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg {
   color: #FFFFFF !important;
   fill: #FFFFFF !important;
 }
-[data-testid="stSidebarCollapsedControl"] button:hover {
+[data-testid="stSidebarCollapsedControl"] button:hover,
+[data-testid="collapsedControl"] button:hover {
   background: #333333 !important;
 }
 
