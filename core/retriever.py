@@ -13,6 +13,7 @@ def hybrid_search(
     *,
     question: str,
     categories: list[str] | None,
+    doc_kinds: list[str] | None = None,
     top_k: int | None = None,
 ) -> list[dict]:
     s = settings()
@@ -21,6 +22,7 @@ def hybrid_search(
         "query_text": question,
         "query_embed": emb,
         "filter_categories": categories or None,
+        "filter_doc_kinds": doc_kinds or None,
         "top_k": top_k or s.top_k,
         "fanout": max(20, (top_k or s.top_k) * 10),
         "rrf_k": 60,

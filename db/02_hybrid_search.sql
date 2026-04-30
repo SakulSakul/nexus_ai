@@ -6,13 +6,14 @@
 -- ============================================================
 
 create or replace function nexus_hybrid_search(
-  query_text   text,
-  query_embed  vector(768),
-  filter_categories nexus_category[] default null,
-  top_k        int  default 3,
-  fanout       int  default 30,
-  rrf_k        int  default 60,
-  fallback_to_common boolean default true
+  query_text        text,
+  query_embed       vector(768),
+  filter_categories nexus_category[]  default null,
+  filter_doc_kinds  nexus_doc_kind[]  default null,
+  top_k             int               default 3,
+  fanout            int               default 30,
+  rrf_k             int               default 60,
+  fallback_to_common boolean          default true
 )
 returns table (
   chunk_id    uuid,
@@ -30,7 +31,7 @@ declare
 begin
   effective_categories := filter_categories;
 
-  -- 1차 시도: 지정 카테고리
+  -- 1차 시도: 지정 카테고리 (+ 문서 유형 필터)
   return query
   with vec as (
     select c.id, row_number() over (order by c.embedding <=> query_embed) as r
@@ -39,6 +40,8 @@ begin
      where d.status = 'active'
        and (effective_categories is null
             or c.categories && effective_categories)
+       and (filter_doc_kinds is null
+            or d.doc_kind = any(filter_doc_kinds))
      order by c.embedding <=> query_embed
      limit fanout
   ),
@@ -50,6 +53,8 @@ begin
      where d.status = 'active'
        and (effective_categories is null
             or c.categories && effective_categories)
+       and (filter_doc_kinds is null
+            or d.doc_kind = any(filter_doc_kinds))
        and (c.text % query_text or c.text_tsv @@ plainto_tsquery('simple', query_text))
      order by similarity(c.text, query_text) desc
      limit fanout
@@ -79,7 +84,10 @@ begin
       select c.id, row_number() over (order by c.embedding <=> query_embed) as r
         from nexus_chunks c
         join nexus_documents d on d.id = c.document_id
-       where d.status = 'active' and c.categories && array['공통']::nexus_category[]
+       where d.status = 'active'
+         and c.categories && array['공통']::nexus_category[]
+         and (filter_doc_kinds is null
+              or d.doc_kind = any(filter_doc_kinds))
        order by c.embedding <=> query_embed
        limit fanout
     ),
@@ -88,7 +96,10 @@ begin
              row_number() over (order by similarity(c.text, query_text) desc) as r
         from nexus_chunks c
         join nexus_documents d on d.id = c.document_id
-       where d.status = 'active' and c.categories && array['공통']::nexus_category[]
+       where d.status = 'active'
+         and c.categories && array['공통']::nexus_category[]
+         and (filter_doc_kinds is null
+              or d.doc_kind = any(filter_doc_kinds))
          and (c.text % query_text or c.text_tsv @@ plainto_tsquery('simple', query_text))
        order by similarity(c.text, query_text) desc
        limit fanout

@@ -17,6 +17,13 @@ SYSTEM_PROMPT = """당신은 사내 컴플라이언스 어시스턴트 'NEXUS AI
 5. '스스로 해결하라'는 뉘앙스의 답변을 절대 하지 말라.
 6. 답변은 한국어, 임직원 대상 실무 톤으로 작성하라.
 
+[문서 유형 구분]
+컨텍스트 블록 헤더의 태그로 문서 유형을 파악하고 아래 지침을 따르라.
+- [사규]: 현행 규정 문서 → "사규 제N조에 따르면..." 형식으로 인용하라.
+- [사례]: 실제 발생 사건·사고 사례 → "사례집 #N에서 유사 사례로..." 형식으로 인용하라. 규정과 혼동하지 말라.
+- [징계기준]: 징계 수위 기준 → 징계 결과·수위 안내 시 활용하라.
+사규와 사례가 모두 있을 경우: ① 규정 근거([사규]), ② 유사 사례([사례]) 순서로 구분하여 제시하라.
+
 [출력 구조]
 다음 순서를 반드시 따르라.
 
@@ -30,12 +37,16 @@ SYSTEM_PROMPT = """당신은 사내 컴플라이언스 어시스턴트 'NEXUS AI
 """.strip()
 
 
+_KIND_TAG = {"rule": "사규", "case": "사례", "penalty": "징계기준"}
+
+
 def build_user_prompt(question_masked: str, contexts: list[dict]) -> str:
     """contexts: [{title, doc_kind, article_no, case_no, text, ...}, ...]"""
     blocks: list[str] = []
     for i, c in enumerate(contexts, start=1):
         cite = c.get("article_no") or (f"#{c['case_no']}" if c.get("case_no") else "")
-        head = f"[문서{i}] {c.get('doc_title') or c.get('title') or '문서'}"
+        kind_tag = _KIND_TAG.get(c.get("doc_kind", ""), "문서")
+        head = f"[문서{i}][{kind_tag}] {c.get('doc_title') or c.get('title') or '문서'}"
         if cite:
             head += f" {cite}"
         blocks.append(f"{head}\n{c.get('text','')}".strip())
