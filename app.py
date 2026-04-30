@@ -37,6 +37,19 @@ _CSS = """
     display: none !important;
 }
 
+/* Material Symbols 폰트가 Streamlit Cloud에서 로드 실패할 경우 ligature
+   이름(arrow_forward, keyboard_double_arrow_left, expand_more 등)이 raw
+   텍스트로 노출됨. 모든 Material 아이콘 컨테이너를 숨겨 누수를 차단. */
+[data-testid="stIconMaterial"],
+[data-testid="stPageLink"] [data-testid="stIconMaterial"],
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-icons,
+[class*="material-symbols"],
+[class*="material-icons"] {
+    display: none !important;
+}
+
 /* 사이드바 자체 overflow 차단 (안전망) */
 section[data-testid="stSidebar"] {
     overflow-x: hidden !important;
@@ -539,7 +552,8 @@ def _admin_panel(sb, hotlines: dict) -> None:
             st.rerun()
 
         st.markdown("---")
-        st.page_link("pages/admin.py", label="Admin 대시보드 열기", use_container_width=True)
+        if st.button("▶  Admin 대시보드 열기", use_container_width=True, key="admin_dashboard_link"):
+            st.switch_page("pages/admin.py")
         st.markdown("---")
 
         updated: dict[str, str] = {}
