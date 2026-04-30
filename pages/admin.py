@@ -28,6 +28,31 @@ from parser.ingest import ingest_docx
 
 st.set_page_config(page_title="NEXUS AI · Admin", page_icon="🛠️", layout="wide")
 
+# Streamlit이 헤더 옆에 자동 생성하는 anchor 링크 아이콘 제거 (전역).
+st.markdown(
+    """
+    <style>
+    [data-testid="stHeaderActionElements"],
+    [data-testid="StyledLinkIconContainer"],
+    .stMarkdown h1 > a,
+    .stMarkdown h2 > a,
+    .stMarkdown h3 > a,
+    .stMarkdown h4 > a,
+    .stMarkdown h5 > a,
+    .stMarkdown h6 > a,
+    h1 > a.anchor-link,
+    h2 > a.anchor-link,
+    h3 > a.anchor-link,
+    h4 > a.anchor-link,
+    h5 > a.anchor-link,
+    h6 > a.anchor-link {
+        display: none !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def _require_auth() -> None:
     """Admin 페이지 진입 전 비밀번호 인증. 미인증 시 st.stop()으로 렌더링 차단."""

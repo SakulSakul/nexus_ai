@@ -77,6 +77,26 @@ button[aria-label]:hover::after {
   display: none !important;
 }
 
+/* Streamlit이 헤더(h1~h6) 옆에 자동 생성하는 anchor 링크/클립 아이콘 제거.
+   st.title / st.header / st.subheader 와 st.markdown 내 # 헤더, 그리고
+   raw <h1> HTML 모두에 적용. */
+[data-testid="stHeaderActionElements"],
+[data-testid="StyledLinkIconContainer"],
+.stMarkdown h1 > a,
+.stMarkdown h2 > a,
+.stMarkdown h3 > a,
+.stMarkdown h4 > a,
+.stMarkdown h5 > a,
+.stMarkdown h6 > a,
+h1 > a.anchor-link,
+h2 > a.anchor-link,
+h3 > a.anchor-link,
+h4 > a.anchor-link,
+h5 > a.anchor-link,
+h6 > a.anchor-link {
+  display: none !important;
+}
+
 :root {
   --c-primary:  #1A1A1A;
   --c-text:     #333333;
