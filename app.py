@@ -28,22 +28,13 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* 사이드바 collapse/expand 버튼 텍스트 누출 방지 */
+/* 사이드바 영구 고정: 접기/펼치기 컨트롤 모두 숨겨서 사용자가 사이드바를
+   닫을 수 없도록 한다. initial_sidebar_state="expanded" 와 결합해
+   사이드바는 항상 열린 상태로 유지된다. */
 [data-testid="stSidebarCollapseButton"],
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {
-    overflow: hidden !important;
-}
-
-[data-testid="stSidebarCollapseButton"] *,
-[data-testid="stSidebarCollapsedControl"] *,
-[data-testid="collapsedControl"] * {
-    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
-    font-feature-settings: 'liga' !important;
-    text-overflow: clip !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    max-width: 32px !important;
+    display: none !important;
 }
 
 /* 사이드바 자체 overflow 차단 (안전망) */
