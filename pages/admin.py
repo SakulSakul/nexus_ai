@@ -228,6 +228,16 @@ def _tab_upload(sb):
                     default=auto_cats,
                     key=f"ul_cats_{fkey}",
                 )
+            # 관리부서: 2열 바깥에 전폭으로 배치. 자유 텍스트, 선택 입력.
+            # 빈 값은 ingest_docx 진입 시 NULL 로 정규화된다.
+            dept = st.text_input(
+                "관리부서",
+                value="",
+                placeholder="예: 인사팀, 윤리경영팀, 컴플라이언스팀",
+                help="사규 본문에 명시된 관리부서명을 그대로 입력. "
+                     "비워두면 챗봇이 일반 안내문구 사용.",
+                key=f"ul_dept_{fkey}",
+            )
             with st.expander("청크 미리보기 (5개)", expanded=False):
                 for c in chunks[:5]:
                     head = c.article_no or (
@@ -244,6 +254,7 @@ def _tab_upload(sb):
                 "version": version,
                 "eff": eff,
                 "cats": cats,
+                "department": dept,
             })
 
     if not valid_configs:
@@ -268,6 +279,7 @@ def _tab_upload(sb):
                         effective_date=cfg["eff"],
                         uploaded_by=uploader or None,
                         confirmed_categories=cfg["cats"],
+                        department=cfg["department"],
                     )
                     if res.skipped_hr_procedure:
                         st.error(f"**{cfg['fname']}** — 신고절차 문서로 차단됨")

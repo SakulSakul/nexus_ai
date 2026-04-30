@@ -35,6 +35,7 @@ def ingest_docx(
     effective_date: date | None = None,
     uploaded_by: str | None = None,
     confirmed_categories: list[str] | None = None,
+    department: str | None = None,
 ) -> IngestResult:
     chunks: list[Chunk] = parse_docx(file_bytes)
     sample = "\n".join(c.text for c in chunks[:6])
@@ -43,6 +44,10 @@ def ingest_docx(
 
     # 카테고리 자동 추천 (관리자 확인 후 confirmed_categories 로 override 가능)
     auto_cats = suggest_categories(sample) if confirmed_categories is None else confirmed_categories
+
+    # 관리부서: 빈 문자열·공백만 입력은 NULL 로 정규화. 챗봇 답변 빌드
+    # 단계에서 NULL 이면 일반 안내문구로 fallback 한다.
+    department_norm = (department or "").strip() or None
 
     # 동일 title 의 active 문서를 archived 로 전환
     archived_previous = False
@@ -72,6 +77,7 @@ def ingest_docx(
         "effective_date": effective_date.isoformat() if effective_date else None,
         "status": "active",
         "uploaded_by": uploaded_by,
+        "owning_department": department_norm,
         "meta": {"auto_categories": auto_cats},
     }).execute().data[0]
 
