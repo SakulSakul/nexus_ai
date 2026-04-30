@@ -28,13 +28,69 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* 사이드바 영구 고정: 접기/펼치기 컨트롤 모두 숨겨서 사용자가 사이드바를
-   닫을 수 없도록 한다. initial_sidebar_state="expanded" 와 결합해
-   사이드바는 항상 열린 상태로 유지된다. */
-[data-testid="stSidebarCollapseButton"],
+/* 사이드바 닫힘 상태에서 표시되는 reopen 토글을 prominent 하게 강화.
+   Streamlit 기본 토글은 작고 회색이라 사용자가 못 찾는 경우가 많아,
+   화면 좌상단 고정 + 흰 배경/검정 테두리/햄버거 아이콘으로 시인성을 높임.
+   사이드바가 열려 있을 땐 Streamlit이 이 컨트롤을 렌더링하지 않으므로
+   별도 hide 규칙은 불필요. selector 는 Streamlit 버전 호환을 위해
+   세 가지(stSidebarCollapsedControl / collapsedControl / stExpandSidebarButton)
+   를 모두 커버. */
 [data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"] {
-    display: none !important;
+[data-testid="collapsedControl"],
+[data-testid="stExpandSidebarButton"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: fixed !important;
+    top: 12px !important;
+    left: 12px !important;
+    z-index: 999999 !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    border: 1.5px solid #1A1A1A !important;
+    border-radius: 6px !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08) !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    transition: background-color 0.15s ease, color 0.15s ease !important;
+}
+[data-testid="stSidebarCollapsedControl"]:hover,
+[data-testid="collapsedControl"]:hover,
+[data-testid="stExpandSidebarButton"]:hover {
+    background: #1A1A1A !important;
+}
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg,
+[data-testid="stExpandSidebarButton"] svg {
+    width: 22px !important;
+    height: 22px !important;
+    color: #1A1A1A !important;
+    fill: #1A1A1A !important;
+}
+[data-testid="stSidebarCollapsedControl"]:hover svg,
+[data-testid="collapsedControl"]:hover svg,
+[data-testid="stExpandSidebarButton"]:hover svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+}
+
+/* 모바일: 동일 위치·크기 유지하되 터치 영역을 살짝 더 확보 */
+@media (max-width: 768px) {
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    [data-testid="stExpandSidebarButton"] {
+        width: 48px !important;
+        height: 48px !important;
+        min-width: 48px !important;
+        min-height: 48px !important;
+        top: 10px !important;
+        left: 10px !important;
+    }
 }
 
 /* Material Symbols 폰트가 Streamlit Cloud에서 로드 실패할 경우 ligature
@@ -74,6 +130,26 @@ section[data-testid="stSidebar"] {
 }
 button[title]:hover::after,
 button[aria-label]:hover::after {
+  display: none !important;
+}
+
+/* Streamlit이 헤더(h1~h6) 옆에 자동 생성하는 anchor 링크/클립 아이콘 제거.
+   st.title / st.header / st.subheader 와 st.markdown 내 # 헤더, 그리고
+   raw <h1> HTML 모두에 적용. */
+[data-testid="stHeaderActionElements"],
+[data-testid="StyledLinkIconContainer"],
+.stMarkdown h1 > a,
+.stMarkdown h2 > a,
+.stMarkdown h3 > a,
+.stMarkdown h4 > a,
+.stMarkdown h5 > a,
+.stMarkdown h6 > a,
+h1 > a.anchor-link,
+h2 > a.anchor-link,
+h3 > a.anchor-link,
+h4 > a.anchor-link,
+h5 > a.anchor-link,
+h6 > a.anchor-link {
   display: none !important;
 }
 
