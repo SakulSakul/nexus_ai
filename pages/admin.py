@@ -429,9 +429,11 @@ def _tab_radar(sb):
     st.subheader("📡 리스크 트렌드 레이더")
     days = st.slider("조회 기간(일)", 7, 90, 30)
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
+    # select * 로 받아서 컬럼 부재(예: db/06 미적용)에 내성. 아래 모든 접근은
+    # r.get("...") 로 안전 처리되므로 신규 컬럼이 없어도 동작 유지.
     rows = (
         sb.table("query_logs")
-          .select("ts,category,is_critical,critical_kind,dept_hash,feedback,env,chat_provider,chat_model_version")
+          .select("*")
           .gte("ts", since)
           .execute()
           .data or []
