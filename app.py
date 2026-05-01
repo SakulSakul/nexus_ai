@@ -168,7 +168,10 @@ h6 > a.anchor-link {
 }
 
 :root {
-  --c-primary:  #1A1A1A;
+  --c-primary:    #1A1A1A;   /* 본문/구조용 무채색 — 변경 없음 */
+  --c-accent:     #C8102E;   /* 신세계 시그니처 레드 (액센트 전용) */
+  --c-accent-dark:#9A0C24;   /* 호버 상태용 짙은 레드 */
+  --c-accent-bg:  #FCEBEE;   /* 매우 옅은 핑크 — 배너/하이라이트 배경용 */
   --c-text:     #333333;
   --c-caption:  #767676;
   --c-muted:    #AEAEAE;
@@ -176,6 +179,23 @@ h6 > a.anchor-link {
   --c-surface:  #F7F7F7;
   --c-bg:       #FFFFFF;
   --font: 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+
+/* ── 탭(Tabs) 활성 인디케이터 — 신세계 레드 ── */
+[data-baseweb="tab-highlight"] {
+  background-color: var(--c-accent) !important;
+}
+[data-baseweb="tab-border"] {
+  background-color: var(--c-border) !important;
+}
+
+/* ── 본문 링크 hover/focus underline — 신세계 레드 ── */
+.stMarkdown a:hover,
+.stMarkdown a:focus,
+[data-testid="stMain"] a:hover,
+[data-testid="stMain"] a:focus {
+  color: var(--c-accent) !important;
+  text-decoration-color: var(--c-accent) !important;
 }
 
 /* ── Reset ── */
@@ -190,12 +210,12 @@ html, body, .stApp {
 [data-testid="stDecoration"] { display: none !important; }
 * { box-sizing: border-box; }
 
-/* ── 4px top frame ── */
+/* ── 4px top frame (신세계 시그니처 레드 액센트) ── */
 .nx-topbar {
   position: fixed;
   top: 0; left: 0; right: 0;
   height: 4px;
-  background: var(--c-primary);
+  background: var(--c-accent);
   z-index: 9999;
 }
 
@@ -280,15 +300,15 @@ html, body, .stApp {
 [data-testid="stSidebar"] .stButton > button[kind="primary"],
 [data-testid="stSidebar"] .stButton > button[kind="primary"] p,
 [data-testid="stSidebar"] .stButton > button[kind="primary"] span {
-  background: var(--c-primary) !important;
-  border-color: var(--c-primary) !important;
+  background: var(--c-accent) !important;
+  border-color: var(--c-accent) !important;
   color: #FFFFFF !important;
   font-weight: 700 !important;
 }
 [data-testid="stSidebar"] .stFormSubmitButton > button[kind="primary"]:hover,
 [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-  background: #333333 !important;
-  border-color: #333333 !important;
+  background: var(--c-accent-dark) !important;
+  border-color: var(--c-accent-dark) !important;
 }
 [data-testid="stSidebar"] input,
 [data-testid="stSidebar"] input[type="password"] {
@@ -333,18 +353,18 @@ html, body, .stApp {
   transform: none !important;
 }
 
-/* Primary button */
+/* Primary button — 신세계 레드 액센트 */
 .stButton > button[kind="primary"] {
-  background: var(--c-primary) !important;
-  border: 1px solid var(--c-primary) !important;
+  background: var(--c-accent) !important;
+  border: 1px solid var(--c-accent) !important;
   color: #FFFFFF !important;
   font-weight: 600 !important;
   letter-spacing: 0.03em !important;
   box-shadow: none !important;
 }
 .stButton > button[kind="primary"]:hover {
-  background: #333333 !important;
-  border-color: #333333 !important;
+  background: var(--c-accent-dark) !important;
+  border-color: var(--c-accent-dark) !important;
   box-shadow: none !important;
   transform: none !important;
 }
@@ -461,7 +481,7 @@ html, body, .stApp {
   font-weight: 700;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: #767676;
+  color: var(--c-accent);
   margin: 0 0 16px;
 }
 .nx-hero-title {
@@ -545,10 +565,11 @@ html, body, .stApp {
   margin: 0;
 }
 
-/* Critical alert — inverted block */
+/* Critical alert — inverted block + 좌측 4px 레드 액센트 라인 */
 .nx-critical {
   background: #1A1A1A;
   color: #FFFFFF;
+  border-left: 4px solid var(--c-accent);
   padding: 12px 18px;
   margin-bottom: 16px;
   display: flex;

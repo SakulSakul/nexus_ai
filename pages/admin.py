@@ -106,6 +106,51 @@ st.markdown(
             left: 10px !important;
         }
     }
+
+    /* ──────────────────────────────────────────────────────────
+       신세계 시그니처 레드 액센트 토큰 (admin 페이지 한정)
+       app.py 와 동일한 토큰을 노출. 본문/구조는 흑백 유지하고
+       상단 4px 프레임 · Primary 버튼 · 탭 활성 인디케이터에만 사용.
+       ────────────────────────────────────────────────────────── */
+    :root {
+        --c-primary:    #1A1A1A;
+        --c-accent:     #C8102E;
+        --c-accent-dark:#9A0C24;
+        --c-accent-bg:  #FCEBEE;
+        --c-border:     #E0E0E0;
+    }
+
+    .nx-topbar {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        height: 4px;
+        background: var(--c-accent);
+        z-index: 9999;
+    }
+
+    /* Primary 버튼 — 신세계 레드 */
+    .stButton > button[kind="primary"],
+    .stFormSubmitButton > button[kind="primary"] {
+        background: var(--c-accent) !important;
+        border: 1px solid var(--c-accent) !important;
+        color: #FFFFFF !important;
+        box-shadow: none !important;
+    }
+    .stButton > button[kind="primary"]:hover,
+    .stFormSubmitButton > button[kind="primary"]:hover {
+        background: var(--c-accent-dark) !important;
+        border-color: var(--c-accent-dark) !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+
+    /* 탭(Tabs) 활성 인디케이터 — 신세계 레드 */
+    [data-baseweb="tab-highlight"] {
+        background-color: var(--c-accent) !important;
+    }
+    [data-baseweb="tab-border"] {
+        background-color: var(--c-border) !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -849,6 +894,9 @@ def _tab_consents(sb):
 
 def main():
     _require_auth()
+
+    # 4px 신세계 레드 상단 프레임 (브랜드 일관성)
+    st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
 
     sb = _supabase()
     if sb is None:
