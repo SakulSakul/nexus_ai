@@ -716,17 +716,35 @@ def _tab_review(sb):
     with sub_csv:
         st.markdown(
             "**CSV 컬럼:** `domain, category, question, expected_keywords, "
-            "expected_citation, expected_critical, expected_critical_kind, notes`  \n"
-            "`expected_keywords` 는 `;` 로 구분, `expected_critical` 은 `true/false`."
+            "expected_citation, expected_critical, expected_critical_kind, "
+            "forbidden_keywords, notes`  \n"
+            "`expected_keywords` / `forbidden_keywords` 는 `;` 로 구분, "
+            "`expected_critical` 은 `true/false`."
         )
         upl = st.file_uploader("CSV 업로드", type=["csv"])
         if upl:
-            text = upl.read().decode("utf-8-sig")
+            raw = upl.read()
+            # Encoding fallback — UTF-8 BOM → UTF-8 → EUC-KR (한국 Excel 기본).
+            # 어느 것도 실패하면 친화 메시지로 안내, traceback 노출 차단.
+            text = None
+            for enc in ("utf-8-sig", "utf-8", "euc-kr", "cp949"):
+                try:
+                    text = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if text is None:
+                st.error(
+                    "⚠️ CSV 인코딩을 인식할 수 없습니다 (UTF-8 / EUC-KR 둘 다 실패). "
+                    "Excel 에서 'CSV UTF-8' 형식으로 다시 저장해 주세요."
+                )
+                st.stop()
             reader = csv.DictReader(io.StringIO(text))
             rows: list[dict] = []
             for r in reader:
                 cat = (r.get("category") or "").strip()
-                rows.append({
+                fkws = [k.strip() for k in (r.get("forbidden_keywords") or "").split(";") if k.strip()]
+                row = {
                     "domain": (r.get("domain") or "").strip() or None,
                     "category": cat if cat in CATEGORIES else None,
                     "question": (r.get("question") or "").strip(),
@@ -740,15 +758,29 @@ def _tab_review(sb):
                     "expected_critical_kind":
                         (r.get("expected_critical_kind") or "").strip() or None,
                     "notes": (r.get("notes") or "").strip() or None,
-                })
+                }
+                if fkws:
+                    row["forbidden_keywords"] = fkws
+                rows.append(row)
             rows = [r for r in rows if r["question"]]
             st.write(f"미리보기: {len(rows)} 건")
             st.dataframe(rows[:20], use_container_width=True)
             if rows and st.button("일괄 등록", type="primary"):
                 BATCH = 50
-                for i in range(0, len(rows), BATCH):
-                    sb.table("review_samples").insert(rows[i:i+BATCH]).execute()
-                st.success(f"{len(rows)} 건 등록 완료")
+                try:
+                    for i in range(0, len(rows), BATCH):
+                        sb.table("review_samples").insert(rows[i:i+BATCH]).execute()
+                    st.success(f"{len(rows)} 건 등록 완료")
+                except Exception as e:
+                    if "forbidden_keywords" in str(e):
+                        # db/07 미적용 — 컬럼 빼고 재시도
+                        for r in rows:
+                            r.pop("forbidden_keywords", None)
+                        for i in range(0, len(rows), BATCH):
+                            sb.table("review_samples").insert(rows[i:i+BATCH]).execute()
+                        st.success(f"{len(rows)} 건 등록 완료 (db/07 미적용 → 금지 키워드 무시)")
+                    else:
+                        raise
 
     # ── 샘플 목록 ──────────────────────────────────────────
     with sub_list:

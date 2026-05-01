@@ -31,15 +31,19 @@ def embed_one(text: str, *, task_type: str = "RETRIEVAL_QUERY") -> list[float]:
 
 
 def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
-               max_workers: int = 4, per_call_timeout: float = 30.0) -> list[list[float]]:
+               max_workers: int = 4, per_call_timeout: float = 30.0,
+               overall_timeout: float | None = None) -> list[list[float]]:
     """청크 임베딩 병렬화. Gemini embed_content 는 단일 string 만 받지만
     ThreadPoolExecutor 로 동시 처리해 적재 시간을 단축한다.
-    max_workers=4 가 API rate limit + 네트워크 대기 균형에 적정.
-    per_call_timeout 초 안에 한 호출이 안 끝나면 RuntimeError. Gemini hang 시
-    admin 적재 화면이 무한 spinner 상태로 빠지는 사고 방지.
+    - per_call_timeout: 1건당 최대 대기 (기본 30초). 초과 시 RuntimeError.
+    - overall_timeout: 전체 회차 wall-clock 한도. None 이면 자동 산정
+      (per_call_timeout × ceil(N/workers) + 10s 여유). N개 직렬 누적으로
+      worst case 50분 대기하던 결함 방지. 초과 시 즉시 raise.
     순서 보장: 인덱스로 결과 누적 후 순서대로 반환.
     """
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _Timeout
+    import math as _math
+    import time as _time
     s = settings()
     items = list(texts)
     if not items:
@@ -56,21 +60,31 @@ def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
 
     workers = max(1, min(max_workers, len(items)))
     out: list[list[float] | None] = [None] * len(items)
-    # with-block 종료 시 shutdown(wait=True) 가 호출되면 timeout 된 thread 가
-    # 끝날 때까지 영원히 대기 → 사용자에겐 spinner 만 돌고 timeout 메시지 안
-    # 보임. 수동 ex 관리 + finally shutdown(wait=False, cancel_futures=True)
-    # 로 timeout 즉시 반영.
+    # 전체 회차 wall-clock 한도. as_completed 의 timeout 인자로 강제.
+    if overall_timeout is None:
+        overall_timeout = per_call_timeout * _math.ceil(len(items) / workers) + 10.0
+    deadline = _time.monotonic() + overall_timeout
+
     ex = ThreadPoolExecutor(max_workers=workers)
     try:
         futures = {ex.submit(_one, t): i for i, t in enumerate(items)}
-        for fut, idx in futures.items():
-            try:
-                out[idx] = fut.result(timeout=per_call_timeout)
-            except _Timeout as e:
-                raise RuntimeError(
-                    f"임베딩 호출이 {per_call_timeout}초 내 응답하지 않았습니다 "
-                    f"(chunk {idx}/{len(items)}). Gemini API 상태 확인 필요."
-                ) from e
+        try:
+            for fut in as_completed(futures, timeout=overall_timeout):
+                remaining = max(0.0, deadline - _time.monotonic())
+                idx = futures[fut]
+                try:
+                    out[idx] = fut.result(timeout=min(per_call_timeout, remaining + 0.5))
+                except _Timeout as e:
+                    raise RuntimeError(
+                        f"임베딩 호출이 {per_call_timeout}초 내 응답하지 않았습니다 "
+                        f"(chunk {idx}/{len(items)}). Gemini API 상태 확인 필요."
+                    ) from e
+        except _Timeout as e:
+            raise RuntimeError(
+                f"임베딩 회차 전체 wall-clock {overall_timeout:.0f}초 초과. "
+                f"완료 {sum(1 for o in out if o is not None)}/{len(items)}. "
+                "일괄 재시도 또는 청크 수 분할 권장."
+            ) from e
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
     return [o for o in out if o is not None]

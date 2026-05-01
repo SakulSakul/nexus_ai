@@ -831,17 +831,21 @@ def _hotline_button(hotlines: dict[str, str]) -> None:
 def _render_contexts(contexts: list[dict]) -> None:
     if not contexts:
         return
+    import html as _html
     with st.expander("REFERENCE DOCUMENTS", expanded=False):
         for c in contexts:
-            badge = _KIND_BADGE_TEXT.get(c.get("doc_kind", ""), "DOC")
-            title = c.get("doc_title") or "문서"
-            cite = ""
+            # 모든 DB 출처 값은 escape — 악성 DOCX 본문(<script>) 가 admin
+            # 업로드 경로로 들어와 사용자에게 stored XSS 로 실행되는 경로 차단.
+            badge = _html.escape(_KIND_BADGE_TEXT.get(c.get("doc_kind", ""), "DOC"))
+            title = _html.escape(c.get("doc_title") or "문서")
+            cite_raw = ""
             if c.get("article_no"):
-                cite = c["article_no"]
+                cite_raw = c["article_no"]
             elif c.get("case_no"):
-                cite = f"#{c['case_no']}"
+                cite_raw = f"#{c['case_no']}"
+            cite = _html.escape(cite_raw)
             cite_html = f'<span class="nx-doc-cite">{cite}</span>' if cite else ""
-            text = (c.get("text") or "")[:480]
+            text = _html.escape((c.get("text") or "")[:480])
             st.markdown(
                 f"""
                 <div class="nx-doc-card">
@@ -876,6 +880,17 @@ def _show_example_questions() -> str | None:
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
+
+_HISTORY_CAP = 100  # session_state["history"] 최대 entry 수 (FIFO 자르기)
+
+
+def _push_history(item) -> None:
+    """history 에 push 후 cap 초과 시 앞쪽부터 자른다 (FIFO).
+    session_state 메모리 누적 방어 — 100건 = user/assistant 50쌍."""
+    h = st.session_state.setdefault("history", [])
+    h.append(item)
+    if len(h) > _HISTORY_CAP:
+        del h[: len(h) - _HISTORY_CAP]
 
 
 def _render_beta_banner() -> None:
@@ -958,7 +973,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 "베타 비용 가드 정책입니다. 내일 다시 이용해 주세요."
             )
         return
-    st.session_state["history"].append(("user", q, {}))
+    _push_history(("user", q, {}))
     with st.chat_message("user"):
         st.markdown(q)
 
@@ -1033,13 +1048,13 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                              query_log_id=ans.query_log_id)
 
     if ans is None:
-        st.session_state["history"].append((
+        _push_history((
             "assistant", friendly_msg,
             {"contexts": [], "critical": False, "kind": None, "thinking": "", "elapsed": 0.0},
         ))
         return
 
-    st.session_state["history"].append((
+    _push_history((
         "assistant", ans.text,
         {
             "contexts": ans.contexts,

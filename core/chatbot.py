@@ -19,6 +19,15 @@ from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .retriever import hybrid_search
 
 
+# 권장 행동 섹션 헤더 (시스템 프롬프트가 강제하는 출력 구조 ④) 의 markdown
+# 패턴. 답변 내 일반 numbered list (예: 사규 인용 '1. 정의 2. 적용범위') 가
+# 권장 행동으로 잘못 추출되지 않도록 섹션 본문에서만 추출.
+# 종료는 다음 섹션(⑤/출처/역질문/[참조/---) 또는 문서 끝(\Z). re.M 의 $ 는
+# line-end 라 lookahead 가 0자 body 로 끝나는 결함 → \Z 로 대체.
+_RE_ACTION_SECTION = re.compile(
+    r"(?:^|\n)\s*(?:④|##?#?\s*권장\s*행동|\*\*?권장\s*행동\*\*?|3\.\s*즉시\s*실행)"
+    r"([\s\S]*?)(?=\n\s*(?:⑤|##?#?\s*출처|##?#?\s*역질문|\[참조|---)|\Z)",
+)
 _RE_ACTION_BLOCK = re.compile(r"(?:^|\n)\s*\d+\.\s+(.+)")
 
 # Prompt injection 1차 필터 — LLM 호출 전에 명백한 공격 패턴을 차단.
@@ -185,8 +194,10 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     if not s.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY 가 설정되지 않았습니다.")
     # 60초 timeout — anthropic SDK 기본은 10분이라 사용자 무한 대기 위험.
-    # Opus 4.7 thinking + 16K max_tokens 케이스도 보통 30초 내 완료.
-    cli = anthropic.Anthropic(api_key=s.anthropic_api_key, timeout=60.0)
+    # max_retries=0 — SDK auto-retry 비활성. 우리 외곽 retry 와 중첩되면
+    # 최악 케이스 540초까지 대기해 Streamlit 504 발생 + 사용자 spinner 영원.
+    cli = anthropic.Anthropic(api_key=s.anthropic_api_key,
+                              timeout=60.0, max_retries=0)
 
     kwargs: dict = {
         "model": s.claude_model,
@@ -297,7 +308,12 @@ def _ensure_citation(answer: str, contexts: list[dict]) -> str:
 
 
 def _extract_action_items(answer: str) -> list[str]:
-    return [m.group(1).strip() for m in _RE_ACTION_BLOCK.finditer(answer)][:3]
+    """권장 행동 섹션 본문에서만 numbered list 추출. 사규 인용에 포함된
+    일반 numbered list (정의/적용범위/위반 시 등) 가 권장 행동으로 오인되어
+    enforce_structure 답변 구조를 왜곡하던 결함 방지."""
+    sec = _RE_ACTION_SECTION.search(answer)
+    target = sec.group(1) if sec else answer
+    return [m.group(1).strip() for m in _RE_ACTION_BLOCK.finditer(target)][:3]
 
 
 def ask(
