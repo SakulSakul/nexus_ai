@@ -54,15 +54,33 @@ _RE_PLATE = re.compile(r"\b\d{2,3}\s*[가-힣]\s*\d{4}\b")
 
 # ── 한국어 인명 + 직책/호칭 (확장) ─────────────────────────────
 # 한국어 인명은 false-positive 위험이 매우 커서, 직책·호칭이 동반될 때만 매치.
+# 회사 표준 직책: 대표이사·부사장·전무·상무·이사·담당·팀장·CP·파트너
 _HONORIFICS = (
     "님|씨|군|양|"
-    "과장|차장|부장|팀장|실장|본부장|상무|전무|부사장|사장|회장|"
+    "과장|차장|부장|팀장|담당|실장|본부장|상무|전무|부사장|사장|회장|"
     "대표이사|대표|이사|"
+    "CP|파트너|"
     "대리|사원|주임|선임|책임|수석|"
     "원장|소장|센터장|국장|"
     "의원|장관|차관|시장|구청장|군수"
 )
 _RE_NAME_HONOR = re.compile(rf"([가-힣]{{2,4}})\s*({_HONORIFICS})")
+
+# ── 직급(pay band) — 회사 표준 4가지 표기 ────────────────────
+# 한국어: 밴드1, 밴드4-2, 밴드 5
+# 영어:   band1, band 4-2
+# 약어:   b1, B5  (false-positive 가능: 'B1 vitamin', 'B1층' 등 — PII 우선)
+_RE_BAND_KO   = re.compile(r"밴드\s*\d{1,2}(?:-\d{1,2})?")
+# \b 가 영문-한글 경계를 인식 못 하므로(예: 'b1이래') lookbehind/lookahead 로
+# 알파뉴메릭만 배제. 한글·공백·구두점 인접은 허용.
+_RE_BAND_EN = re.compile(
+    r"(?<![A-Za-z0-9])band\s*\d{1,2}(?:-\d{1,2})?(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_RE_BAND_ABBR = re.compile(
+    r"(?<![A-Za-z0-9])b\s*\d{1,2}(?:-\d{1,2})?(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
 
 # ── 부서명 후보 — 일반 패턴 ────────────────────────────────────
 _RE_DEPT = re.compile(
@@ -94,6 +112,10 @@ def mask_pii(text: str, extra_terms: Iterable[str] = ()) -> str:
     out = _RE_NAME_HONOR.sub(lambda m: f"{ANON} {m.group(2)}", out)
     out = _RE_DEPT.sub(ANON, out)
     out = _RE_EN_NAME.sub(ANON, out)
+    # 직급(밴드) — 한국어/영어/약어 3종 모두 마스킹
+    out = _RE_BAND_KO.sub(ANON, out)
+    out = _RE_BAND_EN.sub(ANON, out)
+    out = _RE_BAND_ABBR.sub(ANON, out)
 
     for term in extra_terms:
         term = (term or "").strip()
