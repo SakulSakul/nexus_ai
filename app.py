@@ -1007,6 +1007,111 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     ))
 
 
+_CONSENT_BODY_MD = """
+**본 챗봇은 베타 테스트 중이며, 정보처리자가 회사가 아닌 개별 운영자입니다.**
+정식 OPEN 시 회사 GCP(Vertex AI) + 회사 Supabase 로 이관 예정이며,
+그 시점부터 회사가 정보처리자가 됩니다.
+
+참가자께서는 아래 내용을 확인·동의하신 뒤 베타 테스트에 참여해 주시기 바랍니다.
+
+1. **데이터 흐름**
+   - 입력하신 질의는 `[익명]` 마스킹 후 Google Gemini API(유료 티어)로 전송됩니다.
+   - 유료 티어이므로 **모델 학습에는 사용되지 않습니다.**
+   - 마스킹 후 본문·검색 hit 만 Supabase 에 저장되며, 원본 질의는 즉시 폐기됩니다.
+
+2. **인프라 주체 (베타 한정)**
+   - Supabase 프로젝트 / Gemini API 키 모두 **개별 운영자(개인)** 명의입니다.
+   - 회사-Google 간 DPA(데이터 처리 계약) 및 회사 차원의 처리방침 고지는
+     **정식 OPEN 후** 적용됩니다.
+   - 베타 단계의 로그(`query_logs`)는 회사 계정 이관 시 **이관하지 않고 폐기**됩니다.
+
+3. **답변 한계**
+   - 본 챗봇은 사규 해석 보조 도구이며 **법적 효력이 없습니다.**
+   - 신고·조사 절차 등 인사 행정 사항은 인사팀에 직접 문의하셔야 합니다.
+   - 핫라인 URL 일부는 placeholder 상태일 수 있습니다.
+
+4. **수집 정보**
+   - 본 동의 화면에서 입력하신 **성명·사번**은 동의 기록 목적으로만 보관됩니다.
+   - 베타 종료 시 동의 기록도 함께 폐기됩니다.
+
+5. **철회**
+   - 동의 후에도 운영자(`ADMIN`)에게 요청하시면 본인 동의 기록 및 질의 로그를 삭제할 수 있습니다.
+"""
+
+
+def _record_consent(sb, *, participant: str, version: str, env: str, details: dict) -> None:
+    try:
+        sb.table("beta_consents").insert({
+            "participant":     participant,
+            "consent_version": version,
+            "env":             env,
+            "details":         details,
+        }).execute()
+    except Exception:
+        pass
+
+
+def _consent_gate(sb) -> bool:
+    """베타 환경에서 동의 미완료 시 동의 화면을 렌더하고 False 반환.
+    호출자는 False 면 st.stop() 으로 본 화면 렌더를 차단해야 한다.
+    운영(`NEXUS_ENV=prod*`)에서는 항상 True (게이트 비활성)."""
+    s = settings()
+    if not (s.env_tag or "").startswith("beta"):
+        return True
+
+    cur_ver = s.consent_version
+    if st.session_state.get("beta_consent_v") == cur_ver:
+        return True
+
+    st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="nx-hero" style="margin-bottom:24px">
+          <p class="nx-hero-eyebrow">BETA · 사전 동의</p>
+          <h1 class="nx-hero-title">베타 참가 동의서</h1>
+          <p class="nx-hero-sub">
+            본 환경은 정식 OPEN 전 베타 테스트입니다.
+            아래 내용을 확인하시고 동의해 주신 분께만 베타 챗봇이 활성화됩니다.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(_CONSENT_BODY_MD)
+    st.markdown("---")
+
+    with st.form("beta_consent_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            name = st.text_input("성명 *", value="")
+        with c2:
+            emp_no = st.text_input("사번 (선택)", value="")
+        agree = st.checkbox("위 내용을 모두 읽고 베타 참가에 동의합니다.")
+        submitted = st.form_submit_button("동의하고 시작", type="primary")
+
+    if submitted:
+        if not name.strip():
+            st.error("성명을 입력해 주세요.")
+        elif not agree:
+            st.error("동의 체크박스를 선택해 주세요.")
+        else:
+            participant = name.strip()
+            if emp_no.strip():
+                participant = f"{participant} / {emp_no.strip()}"
+            _record_consent(
+                sb,
+                participant=participant,
+                version=cur_ver,
+                env=s.env_tag,
+                details={"emp_no": emp_no.strip() or None},
+            )
+            st.session_state["beta_consent_v"] = cur_ver
+            st.session_state["beta_consent_participant"] = participant
+            st.rerun()
+
+    return False
+
+
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
     # 4px top frame line
@@ -1015,6 +1120,9 @@ def main():
     sb = _supabase()
     if sb is None:
         st.error("Supabase 설정이 없습니다. SUPABASE_URL / SUPABASE_KEY 를 secrets에 추가하세요.")
+        st.stop()
+
+    if not _consent_gate(sb):
         st.stop()
 
     if "history" not in st.session_state:

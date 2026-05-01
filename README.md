@@ -21,9 +21,12 @@
 
 1. **참가자 한정** — 5~10명 내외 임직원에게만 URL 공유, 무차별 공개 금지.
 2. **본 환경 명시** — 메인 화면 상단 "BETA · 개인 인프라" 배너 상시 노출 (`NEXUS_ENV=beta-personal`).
-3. **비용 가드** — 1세션당 일일 100회 한도 (`NEXUS_DAILY_QUERY_LIMIT`).
-4. **답변 품질이 1차 KPI** — 사용자 👍/👎 피드백을 `query_logs.feedback` 에 누적, Admin → 레이더 탭에서 비율 모니터링.
-5. **Phase 3.5 검수 회차** — 도메인 샘플 50~100건을 등록하고 주 1회 회차 실행, 통과율 80% 이상 유지.
+3. **참가자 사전 동의 필수** — 첫 진입 시 `beta_consents` 테이블에 성명·사번·동의서 버전 기록.
+   회사-Google DPA 미수립 / 처리방침 미게시 상태에서의 베타임을 명시적으로 고지하고 동의받음.
+   동의서 문구 변경 시 `NEXUS_CONSENT_VERSION` 만 올리면 전 참가자 재동의 자동 강제.
+4. **비용 가드** — 1세션당 일일 100회 한도 (`NEXUS_DAILY_QUERY_LIMIT`).
+5. **답변 품질이 1차 KPI** — 사용자 👍/👎 피드백을 `query_logs.feedback` 에 누적, Admin → 레이더 탭에서 비율 모니터링.
+6. **Phase 3.5 검수 회차** — 도메인 샘플 50~100건을 등록하고 주 1회 회차 실행, 통과율 80% 이상 유지.
 
 ---
 
@@ -39,6 +42,7 @@
 | `NEXUS_ENV` | | `beta-personal` | `beta-personal` / `beta-corp` / `prod` |
 | `NEXUS_SHOW_THINKING` | | `true` | **항상 ON 권장** — 임직원이 "왜 이 답이 나왔는지" 검증할 수 있어야 신뢰가 생김. expander 로 접혀 있어 첫 화면 노이즈 없음. 운영 토큰 비용이 실제 이슈가 될 때만 `false`. |
 | `NEXUS_DAILY_QUERY_LIMIT` | | `100` | 세션당 일일 한도 |
+| `NEXUS_CONSENT_VERSION` | | `v1` | 베타 동의서 버전. 문구 변경 시 올리면 자동 재동의 강제 |
 | `NEXUS_CHAT_MODEL` | | `gemini-2.5-pro` | |
 | `NEXUS_EMBED_MODEL` | | `gemini-embedding-001` | |
 | `NEXUS_EMBED_DIM` | | `768` | 스키마 `vector(768)` 와 일치 |
@@ -57,6 +61,7 @@ db/03_review.sql          # Phase 3.5 검수 테이블
 db/04_beta_hooks.sql      # 베타 hook 컬럼 + 감사 로그 + effective_date 필터
                           # ⚠ 04 는 02 의 함수를 CREATE OR REPLACE 로 덮어씀
                           # (시그니처에 as_of_date / 반환에 owning_department 추가)
+db/05_beta_consents.sql   # 베타 참가자 동의 기록 테이블
 ```
 
 `db/04_beta_hooks.sql` 가 추가하는 항목:
@@ -109,6 +114,7 @@ db/04_beta_hooks.sql      # 베타 hook 컬럼 + 감사 로그 + effective_date 
 ### C. 데이터 이관
 - [ ] **사규/사례 원본 DOCX** 를 새 버킷에 재업로드 → admin UI 로 재적재 (재임베딩 발생, Gemini 비용 정산)
 - [ ] **`query_logs`(베타) 는 이관하지 않고 폐기** — 정보주체(베타 참가자) 동의 범위가 다름
+- [ ] **`beta_consents`(베타 동의 기록) 도 함께 폐기** — 정식 운영의 처리방침 고지로 대체됨
 - [ ] **`hotline_config`** 회사 실제 URL/번호로 재입력 (`example.invalid` placeholder 100% 교체)
 - [ ] **`critical_keywords`** 도메인 전문가 검수본으로 교체
 - [ ] **`review_samples`** 베타에서 다듬은 골든셋 export → 회사 DB import

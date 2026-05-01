@@ -51,6 +51,8 @@ class Settings:
     env_tag: str
     show_thinking: bool
     daily_query_limit: int
+    # consent_version: 동의서 문구를 변경하면 이 값을 올려서 참가자에게 재동의 강제.
+    consent_version: str
 
 
 @lru_cache(maxsize=1)
@@ -70,6 +72,7 @@ def settings() -> Settings:
         env_tag=get_secret("NEXUS_ENV", "beta-personal"),
         show_thinking=get_secret("NEXUS_SHOW_THINKING", "true").lower() in ("1", "true", "yes", "y"),
         daily_query_limit=int(get_secret("NEXUS_DAILY_QUERY_LIMIT", "100")),
+        consent_version=get_secret("NEXUS_CONSENT_VERSION", "v1"),
     )
 
 

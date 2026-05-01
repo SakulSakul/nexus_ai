@@ -771,6 +771,58 @@ def _tab_keywords(sb):
             st.rerun()
 
 
+def _tab_consents(sb):
+    st.subheader("📜 베타 참가자 동의 기록")
+    st.caption(
+        "정식 OPEN 전 베타 단계의 참가자별 사전 동의 기록입니다. "
+        "회사 계정 이관 시 본 기록은 함께 폐기되며, 참가자 요청 시 개별 삭제 가능합니다."
+    )
+    rows = (
+        sb.table("beta_consents").select("*")
+          .order("consented_at", desc=True).limit(500)
+          .execute().data or []
+    )
+    if not rows:
+        st.info("아직 동의 기록이 없습니다.")
+        return
+
+    from collections import Counter as _Counter
+    by_ver = _Counter(r.get("consent_version") or "?" for r in rows)
+    by_env = _Counter(r.get("env") or "?" for r in rows)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("총 동의 건수", f"{len(rows)}건")
+    c2.metric("최신 버전 동의자",
+              f"{by_ver.most_common(1)[0][1] if by_ver else 0}명",
+              delta=by_ver.most_common(1)[0][0] if by_ver else "—")
+    c3.metric("환경 분포",
+              ", ".join(f"{k}:{v}" for k, v in by_env.most_common(3)) or "—")
+
+    st.dataframe(rows, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("#### 🗑️ 동의 철회 / 삭제")
+    ids = [r["id"] for r in rows]
+    targets = st.multiselect(
+        "삭제할 동의 기록 ID",
+        options=ids,
+        format_func=lambda i: next(
+            f"#{r['id']} {r.get('participant','')} ({r.get('consent_version','')})"
+            for r in rows if r["id"] == i
+        ),
+    )
+    admin_sb = _supabase_admin()
+    if targets and st.button("선택 삭제", type="primary"):
+        if admin_sb is None:
+            st.error("SUPABASE_SERVICE_ROLE_KEY 미설정 — 삭제 불가.")
+        else:
+            for tid in targets:
+                admin_sb.table("beta_consents").delete().eq("id", tid).execute()
+                _audit(admin_sb, action="beta_consent_delete",
+                       target=str(tid))
+            st.success(f"{len(targets)}건 삭제 완료")
+            st.rerun()
+
+
 def main():
     _require_auth()
 
@@ -787,7 +839,7 @@ def main():
 
     tabs = st.tabs([
         "📥 업로드", "📚 버전", "📡 레이더",
-        "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
+        "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드", "📜 동의",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -795,6 +847,7 @@ def main():
     with tabs[3]: _tab_review(sb)
     with tabs[4]: _tab_hotlines(sb)
     with tabs[5]: _tab_keywords(sb)
+    with tabs[6]: _tab_consents(sb)
 
 
 if __name__ == "__main__":
