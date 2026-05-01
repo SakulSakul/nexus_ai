@@ -44,6 +44,13 @@ class Settings:
     top_k: int
     temperature: float
     top_p: float
+    # ── 베타/운영 환경 분기 ─────────────────────────────────
+    # env_tag: query_logs.env 컬럼에 저장. 회사 이관 시 'beta-corp' → 'prod' 로 승격.
+    # show_thinking: Gemini thinking parts 를 사용자 UI 에 노출할지. 베타 ON / 운영 OFF.
+    # daily_query_limit: 1세션당 일일 질의 한도 (베타 비용 가드).
+    env_tag: str
+    show_thinking: bool
+    daily_query_limit: int
 
 
 @lru_cache(maxsize=1)
@@ -60,6 +67,9 @@ def settings() -> Settings:
         top_k=int(get_secret("NEXUS_TOP_K", "3")),
         temperature=float(get_secret("NEXUS_TEMPERATURE", "0")),
         top_p=float(get_secret("NEXUS_TOP_P", "0.1")),
+        env_tag=get_secret("NEXUS_ENV", "beta-personal"),
+        show_thinking=get_secret("NEXUS_SHOW_THINKING", "true").lower() in ("1", "true", "yes", "y"),
+        daily_query_limit=int(get_secret("NEXUS_DAILY_QUERY_LIMIT", "100")),
     )
 
 

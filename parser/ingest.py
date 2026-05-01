@@ -36,6 +36,7 @@ def ingest_docx(
     uploaded_by: str | None = None,
     confirmed_categories: list[str] | None = None,
     department: str | None = None,
+    source_filename: str | None = None,
 ) -> IngestResult:
     chunks: list[Chunk] = parse_docx(file_bytes)
     sample = "\n".join(c.text for c in chunks[:6])
@@ -72,7 +73,7 @@ def ingest_docx(
     doc_row = supabase.table("nexus_documents").insert({
         "title": title,
         "doc_kind": doc_kind,
-        "source_filename": None,
+        "source_filename": source_filename,
         "version": version,
         "effective_date": effective_date.isoformat() if effective_date else None,
         "status": "active",
@@ -83,21 +84,44 @@ def ingest_docx(
 
     document_id = doc_row["id"]
 
+    # 원본 DOCX 를 Supabase Storage("nexus-docs-original" 버킷) 에 보관.
+    # 이관 시 재파싱·재임베딩이 필요한데 원본 없이는 불가능하므로 베타 단계에서
+    # 미리 보관. 버킷이 미생성이거나 권한이 없으면 silently skip — 적재 자체는
+    # 계속 성공시킴(스키마는 source_storage_path nullable).
+    from core.config import settings as _s
+    try:
+        bucket = "nexus-docs-original"
+        safe_name = (source_filename or f"{title}.docx").replace("/", "_")
+        storage_path = f"{document_id}/{safe_name}"
+        supabase.storage.from_(bucket).upload(
+            path=storage_path,
+            file=file_bytes,
+            file_options={"content-type":
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+        )
+        supabase.table("nexus_documents").update(
+            {"source_storage_path": storage_path}
+        ).eq("id", document_id).execute()
+    except Exception:
+        pass
+
     # 임베딩 (RETRIEVAL_DOCUMENT)
     embeddings = embed_many([c.text for c in chunks])
+    embed_model_version = _s().embed_model
 
     rows = []
     for c, emb in zip(chunks, embeddings):
         # 청크별 카테고리: 추천 카테고리에 청크 텍스트 기반 추가 후보 합집합
         cats = sorted(set(auto_cats) | set(suggest_categories(c.text)))
         rows.append({
-            "document_id": document_id,
-            "chunk_idx":   c.chunk_idx,
-            "article_no":  c.article_no,
-            "case_no":     c.case_no,
-            "categories":  cats,
-            "text":        c.text,
-            "embedding":   emb,
+            "document_id":         document_id,
+            "chunk_idx":           c.chunk_idx,
+            "article_no":          c.article_no,
+            "case_no":             c.case_no,
+            "categories":          cats,
+            "text":                c.text,
+            "embedding":           emb,
+            "embed_model_version": embed_model_version,
         })
 
     if rows:

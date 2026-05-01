@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.chatbot import ask
+import datetime as _dt
+
+from core.chatbot import ask, record_feedback
 from core.config import CATEGORIES, get_secret, load_hotlines, settings
 
 
@@ -574,6 +576,28 @@ html, body, .stApp {
   margin-top: 10px;
 }
 
+/* 베타 배너 — 환경 식별 명시. 운영 이관 시 NEXUS_ENV=prod 로 자동 숨김. */
+.nx-beta-banner {
+  background: #1A1A1A;
+  color: #FFFFFF;
+  padding: 10px 18px;
+  margin: 0 0 16px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.nx-beta-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  background: #FFFFFF;
+  color: #1A1A1A;
+  padding: 2px 7px;
+}
+
 /* Sidebar brand block */
 .nx-brand {
   padding: 28px 0 20px;
@@ -824,6 +848,58 @@ def _show_example_questions() -> str | None:
     return None
 
 
+def _render_beta_banner() -> None:
+    s = settings()
+    if (s.env_tag or "").startswith("prod"):
+        return
+    st.markdown(
+        f"""
+        <div class="nx-beta-banner">
+          <span class="nx-beta-tag">BETA</span>
+          본 환경은 베타 테스트({s.env_tag})이며 개인 인프라에서 운영됩니다 ·
+          Gemini 유료 티어(학습 비활성) · 답변 품질 검증 단계입니다.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _check_rate_limit() -> bool:
+    """세션 단위 일일 한도. 초과 시 False 반환 (호출자가 안내 문구 출력).
+    회사 이관 + SSO 도입 후에는 user_id_hash 기반 서버 카운터로 교체."""
+    s = settings()
+    today = _dt.date.today().isoformat()
+    rec = st.session_state.get("_rate_rec") or {"date": today, "count": 0}
+    if rec["date"] != today:
+        rec = {"date": today, "count": 0}
+    if rec["count"] >= s.daily_query_limit:
+        st.session_state["_rate_rec"] = rec
+        return False
+    rec["count"] += 1
+    st.session_state["_rate_rec"] = rec
+    return True
+
+
+def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
+    """답변 1건당 👍/👎 한 번. session_state 로 중복 클릭 차단."""
+    if not query_log_id:
+        return
+    key_state = f"_fb_state_{msg_idx}"
+    state = st.session_state.get(key_state)
+    if state in ("up", "down"):
+        st.caption("👍 의견 감사합니다." if state == "up" else "👎 의견 감사합니다. 사유는 운영자가 검토합니다.")
+        return
+    c1, c2, _ = st.columns([1, 1, 8])
+    if c1.button("👍", key=f"fb_up_{msg_idx}"):
+        if record_feedback(sb, query_log_id=query_log_id, feedback=1):
+            st.session_state[key_state] = "up"
+            st.rerun()
+    if c2.button("👎", key=f"fb_down_{msg_idx}"):
+        if record_feedback(sb, query_log_id=query_log_id, feedback=-1):
+            st.session_state[key_state] = "down"
+            st.rerun()
+
+
 def _render_critical_banner() -> None:
     st.markdown(
         """
@@ -839,6 +915,14 @@ def _render_critical_banner() -> None:
 def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     import sys
     import traceback
+    if not _check_rate_limit():
+        s = settings()
+        with st.chat_message("assistant"):
+            st.warning(
+                f"⚠️ 오늘 질의 한도({s.daily_query_limit}회)를 초과했습니다. "
+                "베타 비용 가드 정책입니다. 내일 다시 이용해 주세요."
+            )
+        return
     st.session_state["history"].append(("user", q, {}))
     with st.chat_message("user"):
         st.markdown(q)
@@ -887,7 +971,8 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             with st.expander("🔧 기술 세부정보 (관리자용)", expanded=False):
                 st.code(tb_str or str(last_err) or "(no traceback)", language="python")
         else:
-            if ans.thinking:
+            s = settings()
+            if ans.thinking and s.show_thinking:
                 with st.expander("THINKING PROCESS", expanded=False):
                     st.markdown(ans.thinking)
             if ans.is_critical:
@@ -898,6 +983,9 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 unsafe_allow_html=True,
             )
             _render_contexts(ans.contexts)
+            # 피드백 UI — 답변마다 고유 인덱스로 위젯 키 분리.
+            _render_feedback(sb, msg_idx=len(st.session_state["history"]),
+                             query_log_id=ans.query_log_id)
 
     if ans is None:
         st.session_state["history"].append((
@@ -914,6 +1002,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             "kind": ans.critical_kind,
             "thinking": ans.thinking,
             "elapsed": ans.elapsed,
+            "query_log_id": ans.query_log_id,
         },
     ))
 
@@ -934,6 +1023,8 @@ def main():
     hotlines = load_hotlines(sb)
     cat = _sidebar(sb, hotlines)
 
+    _render_beta_banner()
+
     # Hero section
     st.markdown(
         """
@@ -950,9 +1041,10 @@ def main():
     )
 
     # Chat history replay
-    for role, content, meta in st.session_state["history"]:
+    s = settings()
+    for idx, (role, content, meta) in enumerate(st.session_state["history"]):
         with st.chat_message(role):
-            if role == "assistant" and meta.get("thinking"):
+            if role == "assistant" and meta.get("thinking") and s.show_thinking:
                 with st.expander("THINKING PROCESS", expanded=False):
                     st.markdown(meta["thinking"])
             if role == "assistant" and meta.get("critical"):
@@ -965,6 +1057,8 @@ def main():
                 )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
+            if role == "assistant" and meta.get("query_log_id"):
+                _render_feedback(sb, msg_idx=idx, query_log_id=meta["query_log_id"])
 
     # Example questions (empty state only)
     clicked_q: str | None = None

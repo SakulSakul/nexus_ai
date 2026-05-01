@@ -168,6 +168,23 @@ def _cached_parse(file_bytes: bytes) -> list:
     return parse_docx(file_bytes)
 
 
+def _audit(sb_admin, *, action: str, target: str | None = None,
+           details: dict | None = None, actor: str | None = None) -> None:
+    """관리자 행위 감사 로그. 실패해도 본 작업 흐름은 막지 않는다."""
+    if sb_admin is None:
+        return
+    try:
+        actor = actor or st.session_state.get("admin_actor") or "admin"
+        sb_admin.table("admin_audit_logs").insert({
+            "actor":   actor,
+            "action":  action,
+            "target":  target,
+            "details": details or {},
+        }).execute()
+    except Exception:
+        pass
+
+
 _KIND_LABEL = {"rule": "사규", "case": "사례", "penalty": "징계"}
 
 
@@ -264,6 +281,7 @@ def _tab_upload(sb):
     st.markdown(f"적재 대상: **{len(valid_configs)}개 파일**")
 
     if st.button("✅ 전체 적재 실행", type="primary", key="ul_submit"):
+        admin_sb = _supabase_admin()
         for cfg in valid_configs:
             if not cfg["cats"]:
                 st.error(f"**{cfg['fname']}** — 카테고리를 1개 이상 선택하세요.")
@@ -280,14 +298,28 @@ def _tab_upload(sb):
                         uploaded_by=uploader or None,
                         confirmed_categories=cfg["cats"],
                         department=cfg["department"],
+                        source_filename=cfg["fname"],
                     )
                     if res.skipped_hr_procedure:
                         st.error(f"**{cfg['fname']}** — 신고절차 문서로 차단됨")
+                        _audit(admin_sb, action="document_upload_blocked",
+                               target=cfg["fname"], details={"reason": "hr_procedure"},
+                               actor=uploader or None)
                     else:
                         msg = f"**{cfg['fname']}** — 청크 {res.chunks_inserted}개 적재 완료"
                         if res.archived_previous:
                             msg += " · 이전 버전 자동 archived"
                         st.success(msg)
+                        _audit(admin_sb, action="document_upload",
+                               target=str(res.document_id) if res.document_id else None,
+                               details={
+                                   "title": cfg["title"], "kind": cfg["kind"],
+                                   "version": cfg["version"],
+                                   "filename": cfg["fname"],
+                                   "chunks": res.chunks_inserted,
+                                   "archived_previous": res.archived_previous,
+                               },
+                               actor=uploader or None)
                 except Exception as e:
                     st.error(f"**{cfg['fname']}** — 오류: {e}")
 
@@ -341,6 +373,9 @@ def _tab_versions(sb):
                     admin_sb.table("nexus_documents").update(
                         {"owning_department": norm}
                     ).eq("id", doc_id).execute()
+                    _audit(admin_sb, action="owning_department_update",
+                           target=str(doc_id),
+                           details={"title": title, "before": current, "after": norm})
                     st.success(f"저장됨: {title}")
                     st.rerun()
 
@@ -351,7 +386,7 @@ def _tab_radar(sb):
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
     rows = (
         sb.table("query_logs")
-          .select("ts,category,is_critical,critical_kind,dept_hash")
+          .select("ts,category,is_critical,critical_kind,dept_hash,feedback,env")
           .gte("ts", since)
           .execute()
           .data or []
@@ -386,6 +421,24 @@ def _tab_radar(sb):
     # 심각 사안 비율
     crit = sum(1 for r in rows if r.get("is_critical"))
     st.metric("심각 사안 비율", f"{(crit/len(rows))*100:.1f}%", delta=f"{crit}건")
+
+    # 사용자 피드백 분포 (베타 답변 품질 KPI)
+    st.markdown("#### 👍 / 👎 사용자 피드백")
+    fb_up   = sum(1 for r in rows if r.get("feedback") == 1)
+    fb_down = sum(1 for r in rows if r.get("feedback") == -1)
+    fb_total = fb_up + fb_down
+    c1, c2, c3 = st.columns(3)
+    c1.metric("응답 수집률", f"{(fb_total/len(rows))*100:.1f}%",
+              delta=f"{fb_total}/{len(rows)}건")
+    c2.metric("👍 비율",
+              f"{(fb_up/fb_total*100):.1f}%" if fb_total else "—",
+              delta=f"{fb_up}건")
+    c3.metric("👎 비율",
+              f"{(fb_down/fb_total*100):.1f}%" if fb_total else "—",
+              delta=f"{fb_down}건",
+              delta_color="inverse")
+    if fb_total < 10:
+        st.caption("표본 부족 — 베타 참가자 의견을 더 모은 뒤 해석하세요.")
 
 
 def _tab_review(sb):
@@ -622,6 +675,7 @@ def _tab_hotlines(sb):
             )
             return
         ts = dt.datetime.utcnow().isoformat()
+        before_map = {k: (existing.get(k) or {}).get("value", "") for k in edited}
         for key, val in edited.items():
             admin_sb.table("hotline_config").upsert({
                 "key": key,
@@ -629,6 +683,12 @@ def _tab_hotlines(sb):
                 "description": LABELS[key],
                 "updated_at": ts,
             }).execute()
+        changed = {k: {"before": before_map.get(k, ""), "after": v.strip()}
+                   for k, v in edited.items()
+                   if v.strip() != before_map.get(k, "")}
+        if changed:
+            _audit(admin_sb, action="hotline_update", target="hotline_config",
+                   details={"changed": changed})
         st.success("저장되었습니다. (사용자 챗봇은 다음 응답부터 즉시 반영)")
 
     st.markdown("---")

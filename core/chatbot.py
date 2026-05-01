@@ -31,22 +31,34 @@ class Answer:
     masked_question: str
     thinking: str = field(default="")
     elapsed: float = field(default=0.0)
+    # query_logs.id (insert 결과). 사용자 피드백(👍/👎) 갱신 시 이 id 로 update.
+    # insert 실패 시 None.
+    query_log_id: int | None = field(default=None)
 
 
-def _gen(model: str, system: str, user: str, *, temperature: float, top_p: float) -> tuple[str, str]:
-    """Returns (answer_text, thinking_text)."""
+def _gen(model: str, system: str, user: str, *,
+         temperature: float, top_p: float, include_thinking: bool = True) -> tuple[str, str]:
+    """Returns (answer_text, thinking_text). include_thinking=False 일 때는
+    thinking_config 자체를 빼서 토큰/비용 절감."""
     from google import genai
     from google.genai import types
     s = settings()
     cli = genai.Client(api_key=s.gemini_api_key)
 
     try:
-        cfg = types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=temperature,
-            top_p=top_p,
-            thinking_config=types.ThinkingConfig(include_thoughts=True),
-        )
+        if include_thinking:
+            cfg = types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=temperature,
+                top_p=top_p,
+                thinking_config=types.ThinkingConfig(include_thoughts=True),
+            )
+        else:
+            cfg = types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=temperature,
+                top_p=top_p,
+            )
     except Exception:
         cfg = types.GenerateContentConfig(
             system_instruction=system,
@@ -129,7 +141,8 @@ def ask(
 
     user = build_user_prompt(masked, contexts)
     raw, thinking = _gen(s.chat_model, SYSTEM_PROMPT, user,
-                         temperature=s.temperature, top_p=s.top_p)
+                         temperature=s.temperature, top_p=s.top_p,
+                         include_thinking=s.show_thinking)
     raw = _ensure_citation(raw, contexts)
 
     if detection.triggered:
@@ -146,15 +159,23 @@ def ask(
 
     elapsed = time.perf_counter() - t0
 
-    # 질의 로그 (마스킹 후 본문만 저장, 원본은 즉시 폐기)
+    # 질의 로그 (마스킹 후 본문만 저장, 원본은 즉시 폐기).
+    # 베타 식별(env) · 임베딩 모델 버전 · SSO/RBAC 슬롯(null) 을 함께 기록.
+    # insert 결과 id 는 사용자 피드백(👍/👎) 갱신용으로 호출자에 반환.
+    query_log_id: int | None = None
     try:
-        supabase.table("query_logs").insert({
-            "category":      category if category and category != "전체" else None,
-            "query_masked":  masked,
-            "is_critical":   detection.triggered,
-            "critical_kind": detection.kind,
-            "hit_chunk_ids": [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
+        ins = supabase.table("query_logs").insert({
+            "category":             category if category and category != "전체" else None,
+            "query_masked":         masked,
+            "is_critical":          detection.triggered,
+            "critical_kind":        detection.kind,
+            "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
+            "env":                  s.env_tag,
+            "embed_model_version":  s.embed_model,
+            # user_id_hash / access_level 은 회사 SSO 도입 후 채움.
         }).execute()
+        if ins.data:
+            query_log_id = ins.data[0].get("id")
     except Exception:
         pass
 
@@ -166,4 +187,20 @@ def ask(
         masked_question=masked,
         thinking=thinking,
         elapsed=elapsed,
+        query_log_id=query_log_id,
     )
+
+
+def record_feedback(supabase: Any, *, query_log_id: int,
+                    feedback: int, comment: str | None = None) -> bool:
+    """사용자 피드백(👍=1 / 👎=-1) 을 query_logs 에 기록. 성공 여부 반환."""
+    if feedback not in (-1, 1):
+        return False
+    try:
+        payload: dict = {"feedback": feedback}
+        if comment:
+            payload["feedback_comment"] = comment[:500]
+        supabase.table("query_logs").update(payload).eq("id", query_log_id).execute()
+        return True
+    except Exception:
+        return False
