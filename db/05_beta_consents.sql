@@ -20,3 +20,14 @@ create index if not exists idx_beta_consents_ts
   on beta_consents (consented_at desc);
 create index if not exists idx_beta_consents_version
   on beta_consents (consent_version, consented_at desc);
+
+-- ── 베타 RLS 정책 ──────────────────────────────────────────
+-- Supabase 신규 테이블은 RLS 가 활성화돼 있어 anon 이 insert 못 한다.
+-- 베타 단계에서는 단순화를 위해 RLS off + anon/authenticated 에 insert·
+-- select 권한 명시. (사용자가 베타 동의를 anon 클라이언트로 기록하고,
+-- admin 화면도 anon 으로 읽기 때문.)
+-- 회사 계정 이관 시점에 RLS on + 명시 정책 (예: insert 만 anon 허용,
+-- select 는 service_role/admin role 한정) 으로 재구성한다.
+alter table beta_consents disable row level security;
+grant insert, select on beta_consents to anon, authenticated;
+grant usage, select on sequence beta_consents_id_seq to anon, authenticated;

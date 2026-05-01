@@ -47,6 +47,15 @@ create index if not exists idx_admin_audit_logs_ts
 create index if not exists idx_admin_audit_logs_action
   on admin_audit_logs (action, ts desc);
 
+-- ── 베타 RLS 정책 (admin_audit_logs) ───────────────────────
+-- Supabase 신규 테이블은 RLS 가 활성화돼 있어 anon 이 insert 못 한다.
+-- 베타 단계에서는 admin 페이지가 anon 키로 동작하므로 RLS off + insert·
+-- select 권한을 명시한다. 회사 이관 시 RLS on + service_role 전용 정책
+-- (admin 행위는 service_role 로만 기록) 으로 재구성 예정.
+alter table admin_audit_logs disable row level security;
+grant insert, select on admin_audit_logs to anon, authenticated;
+grant usage, select on sequence admin_audit_logs_id_seq to anon, authenticated;
+
 -- ── nexus_hybrid_search: effective_date 필터 + owning_department 반환 ──
 -- 시행일이 미래인 사규(예: 2026-07-01 시행)가 검색 결과에 노출되지 않도록
 -- 차단. 회귀/미래 시뮬레이션이 필요할 때는 as_of_date 인자로 강제 가능.
