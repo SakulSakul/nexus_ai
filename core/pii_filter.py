@@ -26,12 +26,21 @@ _RE_PHONE    = re.compile(r"\b01[016-9]-?\d{3,4}-?\d{4}\b")
 _RE_PHONE2   = re.compile(r"\b0\d{1,2}-\d{3,4}-\d{4}\b")
 
 # ── 사번 — '사번/사원번호/직원번호/사원ID/emp_no' 키워드 동반 ──
-# 컨텍스트 키워드 없는 일반 숫자(연도·금액 등)는 건드리지 않음.
 _RE_EMP_ID = re.compile(
     r"(?P<key>(?:사번|사원\s*번호|직원\s*번호|사원\s*ID|emp[_\s-]?no|employee[_\s-]?id))"
     r"\s*[:：=]?\s*(?P<val>[A-Za-z0-9-]{4,12})",
     re.IGNORECASE,
 )
+
+# ── 사번 — 6자리 숫자 standalone (회사 사번 표준 형식) ──
+# 신세계면세점 사번은 6자리(예: 182491). 키워드 동반 없이 본문에 등장하는
+# 케이스 ('내 사번은 182491', '182491 직원이' 등) 도 마스킹.
+# (?<!\d)/(?!\d) 로 인접 숫자 배제 — Python \b 가 한글-숫자 경계를 인식
+# 못 하기 때문에 lookbehind/lookahead 사용. 한글/공백 인접은 허용.
+# RRN/카드/계좌 마스킹 이후에 적용해 큰 구조의 부분 매치를 방지.
+# false-positive: 200000원 같은 6자리 금액·기타 6자리 통계 → 보수적으로 마스킹
+# 허용 (PII 보호 측면에서 false-negative 보다 낫다).
+_RE_EMP_ID_6 = re.compile(r"(?<!\d)\d{6}(?!\d)")
 
 # ── 신용카드 — 4-4-4-4 그룹 (공백·하이픈 허용, 16자리) ────────
 _RE_CARD = re.compile(r"\b(?:\d{4}[\s-]?){3}\d{4}\b")
@@ -80,6 +89,8 @@ def mask_pii(text: str, extra_terms: Iterable[str] = ()) -> str:
     out = _RE_PLATE.sub(ANON, out)
     # 사번: 키워드 보존 + 값 마스킹 ('사번: [익명]')
     out = _RE_EMP_ID.sub(lambda m: f"{m.group('key')}: {ANON}", out)
+    # 사번 standalone (6자리) — RRN/카드/계좌 마스킹 이후 적용
+    out = _RE_EMP_ID_6.sub(ANON, out)
     out = _RE_NAME_HONOR.sub(lambda m: f"{ANON} {m.group(2)}", out)
     out = _RE_DEPT.sub(ANON, out)
     out = _RE_EN_NAME.sub(ANON, out)
