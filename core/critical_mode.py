@@ -50,8 +50,9 @@ def detect(text: str, keywords: dict[str, list[str]]) -> CriticalDetection:
 
 def _scope_line(kind: str) -> str:
     if kind == "harassment":
+        # 괴롭힘·성희롱은 신고·조사 case → CSR / 핫라인 라우팅
         return ("본 답변은 사규 해석 관점입니다. "
-                "신고·조사 절차 등 인사 행정 사항은 인사팀에 직접 문의하시기 바랍니다.")
+                "신고·조사 사항은 CSR팀 또는 신세계면세점 핫라인으로 접수해 주시기 바랍니다.")
     return ("본 답변은 사규/안전관리 기준 관점이며, "
             "실제 응급상황 시 아래 핫라인을 즉시 이용하시기 바랍니다.")
 
@@ -61,7 +62,8 @@ def _hotline_box(kind: str, hotlines: dict[str, str]) -> str:
     lines.append(f"- 사내 익명 제보채널: {hotlines.get('internal_report_url','')}")
     lines.append(f"- 외부 상담채널: {hotlines.get('external_hotline','')}")
     if kind == "harassment":
-        lines.append(f"- 인사팀 문의: {hr_routing_line(hotlines)}")
+        # 괴롭힘·성희롱은 신고·조사 → CSR팀 라우팅 (인사팀 X)
+        lines.append("- 신고·조사 접수: CSR팀 또는 신세계면세점 핫라인")
     return "\n".join(lines)
 
 

@@ -125,8 +125,10 @@ insert into hotline_config (key, value, description) values
   ('internal_report_url',   'https://example.invalid/report',   '사내 익명 제보채널 URL (placeholder)'),
   ('external_hotline',      '고용노동부 1350',                   '외부 상담채널 (placeholder)'),
   ('ethics_hotline_url',    'https://example.invalid/ethics',   '신세계면세점 핫라인 제보하기 (placeholder)'),
-  ('hr_contact_text',       '신고·조사 절차 등 인사 행정 사항은 인사팀에 직접 문의하시기 바랍니다.',
-                            '인사 챗봇 오픈 시 본 문구 교체하면 즉시 반영'),
+  ('hr_contact_text',       '인사 규정·복리후생 등 인사 행정 사항은 인사팀에 문의해 주시기 바랍니다.',
+                            '인사 행정 라우팅 문구. 인사 챗봇 오픈 시 본 문구 교체하면 즉시 반영'),
+  ('csr_contact_text',      '신고·조사 사항은 CSR팀 또는 신세계면세점 핫라인으로 접수해 주시기 바랍니다.',
+                            '신고·조사(괴롭힘·성희롱·뇌물 등) 라우팅 문구'),
   ('hr_chatbot_url',        '',                                 '인사 챗봇 URL (오픈 시점 미정)')
 on conflict (key) do nothing;
 

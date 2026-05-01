@@ -94,7 +94,7 @@ _DEFAULT_HOTLINES: dict[str, str] = {
     "internal_report_url": "https://example.invalid/report",
     "external_hotline":    "고용노동부 1350",
     "ethics_hotline_url":  "https://example.invalid/ethics",
-    "hr_contact_text":     "신고·조사 절차 등 인사 행정 사항은 인사팀에 직접 문의하시기 바랍니다.",
+    "hr_contact_text":     "인사 규정·복리후생 등 인사 행정 사항은 인사팀에 문의해 주시기 바랍니다.",
     "hr_chatbot_url":      "",
 }
 
