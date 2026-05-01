@@ -30,15 +30,28 @@ def embed_one(text: str, *, task_type: str = "RETRIEVAL_QUERY") -> list[float]:
     return list(res.embeddings[0].values)
 
 
-def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
+def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
+               max_workers: int = 4) -> list[list[float]]:
+    """청크 임베딩 병렬화. Gemini embed_content 는 단일 string 만 받지만
+    ThreadPoolExecutor 로 동시 처리해 적재 시간을 단축한다.
+    max_workers=4 가 API rate limit + 네트워크 대기 균형에 적정.
+    순서는 호출 순으로 보장 (executor.map). 클라이언트는 호출별로 별도 생성.
+    """
+    from concurrent.futures import ThreadPoolExecutor
     s = settings()
-    cli = _client()
-    out: list[list[float]] = []
-    for t in texts:
+    items = list(texts)
+    if not items:
+        return []
+
+    def _one(t: str) -> list[float]:
+        cli = _client()
         res = cli.models.embed_content(
             model=s.embed_model,
             contents=t,
             config={"task_type": task_type, "output_dimensionality": s.embed_dim},
         )
-        out.append(list(res.embeddings[0].values))
-    return out
+        return list(res.embeddings[0].values)
+
+    workers = max(1, min(max_workers, len(items)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(_one, items))

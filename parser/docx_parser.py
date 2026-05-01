@@ -72,6 +72,27 @@ def _flatten(doc: Document) -> str:
     return "\n".join(parts)
 
 
+def _split_long_line(line: str, max_chars: int) -> list[str]:
+    """단일 line 이 max_chars 초과 시 공백/구두점 경계로 분할.
+    표 한 셀이나 별표 항목이 1200자 넘는 케이스 대응."""
+    if len(line) <= max_chars:
+        return [line]
+    parts: list[str] = []
+    rest = line
+    while len(rest) > max_chars:
+        cut = max_chars
+        for sep in (" ", "\t", ".", "·", "、", ","):
+            idx = rest.rfind(sep, max(0, max_chars - 200), max_chars)
+            if idx > 0:
+                cut = idx + 1
+                break
+        parts.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        parts.append(rest)
+    return parts
+
+
 def parse_docx(file_bytes: bytes, *, max_chars: int = 1200) -> list[Chunk]:
     doc = Document(io.BytesIO(file_bytes))
     flat = _flatten(doc)
@@ -95,16 +116,18 @@ def parse_docx(file_bytes: bytes, *, max_chars: int = 1200) -> list[Chunk]:
         ))
         buf.clear()
 
-    for line in flat.split("\n"):
-        m_art = _RE_ARTICLE.search(line)
-        m_case = _RE_CASE_NO.search(line)
-        if m_art or m_case or sum(len(x) for x in buf) + len(line) > max_chars:
-            flush()
-            if m_art:
-                cur_article = f"제{m_art.group(1)}조"
-            if m_case:
-                cur_case = f"#{m_case.group(1)}"
-        buf.append(line)
+    for raw_line in flat.split("\n"):
+        # 단일 line 이 max_chars 초과면 사전 분할 (표 한 셀 등 대응)
+        for line in _split_long_line(raw_line, max_chars):
+            m_art = _RE_ARTICLE.search(line)
+            m_case = _RE_CASE_NO.search(line)
+            if m_art or m_case or sum(len(x) for x in buf) + len(line) > max_chars:
+                flush()
+                if m_art:
+                    cur_article = f"제{m_art.group(1)}조"
+                if m_case:
+                    cur_case = f"#{m_case.group(1)}"
+            buf.append(line)
     flush()
     return chunks
 

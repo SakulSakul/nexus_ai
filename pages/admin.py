@@ -185,8 +185,10 @@ def _require_auth() -> None:
     st.stop()
 
 
-@st.cache_resource(show_spinner=False)
 def _supabase():
+    """매 호출마다 새 클라이언트 생성. cache_resource 미사용 — multi-user
+    Streamlit Cloud 에서 한 세션의 httpx close 가 다른 세션에 전파되는 문제
+    회피. (app.py 도 동일 패턴.)"""
     from supabase import create_client
     s = settings()
     if not s.supabase_url or not s.supabase_key:
@@ -194,13 +196,13 @@ def _supabase():
     return create_client(s.supabase_url, s.supabase_key)
 
 
-@st.cache_resource(show_spinner=False)
 def _supabase_admin():
     """service_role 클라이언트 — RLS 를 우회한다.
 
     ⚠️ 본 함수는 _require_auth() 로 비밀번호 게이트를 통과한 admin 페이지
     안에서만 호출할 것. 일반 사용자 코드 경로(app.py 응답)에서는 절대
-    임포트/사용 금지. SUPABASE_SERVICE_ROLE_KEY 미설정 시 None."""
+    임포트/사용 금지. SUPABASE_SERVICE_ROLE_KEY 미설정 시 None.
+    cache_resource 미사용 — 동일한 multi-user 격리 사유."""
     from supabase import create_client
     s = settings()
     if not s.supabase_url or not s.supabase_service_role_key:
@@ -563,6 +565,12 @@ def _tab_review(sb):
                     value="",
                     height=80,
                 )
+                forbidden_keywords_raw = st.text_area(
+                    "금지 키워드 (쉼표 구분, 답변에 포함되면 fail)",
+                    value="",
+                    height=60,
+                    help="예: 인사 행정 질문에 'CSR팀' 이 등장하면 라우팅 오작동.",
+                )
             question = st.text_area("평가용 질문", height=120)
             notes = st.text_area("메모 (선택)", height=80)
             submit = st.form_submit_button("등록", type="primary")
@@ -571,8 +579,9 @@ def _tab_review(sb):
             if not question.strip():
                 st.error("질문을 입력하세요.")
             else:
-                kws = [k.strip() for k in expected_keywords_raw.split(",") if k.strip()]
-                sb.table("review_samples").insert({
+                kws  = [k.strip() for k in expected_keywords_raw.split(",")  if k.strip()]
+                fkws = [k.strip() for k in forbidden_keywords_raw.split(",") if k.strip()]
+                payload: dict = {
                     "category": None if category == "자동" else category,
                     "question": question.strip(),
                     "expected_keywords": kws,
@@ -582,8 +591,23 @@ def _tab_review(sb):
                     "domain": domain,
                     "notes": notes.strip() or None,
                     "created_by": created_by.strip() or None,
-                }).execute()
-                st.success("샘플이 등록되었습니다.")
+                }
+                if fkws:
+                    payload["forbidden_keywords"] = fkws
+                try:
+                    sb.table("review_samples").insert(payload).execute()
+                    st.success("샘플이 등록되었습니다.")
+                except Exception as e:
+                    if "forbidden_keywords" in str(e):
+                        # db/07 미적용 — 컬럼 빼고 재시도
+                        payload.pop("forbidden_keywords", None)
+                        sb.table("review_samples").insert(payload).execute()
+                        st.success("샘플이 등록되었습니다. (db/07 미적용 → 금지 키워드 무시)")
+                    else:
+                        raise
+                _audit(_supabase_admin(), action="review_sample_add",
+                       target=question.strip()[:60],
+                       details={"domain": domain, "expected_critical": bool(expected_critical)})
 
     # ── CSV 일괄 ───────────────────────────────────────────
     with sub_csv:
@@ -755,6 +779,22 @@ def _tab_hotlines(sb):
                 "Streamlit Cloud → Manage app → Settings → Secrets 에서 추가하세요."
             )
             return
+        # URL scheme 화이트리스트 — javascript:/data:/file: 등 차단 (XSS 방지).
+        # 키 이름이 '_url' 로 끝나는 항목만 검증. 빈 값은 허용 (default fallback).
+        invalid_urls: list[str] = []
+        for key, val in edited.items():
+            if key.endswith("_url") and val.strip():
+                v = val.strip().lower()
+                if not (v.startswith("https://") or v.startswith("http://")):
+                    invalid_urls.append(f"{key}: '{val.strip()[:60]}'")
+        if invalid_urls:
+            st.error(
+                "⚠️ URL 은 https:// (또는 http://) 로 시작해야 합니다. "
+                "javascript: / data: / file: 등은 보안상 차단됩니다.\n\n"
+                + "\n".join(f"- {u}" for u in invalid_urls)
+            )
+            return
+
         ts = dt.datetime.utcnow().isoformat()
         before_map = {k: (existing.get(k) or {}).get("value", "") for k in edited}
         for key, val in edited.items():
@@ -833,6 +873,9 @@ def _tab_keywords(sb):
                 sb.table("critical_keywords").upsert({
                     "kind": kind, "keyword": keyword.strip(), "is_active": active,
                 }).execute()
+                _audit(_supabase_admin(), action="critical_keyword_upsert",
+                       target=f"{kind}/{keyword.strip()}",
+                       details={"is_active": active})
                 st.success("추가/갱신되었습니다.")
                 st.rerun()
 
@@ -844,10 +887,14 @@ def _tab_keywords(sb):
         target_state = st.radio("상태", options=["활성화", "비활성화"], horizontal=True)
         if st.button("적용"):
             new_state = (target_state == "활성화")
+            admin_sb = _supabase_admin()
             for i in idx:
                 sb.table("critical_keywords").update(
                     {"is_active": new_state}
                 ).eq("id", rows[i]["id"]).execute()
+                _audit(admin_sb, action="critical_keyword_toggle",
+                       target=f"{rows[i]['kind']}/{rows[i]['keyword']}",
+                       details={"is_active": new_state})
             st.success(f"{len(idx)} 건 갱신")
             st.rerun()
 

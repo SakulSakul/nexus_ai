@@ -128,3 +128,53 @@ def hr_routing_line(hotlines: dict[str, str]) -> str:
     if url:
         return f"인사 챗봇으로 이동: {url}"
     return hotlines.get("hr_contact_text") or _DEFAULT_HOTLINES["hr_contact_text"]
+
+
+# ── Boot-time validation ─────────────────────────────────────
+def validate_settings() -> list[str]:
+    """앱 부팅 직후 호출. 누락·이상한 secret 을 사람이 읽을 수 있는 메시지로
+    반환. 빈 리스트면 이상 없음. 호출자(app.py)는 메시지 있으면 st.error 출력
+    후 st.stop() 으로 차단해도 되고 경고만 노출해도 됨."""
+    s = settings()
+    issues: list[str] = []
+
+    if not s.supabase_url:
+        issues.append("`SUPABASE_URL` 미설정")
+    elif not s.supabase_url.startswith("https://"):
+        issues.append("`SUPABASE_URL` 이 https:// 로 시작해야 함")
+
+    if not s.supabase_key:
+        issues.append("`SUPABASE_KEY` (anon) 미설정")
+
+    if not s.gemini_api_key:
+        issues.append("`GEMINI_API_KEY` 미설정 — chat primary 동작 불가")
+
+    if s.chat_fallback_provider == "claude" and not s.anthropic_api_key:
+        # 정보성: fallback 비활성 상태로 동작하므로 차단하지 않음.
+        issues.append(
+            "INFO: `NEXUS_CHAT_FALLBACK=claude` 인데 `ANTHROPIC_API_KEY` 미설정 "
+            "→ Gemini 503 시 fallback 발동 안 함 (Gemini 단독 운영)"
+        )
+
+    valid_efforts = {"low", "medium", "high", "xhigh", "max"}
+    if s.claude_effort and s.claude_effort not in valid_efforts:
+        issues.append(
+            f"`NEXUS_CLAUDE_EFFORT='{s.claude_effort}'` 는 유효한 값이 아님. "
+            f"허용: {sorted(valid_efforts)}"
+        )
+
+    if s.embed_dim not in (256, 768, 1536, 3072):
+        issues.append(
+            f"`NEXUS_EMBED_DIM={s.embed_dim}` 는 Gemini 기본 차원이 아님. "
+            "DB 스키마 vector(N) 와 일치 여부 확인 필요"
+        )
+
+    valid_envs = {"beta-personal", "beta-corp", "prod", "production"}
+    if s.env_tag not in valid_envs:
+        issues.append(
+            f"INFO: `NEXUS_ENV='{s.env_tag}'` 는 권장 값이 아님 — 베타 배너/"
+            "동의 게이트가 의도와 다르게 동작할 수 있음. 권장: "
+            f"{sorted(valid_envs)}"
+        )
+
+    return issues

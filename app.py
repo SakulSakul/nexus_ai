@@ -7,7 +7,7 @@ import streamlit as st
 import datetime as _dt
 
 from core.chatbot import ask, record_feedback
-from core.config import CATEGORIES, get_secret, load_hotlines, settings
+from core.config import CATEGORIES, get_secret, load_hotlines, settings, validate_settings
 
 
 st.set_page_config(
@@ -875,9 +875,13 @@ def _show_example_questions() -> str | None:
     return None
 
 
+_PROD_ENV_VALUES = {"prod", "production"}
+
+
 def _render_beta_banner() -> None:
     s = settings()
-    if (s.env_tag or "").startswith("prod"):
+    # 정확한 prod 화이트리스트 — 'prod-test' 같은 모호 값에 banner 가 숨지 않음.
+    if (s.env_tag or "").lower() in _PROD_ENV_VALUES:
         return
     st.markdown(
         f"""
@@ -893,9 +897,13 @@ def _render_beta_banner() -> None:
 
 def _check_rate_limit() -> bool:
     """세션 단위 일일 한도. 초과 시 False 반환 (호출자가 안내 문구 출력).
+    한국 시간(KST) 자정 기준으로 카운터 리셋. UTC 기준이면 한국 23시에 한도
+    초과 후 0시 1분에 다시 시도해도 카운터가 안 풀려 임직원이 혼란.
     회사 이관 + SSO 도입 후에는 user_id_hash 기반 서버 카운터로 교체."""
     s = settings()
-    today = _dt.date.today().isoformat()
+    # KST = UTC+9 (DST 없음). pytz 미사용 — 표준 라이브러리만으로.
+    kst = _dt.timezone(_dt.timedelta(hours=9))
+    today = _dt.datetime.now(kst).date().isoformat()
     rec = st.session_state.get("_rate_rec") or {"date": today, "count": 0}
     if rec["date"] != today:
         rec = {"date": today, "count": 0}
@@ -1087,19 +1095,36 @@ _CONSENT_BODY_MD = """
 """
 
 
-def _record_consent(sb, *, participant: str, version: str, env: str,
-                    details: dict) -> tuple[bool, str | None]:
-    """Returns (success, error_message). 실패를 silently 삼키지 않고 호출자에 반환."""
+def _record_consent(sb, *, name: str, emp_no: str, version: str, env: str,
+                    ) -> tuple[bool, str | None]:
+    """Returns (success, error_message). 사번은 별도 컬럼(participant_emp_no)
+    에 저장 — 기존 'name / emp_no' 단일 문자열 파싱 깨짐 위험 제거.
+    db/07 미적용 환경 호환을 위해 participant_emp_no 컬럼 미존재 시 details
+    에만 저장하는 fallback 포함."""
+    name = (name or "").strip()
+    emp_no = (emp_no or "").strip()
+    payload: dict = {
+        "participant":     name,
+        "consent_version": version,
+        "env":             env,
+        "details":         {"emp_no": emp_no or None},
+    }
+    if emp_no:
+        payload["participant_emp_no"] = emp_no
     try:
-        sb.table("beta_consents").insert({
-            "participant":     participant,
-            "consent_version": version,
-            "env":             env,
-            "details":         details,
-        }).execute()
+        sb.table("beta_consents").insert(payload).execute()
         return True, None
     except Exception as e:
-        return False, str(e)
+        msg = str(e)
+        # participant_emp_no 컬럼 부재 (db/07 미적용) — 컬럼 빼고 재시도
+        if "participant_emp_no" in msg:
+            payload.pop("participant_emp_no", None)
+            try:
+                sb.table("beta_consents").insert(payload).execute()
+                return True, None
+            except Exception as e2:
+                return False, str(e2)
+        return False, msg
 
 
 def _consent_gate(sb) -> bool:
@@ -1146,16 +1171,14 @@ def _consent_gate(sb) -> bool:
         elif not agree:
             st.error("동의 체크박스를 선택해 주세요.")
         else:
-            participant = name.strip()
-            if emp_no.strip():
-                participant = f"{participant} / {emp_no.strip()}"
             ok, err = _record_consent(
                 sb,
-                participant=participant,
+                name=name,
+                emp_no=emp_no,
                 version=cur_ver,
                 env=s.env_tag,
-                details={"emp_no": emp_no.strip() or None},
             )
+            participant = name.strip() + (f" / {emp_no.strip()}" if emp_no.strip() else "")
             if not ok:
                 # INSERT 실패는 RLS/grants/스키마 캐시 문제. 사용자에게 즉시
                 # 노출하고 게이트 통과 시키지 않음 — 동의 미기록 상태로
@@ -1182,6 +1205,22 @@ def main():
     st.markdown(_CSS, unsafe_allow_html=True)
     # 4px top frame line
     st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
+
+    # Boot-time secrets validation — 누락·이상값을 부팅 직후 가시화.
+    # INFO: 로 시작하는 항목은 차단하지 않고 caption 으로만 노출 (예: Claude 키 미설정).
+    issues = validate_settings()
+    blockers = [i for i in issues if not i.startswith("INFO:")]
+    infos    = [i for i in issues if i.startswith("INFO:")]
+    if blockers:
+        st.error(
+            "⚠️ 환경 설정 문제로 앱을 시작할 수 없습니다:\n\n"
+            + "\n".join(f"- {b}" for b in blockers)
+        )
+        st.stop()
+    if infos:
+        with st.expander("⚙ 환경 설정 정보 (참조)", expanded=False):
+            for i in infos:
+                st.caption(i)
 
     sb = _supabase()
     if sb is None:

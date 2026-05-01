@@ -21,6 +21,25 @@ from .retriever import hybrid_search
 
 _RE_ACTION_BLOCK = re.compile(r"(?:^|\n)\s*\d+\.\s+(.+)")
 
+# Prompt injection 1차 필터 — LLM 호출 전에 명백한 공격 패턴을 차단.
+# 매치되면 LLM 을 호출하지 않고 정중한 거절을 즉시 반환.
+_INJECTION_PATTERNS = (
+    re.compile(r"(이전|위)\s*(?:의)?\s*(지시|명령|규칙|프롬프트|instruction)", re.I),
+    re.compile(r"(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior)", re.I),
+    re.compile(r"(system\s*prompt|시스템\s*프롬프트)\s*(?:을|를)?\s*(출력|보여|공개|reveal|show)", re.I),
+    re.compile(r"역할\s*을?\s*(바꾸|변경|전환)", re.I),
+    re.compile(r"(관리자|admin|developer)\s*(모드|mode)", re.I),
+    re.compile(r"jailbreak|DAN\s+mode|do\s+anything\s+now", re.I),
+)
+
+
+def _looks_like_injection(text: str) -> bool:
+    """명백한 prompt injection 시그니처 감지. 보수적으로 운영(false-positive
+    회피) — 진짜 사규 질문에 'jailbreak' 키워드 들어갈 일은 거의 없음."""
+    if not text:
+        return False
+    return any(p.search(text) for p in _INJECTION_PATTERNS)
+
 
 @dataclass
 class Answer:
@@ -242,6 +261,36 @@ def ask(
     extra_pii_terms: list[str] | None = None,
 ) -> Answer:
     s = settings()
+
+    # Prompt injection 1차 필터 — LLM 호출 전 차단으로 토큰 비용·로깅 노이즈 절감.
+    # 매치되면 LLM 미호출 + critical 트리거 안 함 + 별도 로그만 남기고 거절.
+    if _looks_like_injection(question):
+        try:
+            supabase.table("query_logs").insert({
+                "category":            category if category and category != "전체" else None,
+                "query_masked":        "[BLOCKED — prompt injection signature]",
+                "is_critical":         False,
+                "critical_kind":       None,
+                "hit_chunk_ids":       [],
+                "env":                 s.env_tag,
+                "embed_model_version": s.embed_model,
+                "chat_provider":       "blocked",
+                "chat_model_version":  None,
+            }).execute()
+        except Exception:
+            pass
+        return Answer(
+            text=("해당 요청은 처리할 수 없습니다. 사규·윤리강령·사례집 관련 "
+                  "질문을 해주세요.\n\n[참조: 검색 결과 없음]"),
+            is_critical=False,
+            critical_kind=None,
+            contexts=[],
+            masked_question="[BLOCKED]",
+            thinking="",
+            elapsed=0.0,
+            query_log_id=None,
+        )
+
     masked = mask_pii(question, extra_pii_terms or [])
 
     # 심각 사안 트리거 감지 (마스킹 전 원문 기준이 더 정확하므로 원문에도 검사)

@@ -37,13 +37,35 @@ def load_keywords(supabase: Any) -> dict[str, list[str]]:
     return out
 
 
+# 키워드가 매치돼도 "사규/규정 안내 질문"으로 보이는 컨텍스트면 critical
+# 트리거를 보류한다. 예: "사망사고 신고 절차가 어떻게 되나요?" 는 일반
+# 정보 요청이지 응급 사안이 아님. 이걸 critical 로 잡으면 4단 답변 구조
+# 강제로 UX 가 어색해지고 통계도 왜곡됨.
+_STOP_PHRASES = (
+    "절차가 어떻게", "어떻게 되나요", "어떻게 진행", "방법이 어떻게",
+    "기준이 어떻게", "처분이 어떻게",
+    "관련 사규", "관련 규정", "사규에서", "규정에서",
+    "예방 교육", "예방교육", "이론적", "정의가 무엇",
+)
+
+
+def _is_benign_query(text: str) -> bool:
+    """질문 형식이 사규/규정 정보 요청에 가까우면 True."""
+    return any(p in text for p in _STOP_PHRASES)
+
+
 def detect(text: str, keywords: dict[str, list[str]]) -> CriticalDetection:
     if not text:
         return CriticalDetection(False, None, [])
+    benign = _is_benign_query(text)
     # 우선순위: harassment > safety (인사 라우팅 안내 필요)
     for kind in ("harassment", "safety"):
         hits = [k for k in keywords.get(kind, []) if k and k in text]
         if hits:
+            if benign:
+                # 정보 요청 컨텍스트면 일반 응답 (4단 강제 X). 실제 응급/제보
+                # 신호로 보이는 표현은 _STOP_PHRASES 에 포함 안 됨.
+                return CriticalDetection(False, None, hits)
             return CriticalDetection(True, kind, hits)
     return CriticalDetection(False, None, [])
 
