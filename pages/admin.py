@@ -431,13 +431,23 @@ def _tab_radar(sb):
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
     # select * 로 받아서 컬럼 부재(예: db/06 미적용)에 내성. 아래 모든 접근은
     # r.get("...") 로 안전 처리되므로 신규 컬럼이 없어도 동작 유지.
-    rows = (
-        sb.table("query_logs")
-          .select("*")
-          .gte("ts", since)
-          .execute()
-          .data or []
-    )
+    # PostgREST 자체 에러(스키마 캐시 stale, RLS 등) 도 친화적으로 표시.
+    try:
+        rows = (
+            sb.table("query_logs")
+              .select("*")
+              .gte("ts", since)
+              .execute()
+              .data or []
+        )
+    except Exception as e:
+        st.error(
+            "⚠️ query_logs 조회에 실패했습니다. "
+            "db/04~06 마이그레이션 적용 여부 또는 PostgREST 스키마 캐시(`notify pgrst, 'reload schema';`)를 확인해 주세요."
+        )
+        with st.expander("기술 세부정보", expanded=False):
+            st.code(str(e))
+        return
     if not rows:
         st.info("기간 내 질의 로그가 없습니다.")
         return
@@ -848,11 +858,20 @@ def _tab_consents(sb):
         "정식 OPEN 전 베타 단계의 참가자별 사전 동의 기록입니다. "
         "회사 계정 이관 시 본 기록은 함께 폐기되며, 참가자 요청 시 개별 삭제 가능합니다."
     )
-    rows = (
-        sb.table("beta_consents").select("*")
-          .order("consented_at", desc=True).limit(500)
-          .execute().data or []
-    )
+    try:
+        rows = (
+            sb.table("beta_consents").select("*")
+              .order("consented_at", desc=True).limit(500)
+              .execute().data or []
+        )
+    except Exception as e:
+        st.error(
+            "⚠️ beta_consents 조회에 실패했습니다. "
+            "db/05_beta_consents.sql 적용 여부를 확인해 주세요."
+        )
+        with st.expander("기술 세부정보", expanded=False):
+            st.code(str(e))
+        return
     if not rows:
         st.info("아직 동의 기록이 없습니다.")
         return
