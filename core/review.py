@@ -102,8 +102,12 @@ def _evaluate(
 
 
 def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
-               triggered_by: str | None = None) -> dict:
-    """선택된(또는 전체 active) 샘플에 대해 검수를 실행하고 회차 메타를 반환."""
+               triggered_by: str | None = None,
+               progress_cb: Any = None) -> dict:
+    """선택된(또는 전체 active) 샘플에 대해 검수를 실행하고 회차 메타를 반환.
+    progress_cb(done, total) 가 주어지면 매 샘플 처리 후 호출 — Streamlit
+    progress bar 같은 UI 갱신용. 50+ 샘플 회차 시 사용자에게 진행 상태
+    노출 + 페이지가 죽지 않았다는 신호 제공."""
     q = (
         supabase.table("review_samples")
                 .select("*")
@@ -130,7 +134,13 @@ def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
     sums = {"accuracy": 0.0, "citation": 0.0, "hotline_missing": 0.0,
             "critical_trigger": 0, "forbidden_hit": 0.0}
 
-    for s in samples:
+    total = len(samples)
+    for idx, s in enumerate(samples):
+        if progress_cb:
+            try:
+                progress_cb(idx, total)
+            except Exception:
+                pass
         try:
             ans = ask(supabase, question=s["question"], category=s.get("category"))
             sc = _evaluate(

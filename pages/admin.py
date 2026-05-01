@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import re
 from collections import Counter, defaultdict
 
 import streamlit as st
@@ -157,9 +158,15 @@ st.markdown(
 )
 
 
+_LOGIN_LOCKOUT_LIMIT = 5    # 5회 실패 후 lockout
+_LOGIN_LOCKOUT_SECS  = 60   # 60초 잠금
+
+
 def _require_auth() -> None:
-    """Admin 페이지 진입 전 비밀번호 인증. 미인증 시 st.stop()으로 렌더링 차단."""
+    """Admin 페이지 진입 전 비밀번호 인증. 미인증 시 st.stop()으로 렌더링 차단.
+    무차별 대입 방어 — 5회 실패 시 60초 lockout (session_state 기반)."""
     from core.config import get_secret
+    import time as _time
 
     if st.session_state.get("admin_authenticated"):
         return
@@ -171,6 +178,18 @@ def _require_auth() -> None:
         st.error("ADMIN_PASSWORD secret이 설정되지 않았습니다. 관리자에게 문의하세요.")
         st.stop()
 
+    # Lockout 체크
+    locked_until = st.session_state.get("_admin_locked_until", 0.0)
+    now = _time.time()
+    if locked_until > now:
+        wait = int(locked_until - now)
+        st.error(f"⚠️ 너무 많은 실패. **{wait}초 후** 다시 시도해 주세요.")
+        st.stop()
+
+    fails = int(st.session_state.get("_admin_fail_count", 0))
+    if fails > 0:
+        st.caption(f"비밀번호 시도 {fails}/{_LOGIN_LOCKOUT_LIMIT} — 5회 실패 시 60초 잠금")
+
     with st.form("admin_login"):
         pw = st.text_input("관리자 비밀번호", type="password")
         submitted = st.form_submit_button("로그인", type="primary")
@@ -178,9 +197,18 @@ def _require_auth() -> None:
     if submitted:
         if pw == admin_pw:
             st.session_state["admin_authenticated"] = True
+            st.session_state["_admin_fail_count"] = 0
+            st.session_state["_admin_locked_until"] = 0.0
             st.rerun()
         else:
-            st.error("비밀번호가 틀렸습니다.")
+            fails += 1
+            st.session_state["_admin_fail_count"] = fails
+            if fails >= _LOGIN_LOCKOUT_LIMIT:
+                st.session_state["_admin_locked_until"] = _time.time() + _LOGIN_LOCKOUT_SECS
+                st.session_state["_admin_fail_count"] = 0
+                st.error(f"⚠️ {_LOGIN_LOCKOUT_LIMIT}회 실패 — {_LOGIN_LOCKOUT_SECS}초 동안 잠금됩니다.")
+            else:
+                st.error(f"비밀번호가 틀렸습니다. ({fails}/{_LOGIN_LOCKOUT_LIMIT})")
 
     st.stop()
 
@@ -213,6 +241,23 @@ def _supabase_admin():
 @st.cache_data(show_spinner=False)
 def _cached_parse(file_bytes: bytes) -> list:
     return parse_docx(file_bytes)
+
+
+def _rows_to_csv_bytes(rows: list[dict]) -> bytes:
+    """list[dict] → CSV bytes (UTF-8 with BOM, Excel 호환). 빈 리스트면 b''."""
+    if not rows:
+        return b""
+    keys: list[str] = []
+    for r in rows:
+        for k in r.keys():
+            if k not in keys:
+                keys.append(k)
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=keys, extrasaction="ignore")
+    w.writeheader()
+    for r in rows:
+        w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in keys})
+    return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
 def _audit(sb_admin, *, action: str, target: str | None = None,
@@ -252,9 +297,16 @@ def _tab_upload(sb):
 
     valid_configs: list[dict] = []
 
+    _MAX_DOCX_BYTES = 20 * 1024 * 1024   # 20MB — 사규 한 권 충분, OOM 방어
     for uf in files:
         fkey = uf.name
         file_bytes = uf.read()
+        if len(file_bytes) > _MAX_DOCX_BYTES:
+            st.error(
+                f"🚫 {uf.name}: {len(file_bytes)/1_048_576:.1f}MB — "
+                f"한도 {_MAX_DOCX_BYTES/1_048_576:.0f}MB 초과로 건너뜀."
+            )
+            continue
         title_default = uf.name.rsplit(".", 1)[0]
         chunks = _cached_parse(file_bytes)
         sample = "\n".join(c.text for c in chunks[:6])
@@ -286,6 +338,14 @@ def _tab_upload(sb):
                 eff = st.date_input(
                     "시행일", value=dt.date.today(), key=f"ul_eff_{fkey}"
                 )
+                # 1년 이상 미래 시행일 경고 — 오타 방어 (예: 2030 입력).
+                # nexus_hybrid_search 가 effective_date 필터로 검색에서 제외하므로
+                # 잘못된 미래 시행일이 들어가면 그 사규는 영원히 안 잡힘.
+                if eff and (eff - dt.date.today()).days > 365:
+                    st.warning(
+                        f"⚠ 시행일이 1년 이상 미래({eff.isoformat()}) — "
+                        "오타 여부 확인. 검색 결과에 노출되지 않습니다."
+                    )
                 cats = st.multiselect(
                     "카테고리 (다중 선택, 필수)",
                     options=list(CATEGORIES),
@@ -426,6 +486,32 @@ def _tab_versions(sb):
                     st.success(f"저장됨: {title}")
                     st.rerun()
 
+    # ── 문서 완전 삭제 (체크박스 확인 + 명시 버튼) ────────────────
+    # archive 만으로는 vector 인덱스가 시간 지나며 비대해짐. 완전 삭제는
+    # nexus_chunks 도 ON DELETE CASCADE 로 같이 사라져 검색 인덱스도 정리됨.
+    st.markdown("---")
+    st.markdown("#### 🗑️ 문서 완전 삭제 (되돌릴 수 없음)")
+    del_options = {
+        f"#{r['id'][:8]} · {r.get('title','(제목없음)')} · {r.get('version','')} · {r.get('status','')}": r["id"]
+        for r in rows
+    }
+    target_label = st.selectbox("삭제할 문서", options=["(선택)"] + list(del_options.keys()),
+                                key="del_doc_select")
+    confirm = st.checkbox("위 문서를 완전히 삭제하는 데 동의합니다 (사규 원본 + 임베딩 청크 모두 삭제)",
+                          key="del_doc_confirm")
+    if st.button("⚠ 완전 삭제 실행", disabled=not confirm or target_label == "(선택)",
+                 key="del_doc_btn"):
+        target_id = del_options[target_label]
+        try:
+            admin_sb.table("nexus_documents").delete().eq("id", target_id).execute()
+            _audit(admin_sb, action="document_delete",
+                   target=str(target_id),
+                   details={"label": target_label})
+            st.success(f"삭제됨: {target_label}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"삭제 실패: {e}")
+
 
 def _tab_radar(sb):
     st.subheader("📡 리스크 트렌드 레이더")
@@ -453,6 +539,14 @@ def _tab_radar(sb):
     if not rows:
         st.info("기간 내 질의 로그가 없습니다.")
         return
+
+    # CSV 다운로드 — 회사 이관 시점 베타 결과 보고서 작성용
+    st.download_button(
+        f"📥 query_logs CSV 다운로드 ({len(rows)} rows, {days}일)",
+        data=_rows_to_csv_bytes(rows),
+        file_name=f"query_logs_{dt.date.today().isoformat()}.csv",
+        mime="text/csv",
+    )
 
     # 카테고리별 빈도
     cat_counts = Counter((r["category"] or "공통") for r in rows)
@@ -666,6 +760,42 @@ def _tab_review(sb):
                 ).execute()
                 st.success(f"{len(ids_to_disable)} 건 비활성화")
 
+            # forbidden_keywords 인라인 편집 — 회차 운영 중 false-positive
+            # 발견 시 admin 이 즉시 보강 가능. ';' 로 구분.
+            st.markdown("---")
+            st.markdown("#### 🚫 금지 키워드(forbidden_keywords) 인라인 편집")
+            row_for_edit = st.selectbox(
+                "수정할 샘플",
+                options=["(선택)"] + [f"#{r['id']} {r.get('question','')[:60]}" for r in rows],
+                key="rv_fkw_select",
+            )
+            if row_for_edit != "(선택)":
+                target_id = int(row_for_edit.split()[0].lstrip("#"))
+                target_row = next((r for r in rows if r["id"] == target_id), None)
+                if target_row is not None:
+                    cur_fkw = target_row.get("forbidden_keywords") or []
+                    new_fkw_raw = st.text_input(
+                        "금지 키워드 (쉼표 또는 세미콜론 구분)",
+                        value=", ".join(cur_fkw),
+                        key=f"rv_fkw_input_{target_id}",
+                    )
+                    if st.button("저장", key=f"rv_fkw_save_{target_id}"):
+                        new_list = [k.strip() for k in re.split(r"[,;]", new_fkw_raw) if k.strip()]
+                        try:
+                            sb.table("review_samples").update(
+                                {"forbidden_keywords": new_list}
+                            ).eq("id", target_id).execute()
+                            _audit(_supabase_admin(), action="forbidden_keywords_update",
+                                   target=str(target_id),
+                                   details={"before": cur_fkw, "after": new_list})
+                            st.success(f"#{target_id} 갱신: {new_list or '(비움)'}")
+                            st.rerun()
+                        except Exception as e:
+                            if "forbidden_keywords" in str(e):
+                                st.error("⚠️ db/07 미적용 — `forbidden_keywords` 컬럼이 없습니다.")
+                            else:
+                                st.error(f"실패: {e}")
+
     # ── 회차 실행 ──────────────────────────────────────────
     with sub_run:
         st.caption("선택한 샘플(또는 active 전체) 에 대해 챗봇을 실행하고 4지표로 자동 채점합니다.")
@@ -682,9 +812,23 @@ def _tab_review(sb):
             triggered_by = st.text_input("실행자", value="")
             if st.button("▶ 검수 실행", type="primary"):
                 ids = [opts[k] for k in chosen] if chosen else None
-                with st.spinner("검수 실행 중... (샘플당 LLM 1회 호출)"):
-                    res = run_review(sb, sample_ids=ids,
-                                     triggered_by=triggered_by or None)
+                # 진행 표시 — 50+ 샘플 회차 시 사용자에게 진행 상태 노출.
+                # 페이지가 죽지 않았다는 신호 + 중간 ETA 가늠.
+                progress_box = st.empty()
+                bar = st.progress(0.0, text="검수 시작...")
+
+                def _on_progress(done: int, total: int) -> None:
+                    pct = (done / total) if total else 0.0
+                    bar.progress(pct, text=f"검수 진행 {done}/{total}")
+
+                try:
+                    res = run_review(
+                        sb, sample_ids=ids,
+                        triggered_by=triggered_by or None,
+                        progress_cb=_on_progress,
+                    )
+                finally:
+                    bar.empty()
                 if not res.get("run_id"):
                     st.warning(res.get("message"))
                 else:
@@ -935,6 +1079,13 @@ def _tab_consents(sb):
               ", ".join(f"{k}:{v}" for k, v in by_env.most_common(3)) or "—")
 
     st.dataframe(rows, use_container_width=True)
+
+    st.download_button(
+        f"📥 beta_consents CSV 다운로드 ({len(rows)} rows)",
+        data=_rows_to_csv_bytes(rows),
+        file_name=f"beta_consents_{dt.date.today().isoformat()}.csv",
+        mime="text/csv",
+    )
 
     st.markdown("---")
     st.markdown("#### 🗑️ 동의 철회 / 삭제")

@@ -48,10 +48,25 @@ _STOP_PHRASES = (
     "예방 교육", "예방교육", "이론적", "정의가 무엇",
 )
 
+# 실제 사건/제보 신호 — 이 표현이 같이 나오면 stop-context 무시하고 critical 트리거.
+# 예: "괴롭힘 사건이 발생했고 사규에서 어떻게 처리되나요?" — '사규에서' (stop) 가
+# 있어도 '발생했' 가 있으면 진짜 신고로 판단.
+_INCIDENT_SIGNALS = (
+    "발생했", "당했", "당하고", "겪었", "겪고", "목격했", "목격하",
+    "신고하고 싶", "제보하고 싶", "방금", "지금", "어제", "오늘",
+    "도와주세요", "도와줘", "어떡해",
+)
+
 
 def _is_benign_query(text: str) -> bool:
-    """질문 형식이 사규/규정 정보 요청에 가까우면 True."""
-    return any(p in text for p in _STOP_PHRASES)
+    """질문 형식이 사규/규정 정보 요청이고, 실제 사건 신호가 없으면 True.
+    실제 사건 신호(_INCIDENT_SIGNALS)가 등장하면 stop 표현이 있어도 false."""
+    has_stop = any(p in text for p in _STOP_PHRASES)
+    if not has_stop:
+        return False
+    has_incident = any(p in text for p in _INCIDENT_SIGNALS)
+    # stop 만 있으면 정보 요청 / stop + incident 면 진짜 신고
+    return not has_incident
 
 
 def detect(text: str, keywords: dict[str, list[str]]) -> CriticalDetection:
@@ -63,8 +78,7 @@ def detect(text: str, keywords: dict[str, list[str]]) -> CriticalDetection:
         hits = [k for k in keywords.get(kind, []) if k and k in text]
         if hits:
             if benign:
-                # 정보 요청 컨텍스트면 일반 응답 (4단 강제 X). 실제 응급/제보
-                # 신호로 보이는 표현은 _STOP_PHRASES 에 포함 안 됨.
+                # 정보 요청 컨텍스트(+ 사건 신호 없음) → 일반 응답.
                 return CriticalDetection(False, None, hits)
             return CriticalDetection(True, kind, hits)
     return CriticalDetection(False, None, [])

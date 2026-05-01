@@ -1166,8 +1166,17 @@ def _consent_gate(sb) -> bool:
         submitted = st.form_submit_button("동의하고 시작", type="primary")
 
     if submitted:
+        # 입력 검증 — stored XSS / SQL 페이로드 차단 + 형식 강제.
+        # name: 한글/영문/공백 1~50자, emp_no: 숫자/하이픈 4~12자(선택)
+        import re as _re
+        _RE_NAME = _re.compile(r"^[가-힣A-Za-z\s]{1,50}$")
+        _RE_EMPNO = _re.compile(r"^[0-9-]{4,12}$")
         if not name.strip():
             st.error("성명을 입력해 주세요.")
+        elif not _RE_NAME.match(name.strip()):
+            st.error("성명은 한글·영문·공백만 사용해 주세요 (1~50자).")
+        elif emp_no.strip() and not _RE_EMPNO.match(emp_no.strip()):
+            st.error("사번은 숫자 4~12자 (하이픈 허용) 형식이어야 합니다.")
         elif not agree:
             st.error("동의 체크박스를 선택해 주세요.")
         else:
@@ -1253,9 +1262,17 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Chat history replay
+    # Chat history replay — 최근 30 messages 만 렌더 (rerun 비용 제어).
+    # 50건 넘어가면 매 입력 후 응답 표시까지 lag 발생 → 윈도우 30 권장.
     s = settings()
-    for idx, (role, content, meta) in enumerate(st.session_state["history"]):
+    _history = st.session_state["history"]
+    _RENDER_WINDOW = 30
+    if len(_history) > _RENDER_WINDOW:
+        st.caption(f"⋯ 이전 {len(_history) - _RENDER_WINDOW}건은 표시 생략 (최근 {_RENDER_WINDOW}건만 표시)")
+        _start = len(_history) - _RENDER_WINDOW
+    else:
+        _start = 0
+    for idx, (role, content, meta) in enumerate(_history[_start:], start=_start):
         with st.chat_message(role):
             if role == "assistant" and meta.get("thinking") and s.show_thinking:
                 with st.expander("THINKING PROCESS", expanded=False):
@@ -1278,7 +1295,8 @@ def main():
     if not st.session_state["history"]:
         clicked_q = _show_example_questions()
 
-    q = st.chat_input("질문을 입력하세요…") or clicked_q
+    # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단
+    q = st.chat_input("질문을 입력하세요…", max_chars=2000) or clicked_q
     if not q:
         return
 

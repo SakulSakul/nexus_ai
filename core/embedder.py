@@ -31,13 +31,15 @@ def embed_one(text: str, *, task_type: str = "RETRIEVAL_QUERY") -> list[float]:
 
 
 def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
-               max_workers: int = 4) -> list[list[float]]:
+               max_workers: int = 4, per_call_timeout: float = 30.0) -> list[list[float]]:
     """청크 임베딩 병렬화. Gemini embed_content 는 단일 string 만 받지만
     ThreadPoolExecutor 로 동시 처리해 적재 시간을 단축한다.
     max_workers=4 가 API rate limit + 네트워크 대기 균형에 적정.
-    순서는 호출 순으로 보장 (executor.map). 클라이언트는 호출별로 별도 생성.
+    per_call_timeout 초 안에 한 호출이 안 끝나면 RuntimeError. Gemini hang 시
+    admin 적재 화면이 무한 spinner 상태로 빠지는 사고 방지.
+    순서 보장: 인덱스로 결과 누적 후 순서대로 반환.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
     s = settings()
     items = list(texts)
     if not items:
@@ -53,5 +55,16 @@ def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
         return list(res.embeddings[0].values)
 
     workers = max(1, min(max_workers, len(items)))
+    out: list[list[float] | None] = [None] * len(items)
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        return list(ex.map(_one, items))
+        futures = {ex.submit(_one, t): i for i, t in enumerate(items)}
+        for fut, idx in futures.items():
+            try:
+                out[idx] = fut.result(timeout=per_call_timeout)
+            except _Timeout as e:
+                raise RuntimeError(
+                    f"임베딩 호출이 {per_call_timeout}초 내 응답하지 않았습니다 "
+                    f"(chunk {idx}/{len(items)}). Gemini API 상태 확인 필요."
+                ) from e
+    # mypy: at this point every index is assigned (raise on timeout otherwise)
+    return [o for o in out if o is not None]

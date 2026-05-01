@@ -15,7 +15,7 @@ insert into critical_keywords (kind, keyword) values
   ('safety','추락사고'),('safety','감전'),('safety','폭발'),
   ('safety','가스 누출'),('safety','119'),('safety','응급실'),
   ('safety','의식을 잃'),('safety','심정지'),('safety','골절'),
-  ('safety','출혈'),('safety','음주운전'),('safety','뺑소니'),
+  ('safety','출혈'),
   -- harassment: 괴롭힘·성희롱
   ('harassment','직장 내 괴롭힘'),('harassment','폭언'),('harassment','폭행'),
   ('harassment','모욕'),('harassment','강제추행'),('harassment','미투'),
@@ -27,7 +27,9 @@ insert into critical_keywords (kind, keyword) values
   -- harassment(security): 정보보안 사고 — 신고·조사 라우팅 동일
   ('harassment','개인정보 유출'),('harassment','데이터 유출'),
   ('harassment','영업비밀 유출'),('harassment','자료 무단 반출'),
-  ('harassment','해킹'),('harassment','악성코드')
+  ('harassment','해킹'),('harassment','악성코드'),
+  -- harassment(traffic·법규): 음주운전·뺑소니 — 신고·조사 라우팅
+  ('harassment','음주운전'),('harassment','뺑소니')
 on conflict (kind, keyword) do nothing;
 
 -- ── 2. nexus_documents.updated_at 트리거 ─────────────────────

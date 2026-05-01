@@ -23,12 +23,14 @@ _RE_ACTION_BLOCK = re.compile(r"(?:^|\n)\s*\d+\.\s+(.+)")
 
 # Prompt injection 1차 필터 — LLM 호출 전에 명백한 공격 패턴을 차단.
 # 매치되면 LLM 을 호출하지 않고 정중한 거절을 즉시 반환.
+# false-positive 회피를 위해 '명백히 LLM/AI 제어 의도가 보이는 단어' 만 사용.
+# '규칙' 같은 일반 컴플라이언스 단어는 제외 (정상 사규 질문 차단 방지).
 _INJECTION_PATTERNS = (
-    re.compile(r"(이전|위)\s*(?:의)?\s*(지시|명령|규칙|프롬프트|instruction)", re.I),
-    re.compile(r"(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior)", re.I),
-    re.compile(r"(system\s*prompt|시스템\s*프롬프트)\s*(?:을|를)?\s*(출력|보여|공개|reveal|show)", re.I),
-    re.compile(r"역할\s*을?\s*(바꾸|변경|전환)", re.I),
-    re.compile(r"(관리자|admin|developer)\s*(모드|mode)", re.I),
+    re.compile(r"(이전|위)\s*(?:의)?\s*(지시|명령|프롬프트|instruction|prompt)", re.I),
+    re.compile(r"(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior)\s+(instruction|prompt|rule)", re.I),
+    re.compile(r"(system\s*prompt|시스템\s*프롬프트)\s*(?:을|를)?\s*(출력|보여|공개|reveal|show|print)", re.I),
+    re.compile(r"역할\s*을?\s*(바꾸|변경|전환).*(AI|GPT|Claude|Gemini|어시스턴트|assistant)", re.I),
+    re.compile(r"(관리자|admin|developer)\s*(모드|mode)\s*(?:로|을|를)?\s*(전환|진입|enable|activate)", re.I),
     re.compile(r"jailbreak|DAN\s+mode|do\s+anything\s+now", re.I),
 )
 
@@ -96,12 +98,24 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
             top_p=s.top_p,
         )
 
+    # Gemini SDK 는 client-level timeout 설정이 일관되지 않아 ThreadPoolExecutor
+    # 로 wrap. 60초 안에 응답 없으면 RuntimeError → 사용자에게 친화 메시지.
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
     res = None
     last_err: Exception | None = None
     for attempt in range(3):
         try:
-            res = cli.models.generate_content(model=s.chat_model, contents=user, config=cfg)
+            with ThreadPoolExecutor(max_workers=1) as _ex:
+                _fut = _ex.submit(cli.models.generate_content,
+                                  model=s.chat_model, contents=user, config=cfg)
+                res = _fut.result(timeout=60.0)
             break
+        except _Timeout as e:
+            last_err = RuntimeError("Gemini 호출이 60초 내 응답하지 않았습니다.")
+            if attempt < 2:
+                time.sleep(1.5 * (2 ** attempt))
+                continue
+            raise last_err from e
         except Exception as e:
             last_err = e
             if _is_transient(e) and attempt < 2:
@@ -139,7 +153,9 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     s = settings()
     if not s.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY 가 설정되지 않았습니다.")
-    cli = anthropic.Anthropic(api_key=s.anthropic_api_key)
+    # 60초 timeout — anthropic SDK 기본은 10분이라 사용자 무한 대기 위험.
+    # Opus 4.7 thinking + 16K max_tokens 케이스도 보통 30초 내 완료.
+    cli = anthropic.Anthropic(api_key=s.anthropic_api_key, timeout=60.0)
 
     kwargs: dict = {
         "model": s.claude_model,
@@ -277,8 +293,9 @@ def ask(
                 "chat_provider":       "blocked",
                 "chat_model_version":  None,
             }).execute()
-        except Exception:
-            pass
+        except Exception as _e:
+            import sys as _sys
+            print(f"[query_logs INSERT failed — blocked] {_e}", file=_sys.stderr, flush=True)
         return Answer(
             text=("해당 요청은 처리할 수 없습니다. 사규·윤리강령·사례집 관련 "
                   "질문을 해주세요.\n\n[참조: 검색 결과 없음]"),
@@ -356,8 +373,9 @@ def ask(
         }).execute()
         if ins.data:
             query_log_id = ins.data[0].get("id")
-    except Exception:
-        pass
+    except Exception as _e:
+        import sys as _sys
+        print(f"[query_logs INSERT failed] {_e}", file=_sys.stderr, flush=True)
 
     return Answer(
         text=final,
