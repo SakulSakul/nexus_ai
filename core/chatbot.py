@@ -66,7 +66,28 @@ def _gen(model: str, system: str, user: str, *,
             top_p=top_p,
         )
 
-    res = cli.models.generate_content(model=model, contents=user, config=cfg)
+    # Gemini 503 UNAVAILABLE / 429 RESOURCE_EXHAUSTED 는 모델 트래픽 폭주 시 흔하게 발생.
+    # 짧은 지수 백오프로 3회 재시도. 그래도 실패하면 raise → 호출자가 친화 메시지 출력.
+    res = None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            res = cli.models.generate_content(model=model, contents=user, config=cfg)
+            break
+        except Exception as e:
+            last_err = e
+            msg = str(e)
+            transient = (
+                "503" in msg or "UNAVAILABLE" in msg
+                or "429" in msg or "RESOURCE_EXHAUSTED" in msg
+                or "high demand" in msg.lower()
+            )
+            if transient and attempt < 2:
+                time.sleep(1.5 * (2 ** attempt))   # 1.5s → 3s
+                continue
+            raise
+    if res is None and last_err is not None:
+        raise last_err
 
     thinking_parts: list[str] = []
     text_parts: list[str] = []

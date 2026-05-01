@@ -965,6 +965,16 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     "ℹ️ 아직 사규·사례 등 문서가 업로드되지 않았습니다.\n\n"
                     "관리자가 문서를 적재한 뒤 다시 시도해 주세요."
                 )
+            elif (
+                "503" in err_text or "UNAVAILABLE" in err_text
+                or "429" in err_text or "RESOURCE_EXHAUSTED" in err_text
+                or "high demand" in err_text.lower()
+            ):
+                friendly_msg = (
+                    "⏳ Gemini 모델이 일시적으로 트래픽 폭주 상태입니다 (HTTP 503 / 429).\n\n"
+                    "**잠시 후 같은 질문을 다시 시도해 주세요.** "
+                    "수 분 내 자동 회복되는 일시 장애로, 코드/설정 문제가 아닙니다."
+                )
             else:
                 friendly_msg = "⚠️ 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
             st.markdown(friendly_msg)
