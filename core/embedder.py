@@ -56,7 +56,12 @@ def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
 
     workers = max(1, min(max_workers, len(items)))
     out: list[list[float] | None] = [None] * len(items)
-    with ThreadPoolExecutor(max_workers=workers) as ex:
+    # with-block 종료 시 shutdown(wait=True) 가 호출되면 timeout 된 thread 가
+    # 끝날 때까지 영원히 대기 → 사용자에겐 spinner 만 돌고 timeout 메시지 안
+    # 보임. 수동 ex 관리 + finally shutdown(wait=False, cancel_futures=True)
+    # 로 timeout 즉시 반영.
+    ex = ThreadPoolExecutor(max_workers=workers)
+    try:
         futures = {ex.submit(_one, t): i for i, t in enumerate(items)}
         for fut, idx in futures.items():
             try:
@@ -66,5 +71,6 @@ def embed_many(texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT",
                     f"임베딩 호출이 {per_call_timeout}초 내 응답하지 않았습니다 "
                     f"(chunk {idx}/{len(items)}). Gemini API 상태 확인 필요."
                 ) from e
-    # mypy: at this point every index is assigned (raise on timeout otherwise)
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
     return [o for o in out if o is not None]

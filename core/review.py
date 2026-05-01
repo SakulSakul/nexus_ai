@@ -136,11 +136,6 @@ def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
 
     total = len(samples)
     for idx, s in enumerate(samples):
-        if progress_cb:
-            try:
-                progress_cb(idx, total)
-            except Exception:
-                pass
         try:
             ans = ask(supabase, question=s["question"], category=s.get("category"))
             sc = _evaluate(
@@ -163,11 +158,20 @@ def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
                 "accuracy_score": sc.accuracy,
                 "citation_score": sc.citation,
                 "hotline_missing_score": sc.hotline_missing,
+                "forbidden_hit_score": sc.forbidden_hit,
                 "critical_trigger_ok": sc.critical_trigger_ok,
                 "passed": sc.passed,
                 "failure_reasons": sc.failure_reasons,
             }
-            supabase.table("review_results").insert(row).execute()
+            try:
+                supabase.table("review_results").insert(row).execute()
+            except Exception as e:
+                # db/09 미적용 시 forbidden_hit_score 컬럼 없음 → 빼고 재시도
+                if "forbidden_hit_score" in str(e):
+                    row.pop("forbidden_hit_score", None)
+                    supabase.table("review_results").insert(row).execute()
+                else:
+                    raise
             sums["accuracy"]         += sc.accuracy
             sums["citation"]         += sc.citation
             sums["hotline_missing"]  += sc.hotline_missing
@@ -183,6 +187,13 @@ def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
                 "passed": False,
                 "failure_reasons": ["exception"],
             }).execute()
+        # 처리 완료 후 진행률 보고 (off-by-one 방지: idx+1 / total).
+        # 100% 도달 시 progress bar 완료 표시 정상.
+        if progress_cb:
+            try:
+                progress_cb(idx + 1, total)
+            except Exception:
+                pass
 
     n = len(samples)
     metrics = {

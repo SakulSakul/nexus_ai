@@ -23,14 +23,41 @@ _RE_ACTION_BLOCK = re.compile(r"(?:^|\n)\s*\d+\.\s+(.+)")
 
 # Prompt injection 1차 필터 — LLM 호출 전에 명백한 공격 패턴을 차단.
 # 매치되면 LLM 을 호출하지 않고 정중한 거절을 즉시 반환.
-# false-positive 회피를 위해 '명백히 LLM/AI 제어 의도가 보이는 단어' 만 사용.
-# '규칙' 같은 일반 컴플라이언스 단어는 제외 (정상 사규 질문 차단 방지).
+# 규칙: '이전/위 + 지시/명령' 같은 정상 비즈니스 단어 조합은 false-positive
+# 가 너무 많아서, 반드시 'cancel verb (무시/잊/덮어/ignore/override)' 까지
+# 동반된 경우만 차단.
 _INJECTION_PATTERNS = (
-    re.compile(r"(이전|위)\s*(?:의)?\s*(지시|명령|프롬프트|instruction|prompt)", re.I),
-    re.compile(r"(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior)\s+(instruction|prompt|rule)", re.I),
-    re.compile(r"(system\s*prompt|시스템\s*프롬프트)\s*(?:을|를)?\s*(출력|보여|공개|reveal|show|print)", re.I),
-    re.compile(r"역할\s*을?\s*(바꾸|변경|전환).*(AI|GPT|Claude|Gemini|어시스턴트|assistant)", re.I),
-    re.compile(r"(관리자|admin|developer)\s*(모드|mode)\s*(?:로|을|를)?\s*(전환|진입|enable|activate)", re.I),
+    # KO: '이전/위/기존/모든 ... 지시/명령/규칙/프롬프트 ... 무시/잊/덮어/취소'
+    re.compile(
+        r"(?:이전|위|기존|모든|앞)\s*[가-힣\s]{0,8}"
+        r"(?:지시|명령|규칙|프롬프트|prompt|instruction)[가-힣을를\s]{0,8}"
+        r"(?:무시|잊어|잊고|버려|덮어|취소|reset)",
+        re.I,
+    ),
+    # EN: 'ignore previous instruction' style
+    re.compile(
+        r"(?:ignore|disregard|forget|override)\s+(?:all\s+)?(?:previous|above|prior|earlier)\s+"
+        r"(?:instruction|prompt|rule|message|context)s?",
+        re.I,
+    ),
+    # System prompt 출력 요구
+    re.compile(
+        r"(?:system\s*prompt|시스템\s*프롬프트)\s*(?:을|를)?\s*"
+        r"(?:출력|보여|공개|reveal|show|print|leak|덤프|dump)",
+        re.I,
+    ),
+    # 역할 변경 + LLM 어휘 동반
+    re.compile(
+        r"역할\s*을?\s*(?:바꾸|변경|전환).*(?:AI|GPT|Claude|Gemini|어시스턴트|assistant)",
+        re.I,
+    ),
+    # admin/dev 모드 활성화
+    re.compile(
+        r"(?:관리자|admin|developer)\s*(?:모드|mode)\s*(?:로|을|를)?\s*"
+        r"(?:전환|진입|enable|activate)",
+        re.I,
+    ),
+    # jailbreak slang
     re.compile(r"jailbreak|DAN\s+mode|do\s+anything\s+now", re.I),
 )
 
@@ -100,15 +127,17 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
 
     # Gemini SDK 는 client-level timeout 설정이 일관되지 않아 ThreadPoolExecutor
     # 로 wrap. 60초 안에 응답 없으면 RuntimeError → 사용자에게 친화 메시지.
+    # with-block 자동 shutdown(wait=True) 는 timeout thread 를 무한 대기시키므로
+    # 수동 ex 관리 + finally shutdown(wait=False, cancel_futures=True).
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
     res = None
     last_err: Exception | None = None
     for attempt in range(3):
+        _ex = ThreadPoolExecutor(max_workers=1)
         try:
-            with ThreadPoolExecutor(max_workers=1) as _ex:
-                _fut = _ex.submit(cli.models.generate_content,
-                                  model=s.chat_model, contents=user, config=cfg)
-                res = _fut.result(timeout=60.0)
+            _fut = _ex.submit(cli.models.generate_content,
+                              model=s.chat_model, contents=user, config=cfg)
+            res = _fut.result(timeout=60.0)
             break
         except _Timeout as e:
             last_err = RuntimeError("Gemini 호출이 60초 내 응답하지 않았습니다.")
@@ -122,6 +151,8 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
                 time.sleep(1.5 * (2 ** attempt))   # 1.5s → 3s
                 continue
             raise
+        finally:
+            _ex.shutdown(wait=False, cancel_futures=True)
     if res is None and last_err is not None:
         raise last_err
 

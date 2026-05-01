@@ -300,7 +300,16 @@ def _tab_upload(sb):
     _MAX_DOCX_BYTES = 20 * 1024 * 1024   # 20MB — 사규 한 권 충분, OOM 방어
     for uf in files:
         fkey = uf.name
+        # uf.size 로 read 전 사전 차단 (OOM 진짜 방어). UploadedFile 은 .size 속성 보장.
+        pre_size = getattr(uf, "size", None)
+        if isinstance(pre_size, int) and pre_size > _MAX_DOCX_BYTES:
+            st.error(
+                f"🚫 {uf.name}: {pre_size/1_048_576:.1f}MB — "
+                f"한도 {_MAX_DOCX_BYTES/1_048_576:.0f}MB 초과로 건너뜀 (read 전 차단)."
+            )
+            continue
         file_bytes = uf.read()
+        # double-check (uf.size 가 부정확한 경우 방어)
         if len(file_bytes) > _MAX_DOCX_BYTES:
             st.error(
                 f"🚫 {uf.name}: {len(file_bytes)/1_048_576:.1f}MB — "
@@ -902,7 +911,8 @@ def _tab_hotlines(sb):
         "internal_report_url": "사내 익명 제보채널 URL",
         "external_hotline":    "외부 상담채널 (예: 고용노동부 1350)",
         "ethics_hotline_url":  "신세계면세점 핫라인 제보하기 URL",
-        "hr_contact_text":     "인사팀 안내 문구 (인사 챗봇 미오픈 시)",
+        "hr_contact_text":     "인사 행정 라우팅 문구 (인사 규정·복리후생)",
+        "csr_contact_text":    "신고·조사 라우팅 문구 (CSR팀 / 신세계면세점 핫라인)",
         "hr_chatbot_url":      "인사 챗봇 URL (채우면 자동 전환)",
     }
 
