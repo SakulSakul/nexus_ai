@@ -4,7 +4,7 @@
 
 > **현재 단계: 베타 테스트 (개인 인프라).**
 > 정식 OPEN 시 Supabase 프로젝트와 Gemini API 청구 모두 회사 계정으로 전환 예정.
-> 개인 Gemini API 키는 **유료 티어(학습 비활성)** 로 운영합니다.
+> 개인 Gemini API · Anthropic Claude API 키 모두 **학습 비활성 유료 티어** 로 운영합니다 (Gemini 가 주, Claude 는 일시 장애 시 자동 우회 보조).
 
 ---
 

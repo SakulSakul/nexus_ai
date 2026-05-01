@@ -887,7 +887,7 @@ def _render_beta_banner() -> None:
         <div class="nx-beta-banner">
           <span class="nx-beta-tag">BETA</span>
           본 환경은 베타 테스트({s.env_tag})이며 개인 인프라에서 운영됩니다 ·
-          Gemini 유료 티어(학습 비활성) · 답변 품질 검증 단계입니다.
+          LLM: Gemini 유료(주) / Claude API(보조), 둘 다 학습 비활성 · 답변 품질 검증 단계입니다.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1055,12 +1055,17 @@ _CONSENT_BODY_MD = """
 참가자께서는 아래 내용을 확인·동의하신 뒤 베타 테스트에 참여해 주시기 바랍니다.
 
 1. **데이터 흐름**
-   - 입력하신 질의는 `[익명]` 마스킹 후 Google Gemini API(유료 티어)로 전송됩니다.
-   - 유료 티어이므로 **모델 학습에는 사용되지 않습니다.**
+   - 입력하신 질의는 `[익명]` 마스킹 후 외부 LLM API로 전송되어 답변이 생성됩니다.
+   - 사용 LLM (베타 단계):
+     - 주(主) 모델: Google Gemini API (유료 티어)
+     - 보조 모델: Anthropic Claude API (Gemini API 일시 장애 시 자동 우회)
+   - 두 API 모두 약관상 입력·출력이 모델 학습에 사용되지 않습니다.
+     - Gemini 유료 티어: 학습 제외 (Google 약관 명시)
+     - Claude API: 학습 제외 (Anthropic 약관 명시, 보관기간 7일)
    - 마스킹 후 본문·검색 hit 만 Supabase 에 저장되며, 원본 질의는 즉시 폐기됩니다.
 
 2. **인프라 주체 (베타 한정)**
-   - Supabase 프로젝트 / Gemini API 키 모두 **개별 운영자(개인)** 명의입니다.
+   - Supabase 프로젝트 / Gemini · Claude API 키 모두 **개별 운영자(개인)** 명의입니다.
    - 회사-Google 간 DPA(데이터 처리 계약) 및 회사 차원의 처리방침 고지는
      **정식 OPEN 후** 적용됩니다.
    - 베타 단계의 로그(`query_logs`)는 회사 계정 이관 시 **이관하지 않고 폐기**됩니다.
