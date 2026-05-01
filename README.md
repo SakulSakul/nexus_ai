@@ -37,7 +37,7 @@
 | `GEMINI_API_KEY` | ✅ | — | 유료 티어(학습 비활성) 권장 |
 | `ADMIN_PASSWORD` | ✅ | — | 관리자 게이트 |
 | `NEXUS_ENV` | | `beta-personal` | `beta-personal` / `beta-corp` / `prod` |
-| `NEXUS_SHOW_THINKING` | | `true` | 베타 ON / 운영 OFF 권장 |
+| `NEXUS_SHOW_THINKING` | | `true` | **항상 ON 권장** — 임직원이 "왜 이 답이 나왔는지" 검증할 수 있어야 신뢰가 생김. expander 로 접혀 있어 첫 화면 노이즈 없음. 운영 토큰 비용이 실제 이슈가 될 때만 `false`. |
 | `NEXUS_DAILY_QUERY_LIMIT` | | `100` | 세션당 일일 한도 |
 | `NEXUS_CHAT_MODEL` | | `gemini-2.5-pro` | |
 | `NEXUS_EMBED_MODEL` | | `gemini-embedding-001` | |
@@ -118,7 +118,7 @@ db/04_beta_hooks.sql      # 베타 hook 컬럼 + 감사 로그 + effective_date 
 - [ ] `GEMINI_API_KEY` 회사 GCP 키로 교체
 - [ ] `ADMIN_PASSWORD` 신규 발급 (개인 비번 100% 폐기)
 - [ ] `NEXUS_ENV` 를 `beta-corp` → 검증 후 `prod` 로 승격
-- [ ] `NEXUS_SHOW_THINKING` 을 `false` 로 변경 (운영 토큰 절감)
+- [ ] `NEXUS_SHOW_THINKING` 은 **`true` 유지** 권장 (답변 신뢰성·투명성). 운영 토큰 비용이 실측상 이슈가 될 때만 `false` 검토.
 
 ### E. 거버넌스 (회사 IT/법무 협업)
 - [ ] SSO(SAML/OIDC) 통합 설계 → `query_logs.user_id_hash` / `access_level` 채우기 시작
