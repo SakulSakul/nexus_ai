@@ -112,7 +112,10 @@ def load_hotlines(supabase: Any | None = None) -> dict[str, str]:
         rows = supabase.table("hotline_config_public").select("key,value").execute().data or []
         for r in rows:
             k = r.get("key"); v = r.get("value")
-            if k and v is not None:
+            # 빈 문자열·공백만 들어있는 DB 값이 default 를 덮어쓰지 않도록
+            # 실질 문자가 있을 때만 override. (운영 중 admin 이 실수로 value
+            # 를 비웠을 때 챗봇 라우팅 문구가 통째로 사라지는 사고 방지.)
+            if k and v is not None and str(v).strip():
                 out[k] = v
     except Exception:
         pass
