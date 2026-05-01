@@ -1084,7 +1084,9 @@ _CONSENT_BODY_MD = """
 """
 
 
-def _record_consent(sb, *, participant: str, version: str, env: str, details: dict) -> None:
+def _record_consent(sb, *, participant: str, version: str, env: str,
+                    details: dict) -> tuple[bool, str | None]:
+    """Returns (success, error_message). 실패를 silently 삼키지 않고 호출자에 반환."""
     try:
         sb.table("beta_consents").insert({
             "participant":     participant,
@@ -1092,8 +1094,9 @@ def _record_consent(sb, *, participant: str, version: str, env: str, details: di
             "env":             env,
             "details":         details,
         }).execute()
-    except Exception:
-        pass
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def _consent_gate(sb) -> bool:
@@ -1143,16 +1146,31 @@ def _consent_gate(sb) -> bool:
             participant = name.strip()
             if emp_no.strip():
                 participant = f"{participant} / {emp_no.strip()}"
-            _record_consent(
+            ok, err = _record_consent(
                 sb,
                 participant=participant,
                 version=cur_ver,
                 env=s.env_tag,
                 details={"emp_no": emp_no.strip() or None},
             )
-            st.session_state["beta_consent_v"] = cur_ver
-            st.session_state["beta_consent_participant"] = participant
-            st.rerun()
+            if not ok:
+                # INSERT 실패는 RLS/grants/스키마 캐시 문제. 사용자에게 즉시
+                # 노출하고 게이트 통과 시키지 않음 — 동의 미기록 상태로
+                # 챗봇이 열리는 거버넌스 사고 방지.
+                st.error(
+                    "⚠️ 동의 기록 저장에 실패했습니다. 운영자에게 다음 메시지를 전달해 주세요.\n\n"
+                    "Supabase 콘솔에서 다음을 실행:\n"
+                    "`alter table beta_consents disable row level security;`\n"
+                    "`grant insert, select on beta_consents to anon, authenticated;`\n"
+                    "`grant usage, select on sequence beta_consents_id_seq to anon, authenticated;`\n"
+                    "`notify pgrst, 'reload schema';`"
+                )
+                with st.expander("기술 세부정보", expanded=False):
+                    st.code(err or "(no detail)")
+            else:
+                st.session_state["beta_consent_v"] = cur_ver
+                st.session_state["beta_consent_participant"] = participant
+                st.rerun()
 
     return False
 
