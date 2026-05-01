@@ -132,6 +132,17 @@ insert into hotline_config (key, value, description) values
   ('hr_chatbot_url',        '',                                 '인사 챗봇 URL (오픈 시점 미정)')
 on conflict (key) do nothing;
 
+-- ── hotline_config_public view ─────────────────────────────
+-- anon 키로 사용자 측에서 hotline_config 를 직접 SELECT 하지 못하도록 (RLS
+-- 적용) 막고, key/value 두 컬럼만 노출하는 view 를 통해서만 read 허용.
+-- description / updated_at 같은 운영 메타데이터는 anon 에 누설 안 됨.
+-- app.py:load_hotlines() 가 본 view 를 조회.
+create or replace view hotline_config_public as
+  select key, value
+    from hotline_config;
+
+grant select on hotline_config_public to anon, authenticated;
+
 -- ── 질의 로그(마스킹 후) — 트렌드 레이더용 ──────────────────
 create table if not exists query_logs (
   id            bigserial primary key,
