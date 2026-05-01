@@ -493,13 +493,9 @@ html, body, .stApp {
   margin: 0 0 14px;
 }
 .nx-hero-title::after {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-left: 7px;
-  background: var(--c-accent);
-  vertical-align: 0.18em;
+  content: ".";
+  color: var(--c-accent);
+  margin-left: 1px;
 }
 .nx-hero-sub {
   font-size: 14px;
