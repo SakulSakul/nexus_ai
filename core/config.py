@@ -53,6 +53,14 @@ class Settings:
     daily_query_limit: int
     # consent_version: 동의서 문구를 변경하면 이 값을 올려서 참가자에게 재동의 강제.
     consent_version: str
+    # ── 챗봇 멀티 provider (Gemini primary / Claude fallback) ──────
+    # primary 가 503/429 등 transient 실패하면 fallback provider 로 1회 자동 전환.
+    # 비용/품질 비교용 데이터는 query_logs.chat_provider 에 매 호출마다 기록.
+    anthropic_api_key: str
+    chat_provider: str           # 'gemini' | 'claude'
+    chat_fallback_provider: str  # 'gemini' | 'claude' | '' (empty = no fallback)
+    claude_model: str            # 기본 'claude-opus-4-7'
+    claude_effort: str           # 'low' | 'medium' | 'high' | 'xhigh' | 'max' (max 는 Opus 전용)
 
 
 @lru_cache(maxsize=1)
@@ -73,6 +81,11 @@ def settings() -> Settings:
         show_thinking=get_secret("NEXUS_SHOW_THINKING", "true").lower() in ("1", "true", "yes", "y"),
         daily_query_limit=int(get_secret("NEXUS_DAILY_QUERY_LIMIT", "100")),
         consent_version=get_secret("NEXUS_CONSENT_VERSION", "v1"),
+        anthropic_api_key=get_secret("ANTHROPIC_API_KEY"),
+        chat_provider=get_secret("NEXUS_CHAT_PROVIDER", "gemini").lower(),
+        chat_fallback_provider=get_secret("NEXUS_CHAT_FALLBACK", "claude").lower(),
+        claude_model=get_secret("NEXUS_CLAUDE_MODEL", "claude-opus-4-7"),
+        claude_effort=get_secret("NEXUS_CLAUDE_EFFORT", "medium").lower(),
     )
 
 

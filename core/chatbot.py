@@ -36,10 +36,21 @@ class Answer:
     query_log_id: int | None = field(default=None)
 
 
-def _gen(model: str, system: str, user: str, *,
-         temperature: float, top_p: float, include_thinking: bool = True) -> tuple[str, str]:
-    """Returns (answer_text, thinking_text). include_thinking=False 일 때는
-    thinking_config 자체를 빼서 토큰/비용 절감."""
+_TRANSIENT_HINTS = (
+    "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED",
+    "high demand", "overloaded", "overload",
+)
+
+
+def _is_transient(e: Exception) -> bool:
+    """503/429/RESOURCE_EXHAUSTED 류 모델 트래픽 폭주 신호 식별.
+    primary 가 이 케이스로 실패하면 fallback provider 로 1회 전환 가능."""
+    msg = str(e).lower()
+    return any(h.lower() in msg for h in _TRANSIENT_HINTS)
+
+
+def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str]:
+    """Gemini 호출. Returns (text, thinking, model_id)."""
     from google import genai
     from google.genai import types
     s = settings()
@@ -49,40 +60,32 @@ def _gen(model: str, system: str, user: str, *,
         if include_thinking:
             cfg = types.GenerateContentConfig(
                 system_instruction=system,
-                temperature=temperature,
-                top_p=top_p,
+                temperature=s.temperature,
+                top_p=s.top_p,
                 thinking_config=types.ThinkingConfig(include_thoughts=True),
             )
         else:
             cfg = types.GenerateContentConfig(
                 system_instruction=system,
-                temperature=temperature,
-                top_p=top_p,
+                temperature=s.temperature,
+                top_p=s.top_p,
             )
     except Exception:
         cfg = types.GenerateContentConfig(
             system_instruction=system,
-            temperature=temperature,
-            top_p=top_p,
+            temperature=s.temperature,
+            top_p=s.top_p,
         )
 
-    # Gemini 503 UNAVAILABLE / 429 RESOURCE_EXHAUSTED 는 모델 트래픽 폭주 시 흔하게 발생.
-    # 짧은 지수 백오프로 3회 재시도. 그래도 실패하면 raise → 호출자가 친화 메시지 출력.
     res = None
     last_err: Exception | None = None
     for attempt in range(3):
         try:
-            res = cli.models.generate_content(model=model, contents=user, config=cfg)
+            res = cli.models.generate_content(model=s.chat_model, contents=user, config=cfg)
             break
         except Exception as e:
             last_err = e
-            msg = str(e)
-            transient = (
-                "503" in msg or "UNAVAILABLE" in msg
-                or "429" in msg or "RESOURCE_EXHAUSTED" in msg
-                or "high demand" in msg.lower()
-            )
-            if transient and attempt < 2:
+            if _is_transient(e) and attempt < 2:
                 time.sleep(1.5 * (2 ** attempt))   # 1.5s → 3s
                 continue
             raise
@@ -102,7 +105,112 @@ def _gen(model: str, system: str, user: str, *,
 
     text = "".join(text_parts).strip() or (res.text or "").strip()
     thinking = "".join(thinking_parts).strip()
-    return text, thinking
+    return text, thinking, s.chat_model
+
+
+def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str]:
+    """Claude 호출. Returns (text, thinking, model_id).
+
+    Opus 4.7 기준:
+    - temperature/top_p/top_k 사용 불가 (400). 프롬프트로 결정성 제어.
+    - thinking 은 adaptive only. display='summarized' 로 사용자 노출 활성.
+    - effort 는 output_config 안에 넣음 (top-level 아님).
+    """
+    import anthropic
+    s = settings()
+    if not s.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY 가 설정되지 않았습니다.")
+    cli = anthropic.Anthropic(api_key=s.anthropic_api_key)
+
+    kwargs: dict = {
+        "model": s.claude_model,
+        "max_tokens": 16000,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    if s.claude_effort:
+        kwargs["output_config"] = {"effort": s.claude_effort}
+    if include_thinking:
+        # display='summarized' 가 없으면 Opus 4.7 default('omitted') 로 인해 thinking
+        # 텍스트가 비어 표시됨. 베타 답변 신뢰성 검증을 위해 명시적으로 활성화.
+        kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
+    else:
+        kwargs["thinking"] = {"type": "disabled"}
+
+    res = None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            res = cli.messages.create(**kwargs)
+            break
+        except anthropic.RateLimitError as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(1.5 * (2 ** attempt)); continue
+            raise
+        except anthropic.APIStatusError as e:
+            last_err = e
+            if e.status_code >= 500 and attempt < 2:
+                time.sleep(1.5 * (2 ** attempt)); continue
+            raise
+        except anthropic.APIConnectionError as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(1.5 * (2 ** attempt)); continue
+            raise
+    if res is None and last_err is not None:
+        raise last_err
+
+    thinking_parts: list[str] = []
+    text_parts: list[str] = []
+    for block in res.content:
+        if block.type == "thinking":
+            thinking_parts.append(getattr(block, "thinking", "") or "")
+        elif block.type == "text":
+            text_parts.append(getattr(block, "text", "") or "")
+
+    return ("".join(text_parts).strip(),
+            "".join(thinking_parts).strip(),
+            s.claude_model)
+
+
+_PROVIDER_FUNCS = {"gemini": _gen_gemini, "claude": _gen_claude}
+
+
+def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str, str]:
+    """Provider dispatcher. Returns (text, thinking, provider, model_id).
+
+    primary 가 transient(503/429) 실패하면 fallback 으로 1회 자동 전환.
+    비전이성 에러(인증·인풋 문제)는 즉시 raise.
+    """
+    s = settings()
+    primary = (s.chat_provider or "gemini").lower()
+    fallback = (s.chat_fallback_provider or "").lower()
+
+    chain: list[str] = [primary]
+    if fallback and fallback != primary:
+        chain.append(fallback)
+
+    last_err: Exception | None = None
+    for prov in chain:
+        fn = _PROVIDER_FUNCS.get(prov)
+        if fn is None:
+            continue
+        # fallback=claude 인데 ANTHROPIC_API_KEY 미설정이면 조용히 skip
+        if prov == "claude" and not s.anthropic_api_key:
+            continue
+        try:
+            text, thinking, model_id = fn(system, user, include_thinking=include_thinking)
+            return text, thinking, prov, model_id
+        except Exception as e:
+            last_err = e
+            if not _is_transient(e):
+                raise
+            # transient → 다음 provider 시도
+            continue
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("No chat provider configured")
 
 
 def _ensure_citation(answer: str, contexts: list[dict]) -> str:
@@ -161,9 +269,9 @@ def ask(
     contexts = hybrid_search(supabase, question=masked, categories=cats, top_k=s.top_k)
 
     user = build_user_prompt(masked, contexts)
-    raw, thinking = _gen(s.chat_model, SYSTEM_PROMPT, user,
-                         temperature=s.temperature, top_p=s.top_p,
-                         include_thinking=s.show_thinking)
+    raw, thinking, used_provider, used_model = _gen(
+        SYSTEM_PROMPT, user, include_thinking=s.show_thinking,
+    )
     raw = _ensure_citation(raw, contexts)
 
     if detection.triggered:
@@ -193,6 +301,8 @@ def ask(
             "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
             "env":                  s.env_tag,
             "embed_model_version":  s.embed_model,
+            "chat_provider":        used_provider,
+            "chat_model_version":   used_model,
             # user_id_hash / access_level 은 회사 SSO 도입 후 채움.
         }).execute()
         if ins.data:

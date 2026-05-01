@@ -11,7 +11,8 @@
 ## 스택
 
 - 프론트엔드: Streamlit
-- LLM: Google Gemini (`gemini-2.5-pro` / `gemini-embedding-001`)
+- LLM (chat): **Gemini 2.5 Pro (primary) + Claude Opus 4.7 (fallback)** — Gemini 가 503/429 시 Claude 로 자동 전환
+- LLM (embedding): Google `gemini-embedding-001`
 - 벡터/메타 저장소: Supabase (PostgreSQL + pgvector)
 - 검색: Hybrid (vector cosine + pg_trgm) + Reciprocal Rank Fusion
 
@@ -37,12 +38,17 @@
 | `SUPABASE_URL` | ✅ | — | |
 | `SUPABASE_KEY` | ✅ | — | anon 키 |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | — | 관리자 영역 전용 |
-| `GEMINI_API_KEY` | ✅ | — | 유료 티어(학습 비활성) 권장 |
+| `GEMINI_API_KEY` | ✅ | — | 유료 티어(학습 비활성) 권장. 임베딩 + chat primary |
+| `ANTHROPIC_API_KEY` | | — | 설정 시 chat fallback 으로 자동 활성. 미설정이면 Gemini 단독 |
 | `ADMIN_PASSWORD` | ✅ | — | 관리자 게이트 |
 | `NEXUS_ENV` | | `beta-personal` | `beta-personal` / `beta-corp` / `prod` |
 | `NEXUS_SHOW_THINKING` | | `true` | **항상 ON 권장** — 임직원이 "왜 이 답이 나왔는지" 검증할 수 있어야 신뢰가 생김. expander 로 접혀 있어 첫 화면 노이즈 없음. 운영 토큰 비용이 실제 이슈가 될 때만 `false`. |
 | `NEXUS_DAILY_QUERY_LIMIT` | | `100` | 세션당 일일 한도 |
 | `NEXUS_CONSENT_VERSION` | | `v1` | 베타 동의서 버전. 문구 변경 시 올리면 자동 재동의 강제 |
+| `NEXUS_CHAT_PROVIDER` | | `gemini` | 1차 챗봇. `gemini` / `claude` |
+| `NEXUS_CHAT_FALLBACK` | | `claude` | 1차가 503/429 transient 실패 시 자동 전환. `''` 면 fallback 비활성 |
+| `NEXUS_CLAUDE_MODEL` | | `claude-opus-4-7` | Claude 모델 ID. 비용 우선이면 `claude-sonnet-4-6` |
+| `NEXUS_CLAUDE_EFFORT` | | `medium` | Claude `output_config.effort`. `low`/`medium`/`high`/`xhigh`/`max` |
 | `NEXUS_CHAT_MODEL` | | `gemini-2.5-pro` | |
 | `NEXUS_EMBED_MODEL` | | `gemini-embedding-001` | |
 | `NEXUS_EMBED_DIM` | | `768` | 스키마 `vector(768)` 와 일치 |
@@ -62,6 +68,7 @@ db/04_beta_hooks.sql      # 베타 hook 컬럼 + 감사 로그 + effective_date 
                           # ⚠ 04 는 02 의 함수를 CREATE OR REPLACE 로 덮어씀
                           # (시그니처에 as_of_date / 반환에 owning_department 추가)
 db/05_beta_consents.sql   # 베타 참가자 동의 기록 테이블
+db/06_chat_provider.sql   # query_logs 에 chat_provider / chat_model_version 컬럼
 ```
 
 `db/04_beta_hooks.sql` 가 추가하는 항목:

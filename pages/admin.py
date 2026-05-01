@@ -386,7 +386,7 @@ def _tab_radar(sb):
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
     rows = (
         sb.table("query_logs")
-          .select("ts,category,is_critical,critical_kind,dept_hash,feedback,env")
+          .select("ts,category,is_critical,critical_kind,dept_hash,feedback,env,chat_provider,chat_model_version")
           .gte("ts", since)
           .execute()
           .data or []
@@ -439,6 +439,30 @@ def _tab_radar(sb):
               delta_color="inverse")
     if fb_total < 10:
         st.caption("표본 부족 — 베타 참가자 의견을 더 모은 뒤 해석하세요.")
+
+    # Provider 분포 (Gemini / Claude). fallback 발동률로 primary 안정성도 가늠.
+    st.markdown("#### 🤖 챗봇 Provider 분포")
+    prov_counts = Counter((r.get("chat_provider") or "(미식별)") for r in rows)
+    if prov_counts:
+        st.bar_chart(prov_counts)
+    # provider 별 👍 비율 비교
+    by_prov: dict[str, list[int]] = defaultdict(list)
+    for r in rows:
+        if r.get("feedback") in (1, -1):
+            by_prov[r.get("chat_provider") or "(미식별)"].append(int(r["feedback"]))
+    if by_prov:
+        prov_table = []
+        for p, vs in by_prov.items():
+            up = sum(1 for v in vs if v == 1)
+            down = sum(1 for v in vs if v == -1)
+            tot = up + down
+            prov_table.append({
+                "provider": p,
+                "응답 수": tot,
+                "👍 %": f"{(up/tot*100):.1f}" if tot else "—",
+                "👎 %": f"{(down/tot*100):.1f}" if tot else "—",
+            })
+        st.dataframe(prov_table, use_container_width=True, hide_index=True)
 
 
 def _tab_review(sb):
