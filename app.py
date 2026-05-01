@@ -1055,9 +1055,14 @@ _CONSENT_BODY_MD = """
    - 사용 LLM (베타 단계):
      - 주(主) 모델: Google Gemini API (유료 티어)
      - 보조 모델: Anthropic Claude API (Gemini API 일시 장애 시 자동 우회)
-   - 두 API 모두 약관상 입력·출력이 모델 학습에 사용되지 않습니다.
-     - Gemini 유료 티어: 학습 제외 (Google 약관 명시)
-     - Claude API: 학습 제외 (Anthropic 약관 명시, 보관기간 7일)
+   - **두 API 모두 약관상 입력·출력이 모델 학습에 사용되지 않습니다.**
+     - Gemini 유료 티어: Google API 약관에 따라 학습 제외
+     - Claude API: Anthropic Commercial Terms 에 따라 학습 제외
+   - 다만 양사는 **이용약관 위반 모니터링(Trust & Safety) 목적**으로 입력·
+     출력을 단기간 보관할 수 있습니다 (Anthropic 기본 최대 30일, Google
+     정책 동일 수준). **이 보관은 모델 학습과 무관**하며 보관 기간 종료
+     시 자동 폐기됩니다. 정식 운영 이관 시점에는 회사 명의로 **Zero Data
+     Retention(보관 0일) 계약** 적용을 검토합니다.
    - 마스킹 후 본문·검색 hit 만 Supabase 에 저장되며, 원본 질의는 즉시 폐기됩니다.
 
 2. **인프라 주체 (베타 한정)**
