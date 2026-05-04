@@ -1,4 +1,4 @@
-"""NEXUS AI · 임직원용 Streamlit 프론트엔드 (PoC)."""
+"""DF COMPASS · 임직원용 Streamlit 프론트엔드 (PoC)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from core.config import CATEGORIES, get_secret, load_hotlines, settings, validat
 
 
 st.set_page_config(
-    page_title="NEXUS AI",
-    page_icon="🛡️",
+    page_title="DF COMPASS",
+    page_icon="🧭",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -792,12 +792,22 @@ def _sidebar(sb, hotlines: dict) -> str:
         st.markdown(
             """
             <div class="nx-brand">
-              <p class="nx-brand-eyebrow">Compliance Assistant</p>
-              <p class="nx-brand-title">NEXUS AI</p>
+              <p class="nx-brand-eyebrow">윤리·컴플라이언스 AI 챗봇</p>
+              <p class="nx-brand-title">🧭 DF COMPASS</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        with st.expander("ℹ️ DF COMPASS 안내", expanded=True):
+            st.markdown("""
+**DF COMPASS** — 디에프 컴파스
+
+신세계디에프 사규·윤리강령·과거 사례를 학습한 AI 챗봇입니다. 일하다 마주치는 윤리·컴플라이언스 질문에 사규 근거와 함께 답해 드립니다.
+
+"COMPASS(나침반)"라는 이름처럼, 임직원이 바른 방향을 잡을 수 있도록 곁에서 길을 안내하는 도구를 지향합니다. 신세계디에프의 정도경영을 일상에서 실천할 수 있도록 돕는 것이 본 챗봇의 소임입니다.
+
+본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. 신고·조사 등 인사 행정 사항은 인사팀에 직접 문의하세요.
+            """)
         st.markdown(
             '<p class="nx-sidebar-label">질의 범위</p>',
             unsafe_allow_html=True,
@@ -1266,11 +1276,11 @@ def main():
     st.markdown(
         """
         <div class="nx-hero">
-          <p class="nx-hero-eyebrow">NEXUS AI · Compliance Intelligence</p>
+          <p class="nx-hero-eyebrow">DF COMPASS · Compliance Intelligence</p>
           <h1 class="nx-hero-title">무엇을 도와드릴까요?</h1>
           <p class="nx-hero-sub">
-            사규 · 윤리강령 · 사건사고 사례 · 징계규정을 통합 검색합니다.<br>
-            이름 · 부서 등 식별정보는 자동 마스킹됩니다.
+            신세계디에프 임직원을 위한 윤리·컴플라이언스 가이드<br>
+            사규/윤리강령/사례집/징계규정을 통합 검색합니다. (출처 자동 표기)
           </p>
         </div>
         """,

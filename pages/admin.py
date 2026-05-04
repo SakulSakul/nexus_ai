@@ -1,4 +1,4 @@
-"""NEXUS AI · 관리자용 Streamlit 대시보드 (PoC).
+"""DF COMPASS · 관리자용 Streamlit 대시보드 (PoC).
 
 기능:
 - DOCX 업로드 → 청킹 → 카테고리 자동 추천 → 관리자 확인 → 적재
@@ -27,7 +27,7 @@ from parser.docx_parser import (
 from parser.ingest import ingest_docx
 
 
-st.set_page_config(page_title="NEXUS AI · Admin", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="DF COMPASS · Admin", page_icon="🛠️", layout="wide")
 
 # 헤더 anchor 아이콘 제거 + 사이드바 reopen 토글 prominent 스타일 (전역).
 st.markdown(
@@ -171,7 +171,7 @@ def _require_auth() -> None:
     if st.session_state.get("admin_authenticated"):
         return
 
-    st.title("🔐 NEXUS AI · Admin 로그인")
+    st.title("🔐 DF COMPASS · Admin 로그인")
 
     admin_pw = get_secret("ADMIN_PASSWORD")
     if not admin_pw:
@@ -1165,7 +1165,7 @@ def main():
         st.stop()
 
     col_title, col_logout = st.columns([8, 1])
-    col_title.title("🛠️ NEXUS AI · Admin")
+    col_title.title("🛠️ DF COMPASS · Admin")
     if col_logout.button("로그아웃", key="admin_logout"):
         st.session_state["admin_authenticated"] = False
         st.rerun()
