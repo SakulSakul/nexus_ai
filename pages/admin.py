@@ -572,13 +572,21 @@ def _tab_radar(sb):
     st.line_chart(flat, x="date")
 
     # 부서별 슬라이스 (k-anonymity: 5 미만은 마스킹)
-    st.markdown("#### 부서별 (k=5 보장)")
-    dept_counts = Counter(r.get("dept_hash") or "(미식별)" for r in rows)
-    safe = {k: v for k, v in dept_counts.items() if v >= 5}
-    suppressed = sum(1 for v in dept_counts.values() if v < 5)
-    if safe:
-        st.bar_chart(safe)
-    st.caption(f"k<5 슬라이스 {suppressed}건은 익명성 보호를 위해 표시하지 않습니다.")
+    # SSO 미도입 단계에서는 dept_hash 가 INSERT 시 미기입이라 의미 있는 결과가
+    # 나오지 않음. 집계 로직은 그대로 두고 expander 로 접어둔다 — SSO 연동 시
+    # 자동 활성화.
+    with st.expander("🔒 부서별 통계 (SSO 도입 후 활성화)", expanded=False):
+        st.info(
+            "SSO 미도입 단계에서는 부서 식별 정보(dept_hash)가 채워지지 않아 "
+            "표본이 없습니다. SSO 연동 후 자동 활성화됩니다."
+        )
+        st.markdown("#### 부서별 (k=5 보장)")
+        dept_counts = Counter(r.get("dept_hash") or "(미식별)" for r in rows)
+        safe = {k: v for k, v in dept_counts.items() if v >= 5}
+        suppressed = sum(1 for v in dept_counts.values() if v < 5)
+        if safe:
+            st.bar_chart(safe)
+        st.caption(f"k<5 슬라이스 {suppressed}건은 익명성 보호를 위해 표시하지 않습니다.")
 
     # 심각 사안 비율
     crit = sum(1 for r in rows if r.get("is_critical"))
@@ -625,6 +633,93 @@ def _tab_radar(sb):
                 "👎 %": f"{(down/tot*100):.1f}" if tot else "—",
             })
         st.dataframe(prov_table, use_container_width=True, hide_index=True)
+
+    # ── 응답 시간 분포 ──────────────────────────────────────
+    # elapsed_ms 가 NULL 인 row(베타 보강 이전 데이터)는 집계 제외.
+    st.markdown("#### ⏱️ 응답 시간 분포")
+    elapsed_vals = [r.get("elapsed_ms") for r in rows if r.get("elapsed_ms") is not None]
+    if elapsed_vals:
+        import statistics as _stats
+        sorted_e = sorted(elapsed_vals)
+        n = len(sorted_e)
+        p50 = sorted_e[int(n * 0.5)] if n else 0
+        p95 = sorted_e[min(int(n * 0.95), n - 1)] if n else 0
+        avg = _stats.mean(sorted_e) if sorted_e else 0
+        m1, m2, m3 = st.columns(3)
+        m1.metric("p50 (중앙값)", f"{p50:,} ms")
+        m2.metric("p95", f"{p95:,} ms")
+        m3.metric("평균", f"{avg:,.0f} ms")
+        try:
+            import plotly.express as px
+            fig = px.histogram(elapsed_vals, nbins=20)
+            fig.update_layout(
+                xaxis_title="응답 시간 (ms)",
+                yaxis_title="건수",
+                showlegend=False,
+                margin=dict(l=20, r=20, t=20, b=20),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as _e:
+            st.caption(f"(plotly 차트 표시 실패 — 보조 KPI 만 표시) {_e}")
+    else:
+        st.info("응답 시간 데이터가 없습니다. db/07_radar_metrics.sql 마이그레이션 적용 여부를 확인하세요.")
+
+    # ── Fallback 발동률 ────────────────────────────────────
+    # primary LLM 이 transient 실패해 fallback provider 로 전환된 비율.
+    # used_fallback 컬럼이 NULL/없는 과거 row 는 false 로 간주.
+    st.markdown("#### 🔁 Fallback 발동률")
+    fb_rows = [r for r in rows if r.get("used_fallback") is True]
+    fb_pct = (len(fb_rows) / len(rows)) * 100 if rows else 0.0
+    fc1, fc2 = st.columns([1, 2])
+    fc1.metric("Fallback 발동 비율", f"{fb_pct:.1f}%", delta=f"{len(fb_rows)}/{len(rows)}건")
+    # 일자별 fallback 건수
+    fb_series: Counter[str] = Counter()
+    for r in fb_rows:
+        d = (r.get("ts") or "")[:10]
+        if d:
+            fb_series[d] += 1
+    if fb_series:
+        flat_fb = [{"date": d, "fallback 건수": c} for d, c in sorted(fb_series.items())]
+        with fc2:
+            st.line_chart(flat_fb, x="date")
+    else:
+        with fc2:
+            st.caption("기간 내 fallback 발동 없음.")
+
+    # ── 저신뢰도 응답률 ────────────────────────────────────
+    # hit_chunk_ids 길이 0 = 사규 미발견 = 저신뢰도. 응답 문구 매칭 대신
+    # 검색 hit 기준이 안정적.
+    st.markdown("#### 📉 저신뢰도 응답률")
+    def _is_low_conf(r: dict) -> bool:
+        hits = r.get("hit_chunk_ids") or []
+        return len(hits) == 0
+    low_rows = [r for r in rows if _is_low_conf(r)]
+    low_pct = (len(low_rows) / len(rows)) * 100 if rows else 0.0
+    lc1, lc2 = st.columns([1, 2])
+    lc1.metric("저신뢰도 응답 비율", f"{low_pct:.1f}%", delta=f"{len(low_rows)}/{len(rows)}건")
+    # 카테고리별 저신뢰도 비율 (표본 5건 미만 마스킹)
+    cat_total: Counter[str] = Counter()
+    cat_low: Counter[str] = Counter()
+    for r in rows:
+        c = r.get("category") or "(미지정)"
+        cat_total[c] += 1
+        if _is_low_conf(r):
+            cat_low[c] += 1
+    cat_table = []
+    for c, tot in cat_total.items():
+        if tot < 5:
+            cat_table.append({"카테고리": c, "저신뢰도 비율(%)": 0, "표본": "(표본 부족)"})
+        else:
+            cat_table.append({
+                "카테고리": c,
+                "저신뢰도 비율(%)": round((cat_low[c] / tot) * 100, 1),
+                "표본": f"{cat_low[c]}/{tot}",
+            })
+    with lc2:
+        st.dataframe(cat_table, use_container_width=True, hide_index=True)
+    st.caption(
+        "저신뢰도 = 검색된 사규 청크 0건. 이 비율이 높은 카테고리는 사규 DB 보강 우선순위."
+    )
 
 
 def _tab_review(sb):

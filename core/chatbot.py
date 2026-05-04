@@ -254,11 +254,13 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
 _PROVIDER_FUNCS = {"gemini": _gen_gemini, "claude": _gen_claude}
 
 
-def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str, str]:
-    """Provider dispatcher. Returns (text, thinking, provider, model_id).
+def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str, str, bool]:
+    """Provider dispatcher. Returns (text, thinking, provider, model_id, used_fallback).
 
     primary 가 transient(503/429) 실패하면 fallback 으로 1회 자동 전환.
     비전이성 에러(인증·인풋 문제)는 즉시 raise.
+
+    used_fallback: primary 가 transient 실패 후 fallback 분기에서 응답을 받았는지.
     """
     s = settings()
     primary = (s.chat_provider or "gemini").lower()
@@ -269,6 +271,7 @@ def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, s
         chain.append(fallback)
 
     last_err: Exception | None = None
+    used_fallback = False
     for prov in chain:
         fn = _PROVIDER_FUNCS.get(prov)
         if fn is None:
@@ -278,12 +281,13 @@ def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, s
             continue
         try:
             text, thinking, model_id = fn(system, user, include_thinking=include_thinking)
-            return text, thinking, prov, model_id
+            return text, thinking, prov, model_id, used_fallback
         except Exception as e:
             last_err = e
             if not _is_transient(e):
                 raise
-            # transient → 다음 provider 시도
+            # transient → 다음 provider 시도. 다음 시도부터는 fallback 분기.
+            used_fallback = True
             continue
     if last_err is not None:
         raise last_err
@@ -339,6 +343,8 @@ def ask(
                 "embed_model_version": s.embed_model,
                 "chat_provider":       "blocked",
                 "chat_model_version":  None,
+                "elapsed_ms":          0,
+                "used_fallback":       False,
             }).execute()
         except Exception as _e:
             import sys as _sys
@@ -382,7 +388,7 @@ def ask(
     contexts = hybrid_search(supabase, question=masked, categories=cats, top_k=s.top_k)
 
     user = build_user_prompt(masked, contexts)
-    raw, thinking, used_provider, used_model = _gen(
+    raw, thinking, used_provider, used_model, used_fallback = _gen(
         SYSTEM_PROMPT, user, include_thinking=s.show_thinking,
     )
     raw = _ensure_citation(raw, contexts)
@@ -416,6 +422,8 @@ def ask(
             "embed_model_version":  s.embed_model,
             "chat_provider":        used_provider,
             "chat_model_version":   used_model,
+            "elapsed_ms":           int(elapsed * 1000),
+            "used_fallback":        used_fallback,
             # user_id_hash / access_level 은 회사 SSO 도입 후 채움.
         }).execute()
         if ins.data:
