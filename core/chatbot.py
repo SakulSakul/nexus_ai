@@ -36,6 +36,28 @@ def _split_answer_and_process(raw: str) -> tuple[str, str]:
     return head.rstrip(), tail.strip()
 
 
+# [검색 과정] 4단계(①②③④) 헤더 정형화 패턴.
+# - leading \s* : 직전 본문의 trailing 공백/개행을 흡수해 단락 사이가
+#   '본문 \n\n**②' 가 아닌 '본문\n\n**②' 로 깔끔히 분리되게 한다.
+# - 캡처1: ①②③④ 마커
+# - 캡처2: 마커 뒤부터 콜론 직전까지 (lazy 매칭, 단계명. 줄바꿈/콜론 제외)
+# 본문에 콜론이 있어도 lazy 매칭이라 첫 콜론에서 끊겨 헤더만 정확히 변환.
+_PROCESS_STEP_PATTERN = re.compile(r"\s*([①②③④])\s*([^:\n]+?)\s*:\s*")
+
+
+def _format_process_section(process: str) -> str:
+    """① ② ③ ④ 4단계를 '**마커 단계명**\\n\\n본문' 형식으로 변환.
+
+    LLM 이 한 줄로 이어 쓰거나 헤더 강조 없이 출력하는 경우의 안전망.
+    answer_text 는 이 함수를 거치지 않으므로 본문에 마커가 우연히 등장
+    해도 변형되지 않는다.
+    """
+    if not process:
+        return process
+    formatted = _PROCESS_STEP_PATTERN.sub(r"\n\n**\1 \2**\n\n", process)
+    return formatted.strip()
+
+
 # 권장 행동 섹션 헤더 (시스템 프롬프트가 강제하는 출력 구조 ④) 의 markdown
 # 패턴. 답변 내 일반 numbered list (예: 사규 인용 '1. 정의 2. 적용범위') 가
 # 권장 행동으로 잘못 추출되지 않도록 섹션 본문에서만 추출.
@@ -398,7 +420,11 @@ def ask(
     # [검색 과정] 섹션을 본문에서 분리. 본문 후처리(_ensure_citation,
     # enforce_structure) 는 answer 부분만 받게 해서 [검색 과정] 텍스트가
     # 답변에 raw 로 노출되거나 hotline 구조 안으로 섞이는 사고 차단.
-    answer_text, process_text = _split_answer_and_process(raw)
+    answer_text, process_text_raw = _split_answer_and_process(raw)
+    # ①②③④ 4단계를 '**마커 단계명**\n\n본문' markdown 으로 정형화 — LLM 이
+    # 한 줄로 이어 쓰거나 헤더 강조 없이 출력하는 경우의 안전망. answer_text
+    # 는 이 단계를 거치지 않아 본문 내 우연한 마커는 변형되지 않음.
+    process_text = _format_process_section(process_text_raw)
     # 운영 모드(NEXUS_SHOW_THINKING=false) 에서는 process 추출은 하되 사용자
     # 화면에 노출하지 않는다. SYSTEM_PROMPT instruction 은 토글과 무관하게
     # 항상 활성 — instruction 동적 분기는 prompt 안정성을 깨뜨릴 수 있음.
