@@ -46,7 +46,11 @@ class Settings:
     top_p: float
     # ── 베타/운영 환경 분기 ─────────────────────────────────
     # env_tag: query_logs.env 컬럼에 저장. 회사 이관 시 'beta-corp' → 'prod' 로 승격.
-    # show_thinking: Gemini thinking parts 를 사용자 UI 에 노출할지. 베타 ON / 운영 OFF.
+    # show_thinking: AI 검토 과정([검색 과정] 섹션) 의 사용자 UI 노출 여부.
+    # raw thinking parts(Gemini/Claude SDK) 는 비활성화되었고, SYSTEM_PROMPT 의
+    # [검색 과정] 한국어 정형 섹션을 분리 추출해 expander 로 표시한다.
+    # 베타 ON (투명성) / 운영 OFF (간결한 UI). 토글과 무관하게 LLM 은 항상
+    # [검색 과정] 을 생성 — instruction 동적 분기는 prompt 안정성을 깬다.
     # daily_query_limit: 1세션당 일일 질의 한도 (베타 비용 가드).
     env_tag: str
     show_thinking: bool

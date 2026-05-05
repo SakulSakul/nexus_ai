@@ -19,6 +19,23 @@ from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .retriever import hybrid_search
 
 
+# SYSTEM_PROMPT 가 강제하는 [검색 과정] 섹션 마커. LLM 응답에서 본문과
+# 검토 과정을 분리하는 anchor. 마커 없으면 process 는 빈 문자열로 간주
+# 하고 사용자 화면에서 expander 자체를 숨긴다 (마커 누락 fallback).
+SEARCH_PROCESS_MARKER = "[검색 과정]"
+
+
+def _split_answer_and_process(raw: str) -> tuple[str, str]:
+    """LLM 응답에서 [검색 과정] 섹션 분리.
+
+    마커 없으면 process 는 빈 문자열 → 사용자 화면 expander 자동 숨김.
+    """
+    if SEARCH_PROCESS_MARKER not in raw:
+        return raw.strip(), ""
+    head, tail = raw.split(SEARCH_PROCESS_MARKER, 1)
+    return head.rstrip(), tail.strip()
+
+
 # 권장 행동 섹션 헤더 (시스템 프롬프트가 강제하는 출력 구조 ④) 의 markdown
 # 패턴. 답변 내 일반 numbered list (예: 사규 인용 '1. 정의 2. 적용범위') 가
 # 권장 행동으로 잘못 추출되지 않도록 섹션 본문에서만 추출.
@@ -107,32 +124,24 @@ def _is_transient(e: Exception) -> bool:
 
 
 def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str]:
-    """Gemini 호출. Returns (text, thinking, model_id)."""
+    """Gemini 호출. Returns (text, thinking, model_id).
+
+    raw thinking parts 는 SYSTEM_PROMPT 의 [검색 과정] 섹션으로 대체되어
+    더 이상 추출하지 않는다. include_thinking 파라미터는 외부 호출자
+    회귀 회피를 위해 시그니처만 유지하되 내부 동작은 항상 비활성.
+    thinking 토큰은 답변 토큰 대비 2~3배 비용이라 비활성화로 비용·
+    latency 부수 절감.
+    """
     from google import genai
     from google.genai import types
     s = settings()
     cli = genai.Client(api_key=s.gemini_api_key)
 
-    try:
-        if include_thinking:
-            cfg = types.GenerateContentConfig(
-                system_instruction=system,
-                temperature=s.temperature,
-                top_p=s.top_p,
-                thinking_config=types.ThinkingConfig(include_thoughts=True),
-            )
-        else:
-            cfg = types.GenerateContentConfig(
-                system_instruction=system,
-                temperature=s.temperature,
-                top_p=s.top_p,
-            )
-    except Exception:
-        cfg = types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=s.temperature,
-            top_p=s.top_p,
-        )
+    cfg = types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=s.temperature,
+        top_p=s.top_p,
+    )
 
     # Gemini SDK 는 client-level timeout 설정이 일관되지 않아 ThreadPoolExecutor
     # 로 wrap. 60초 안에 응답 없으면 RuntimeError → 사용자에게 친화 메시지.
@@ -165,20 +174,18 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     if res is None and last_err is not None:
         raise last_err
 
-    thinking_parts: list[str] = []
     text_parts: list[str] = []
     try:
         for part in res.candidates[0].content.parts:
+            # thought 파트는 [검색 과정] 통합으로 더 이상 사용하지 않음 → drop.
             if getattr(part, "thought", False):
-                thinking_parts.append(part.text or "")
-            else:
-                text_parts.append(part.text or "")
+                continue
+            text_parts.append(part.text or "")
     except Exception:
         text_parts = [res.text or ""]
 
     text = "".join(text_parts).strip() or (res.text or "").strip()
-    thinking = "".join(thinking_parts).strip()
-    return text, thinking, s.chat_model
+    return text, "", s.chat_model
 
 
 def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str]:
@@ -186,8 +193,10 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
 
     Opus 4.7 기준:
     - temperature/top_p/top_k 사용 불가 (400). 프롬프트로 결정성 제어.
-    - thinking 은 adaptive only. display='summarized' 로 사용자 노출 활성.
     - effort 는 output_config 안에 넣음 (top-level 아님).
+    - raw thinking 은 SYSTEM_PROMPT 의 [검색 과정] 섹션으로 대체되어 더
+      이상 추출하지 않음. include_thinking 파라미터는 외부 호출자 회귀
+      회피를 위해 시그니처만 유지하되 내부 동작은 항상 disabled.
     """
     import anthropic
     s = settings()
@@ -204,15 +213,10 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
         "max_tokens": 16000,
         "system": system,
         "messages": [{"role": "user", "content": user}],
+        "thinking": {"type": "disabled"},
     }
     if s.claude_effort:
         kwargs["output_config"] = {"effort": s.claude_effort}
-    if include_thinking:
-        # display='summarized' 가 없으면 Opus 4.7 default('omitted') 로 인해 thinking
-        # 텍스트가 비어 표시됨. 베타 답변 신뢰성 검증을 위해 명시적으로 활성화.
-        kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
-    else:
-        kwargs["thinking"] = {"type": "disabled"}
 
     res = None
     last_err: Exception | None = None
@@ -238,16 +242,15 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     if res is None and last_err is not None:
         raise last_err
 
-    thinking_parts: list[str] = []
     text_parts: list[str] = []
     for block in res.content:
-        if block.type == "thinking":
-            thinking_parts.append(getattr(block, "thinking", "") or "")
-        elif block.type == "text":
+        # thinking 블록은 비활성화 상태라 정상적으로는 등장하지 않으나,
+        # 모델/SDK 가 예상 외로 흘릴 경우에 대비해 명시적으로 drop.
+        if block.type == "text":
             text_parts.append(getattr(block, "text", "") or "")
 
     return ("".join(text_parts).strip(),
-            "".join(thinking_parts).strip(),
+            "",
             s.claude_model)
 
 
@@ -389,22 +392,31 @@ def ask(
     contexts = hybrid_search(supabase, question=masked, categories=cats, top_k=s.top_k)
 
     user = build_user_prompt(masked, contexts)
-    raw, thinking, used_provider, used_model, used_fallback = _gen(
-        SYSTEM_PROMPT, user, include_thinking=s.show_thinking,
+    raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
+        SYSTEM_PROMPT, user, include_thinking=False,
     )
-    raw = _ensure_citation(raw, contexts)
+    # [검색 과정] 섹션을 본문에서 분리. 본문 후처리(_ensure_citation,
+    # enforce_structure) 는 answer 부분만 받게 해서 [검색 과정] 텍스트가
+    # 답변에 raw 로 노출되거나 hotline 구조 안으로 섞이는 사고 차단.
+    answer_text, process_text = _split_answer_and_process(raw)
+    # 운영 모드(NEXUS_SHOW_THINKING=false) 에서는 process 추출은 하되 사용자
+    # 화면에 노출하지 않는다. SYSTEM_PROMPT instruction 은 토글과 무관하게
+    # 항상 활성 — instruction 동적 분기는 prompt 안정성을 깨뜨릴 수 있음.
+    effective_process = process_text if s.show_thinking else ""
+
+    answer_text = _ensure_citation(answer_text, contexts)
 
     if detection.triggered:
-        actions = _extract_action_items(raw)
+        actions = _extract_action_items(answer_text)
         hotlines = load_hotlines(supabase)
         final = enforce_structure(
-            base_answer=raw,
+            base_answer=answer_text,
             kind=detection.kind or "safety",
             action_items=actions,
             hotlines=hotlines,
         )
     else:
-        final = raw
+        final = answer_text
 
     elapsed = time.perf_counter() - t0
 
@@ -448,7 +460,7 @@ def ask(
         critical_kind=detection.kind,
         contexts=contexts,
         masked_question=masked,
-        thinking=thinking,
+        thinking=effective_process,
         elapsed=elapsed,
         query_log_id=query_log_id,
     )

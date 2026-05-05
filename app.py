@@ -1042,8 +1042,9 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 st.code(tb_str or str(last_err) or "(no traceback)", language="python")
         else:
             s = settings()
-            if ans.thinking and s.show_thinking:
-                with st.expander("THINKING PROCESS", expanded=False):
+            if ans.thinking:
+                with st.expander("🧠 AI 검토 과정", expanded=False):
+                    st.caption("AI가 답변을 생성한 검토 단계입니다. 답변 신뢰도 판단에 참고하세요.")
                     st.markdown(ans.thinking)
             if ans.is_critical:
                 _render_critical_banner()
@@ -1299,8 +1300,9 @@ def main():
         _start = 0
     for idx, (role, content, meta) in enumerate(_history[_start:], start=_start):
         with st.chat_message(role):
-            if role == "assistant" and meta.get("thinking") and s.show_thinking:
-                with st.expander("THINKING PROCESS", expanded=False):
+            if role == "assistant" and meta.get("thinking"):
+                with st.expander("🧠 AI 검토 과정", expanded=False):
+                    st.caption("AI가 답변을 생성한 검토 단계입니다. 답변 신뢰도 판단에 참고하세요.")
                     st.markdown(meta["thinking"])
             if role == "assistant" and meta.get("critical"):
                 _render_critical_banner()
