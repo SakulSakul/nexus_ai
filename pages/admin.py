@@ -277,6 +277,64 @@ def _audit(sb_admin, *, action: str, target: str | None = None,
         pass
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _query_logs_health_check(_sb) -> dict:
+    """최근 24시간 query_logs INSERT 건수 확인. silent fail 감시용.
+
+    이전 사고: RLS INSERT 정책 누락으로 chatbot 응답 경로의 INSERT 가
+    silent fail 했음. 본 헬스체크는 admin 진입 시 1회 호출되어 0 건이면
+    배너로 운영자에게 즉시 알린다.
+
+    파라미터 `_sb` 는 leading underscore 로 Streamlit cache 해싱 우회
+    (supabase Client 는 unhashable). 60초 TTL — admin 페이지의 잦은
+    rerun 부하 완화. 실패해도 페이지 진입은 막지 않는다.
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        res = (
+            _sb.table("query_logs")
+            .select("id", count="exact")
+            .gte("ts", since)
+            .limit(1)
+            .execute()
+        )
+        return {"ok": True, "count": res.count or 0, "error": None}
+    except Exception as e:
+        return {"ok": False, "count": 0, "error": str(e)}
+
+
+def _render_query_logs_health_banner(sb) -> None:
+    """admin 진입부에서 호출. 이상 시 배너 표시 + dismiss 버튼.
+
+    배너 자체가 페이지 진입을 막지는 않음(st.stop 없음). 운영자가
+    "확인했음" 클릭 시 세션 동안 숨김.
+    """
+    if st.session_state.get("health_warn_dismissed"):
+        return
+    health = _query_logs_health_check(sb)
+    if health["ok"] and health["count"] > 0:
+        return  # 정상 트래픽 — 배너 없음
+
+    if not health["ok"]:
+        st.error(
+            f"⚠️ query_logs SELECT 실패: {health['error']}\n\n"
+            "RLS 정책 또는 테이블 존재 여부를 확인하세요. 통계 기능이 동작하지 않습니다."
+        )
+    else:
+        st.warning(
+            "⚠️ 최근 24시간 동안 query_logs 에 적재된 row 가 0 건입니다.\n\n"
+            "원인 가능성:\n"
+            "1. 사용자 질의가 없었음 (정상 — 베타 단계 트래픽 적음)\n"
+            "2. RLS INSERT 정책 누락으로 silent fail (이전 사고와 동일 패턴)\n"
+            "3. chatbot.py INSERT 코드 경로 이슈\n\n"
+            "Supabase Dashboard 에서 직접 row 존재 여부 확인 권장."
+        )
+    if st.button("확인했음 (이 세션 동안 숨김)", key="dismiss_health_warn"):
+        st.session_state["health_warn_dismissed"] = True
+        st.rerun()
+
+
 _KIND_LABEL = {"rule": "사규", "case": "사례", "penalty": "징계"}
 
 
@@ -1305,6 +1363,8 @@ def main():
     if col_logout.button("로그아웃", key="admin_logout"):
         st.session_state["admin_authenticated"] = False
         st.rerun()
+
+    _render_query_logs_health_banner(sb)
 
     tabs = st.tabs([
         "📥 업로드", "📚 버전", "📡 레이더",
