@@ -31,8 +31,11 @@ def hybrid_search(
     res = supabase.rpc("nexus_hybrid_search", payload).execute()
     # RPC 결과 dict 의 키 (RETURN TABLE 시그니처 그대로):
     #   chunk_id, document_id, doc_title, doc_kind, article_no, case_no,
-    #   text, score, owning_department
+    #   text, score, owning_department, categories: list[str]
     # owning_department 는 DB 마이그레이션 단계 ② 로 시그니처에 추가됨.
+    # categories 는 db/09 마이그레이션으로 추가 — chatbot.py 가
+    # query_logs.hit_categories 평탄화 적재에 사용. multi-category chunk 는
+    # 길이>=2 의 list 가 들어올 수 있음.
     # build_user_prompt 가 c.get("owning_department") 로 그대로 읽어 헤더에
     # 표기하므로 별도 변환 불필요.
     return res.data or []

@@ -615,19 +615,40 @@ def _tab_radar(sb):
         mime="text/csv",
     )
 
-    # 카테고리별 빈도
-    cat_counts = Counter((r["category"] or "공통") for r in rows)
-    st.markdown("#### 카테고리별 질의 수")
-    st.bar_chart(cat_counts)
+    # 사규 카테고리별 인용 빈도 (검색 hit 기준)
+    # query_logs.category(사용자 selectbox) 가 아니라 hit_categories(검색
+    # 결과 chunks.categories 평탄화) 로 집계. multi-category chunk 는 각
+    # 카테고리에 중복 카운트 — 사규 보강 우선순위 산출 시 정확도 우선.
+    import itertools as _it
+    hit_iter = _it.chain.from_iterable(
+        (r.get("hit_categories") or []) for r in rows
+    )
+    cat_counts = Counter(c for c in hit_iter if c)
+    st.markdown("#### 사규 카테고리별 인용 빈도 (검색 hit 기준)")
+    if cat_counts:
+        st.bar_chart(cat_counts)
+    else:
+        st.caption("hit_categories 데이터 없음 — db/08·09 마이그레이션 적용 후 신규 질의부터 집계됩니다.")
+    st.caption(
+        "1건 = 1 chunk hit. multi-category 사규는 각 카테고리에 중복 카운트. "
+        "검색 실패(hit 0건)는 자동 제외."
+    )
 
-    # 일자 × 카테고리 시계열
+    # 일자별 카테고리 인용 추이
     series: dict[str, Counter[str]] = defaultdict(Counter)
     for r in rows:
-        d = (r["ts"] or "")[:10]
-        series[d][r["category"] or "공통"] += 1
-    st.markdown("#### 일자별 추이")
-    flat = [{"date": d, **dict(c)} for d, c in sorted(series.items())]
-    st.line_chart(flat, x="date")
+        d = (r.get("ts") or "")[:10]
+        if not d:
+            continue
+        for c in (r.get("hit_categories") or []):
+            if c:
+                series[d][c] += 1
+    st.markdown("#### 일자별 카테고리 인용 추이")
+    if series:
+        flat = [{"date": d, **dict(c)} for d, c in sorted(series.items())]
+        st.line_chart(flat, x="date")
+    else:
+        st.caption("hit_categories 데이터 없음.")
 
     # 부서별 슬라이스 (k-anonymity: 5 미만은 마스킹)
     # SSO 미도입 단계에서는 dept_hash 가 INSERT 시 미기입이라 의미 있는 결과가
@@ -755,7 +776,10 @@ def _tab_radar(sb):
     low_pct = (len(low_rows) / len(rows)) * 100 if rows else 0.0
     lc1, lc2 = st.columns([1, 2])
     lc1.metric("저신뢰도 응답 비율", f"{low_pct:.1f}%", delta=f"{len(low_rows)}/{len(rows)}건")
-    # 카테고리별 저신뢰도 비율 (표본 5건 미만 마스킹)
+    # 사용자 선택 카테고리별 저신뢰도 비율 (표본 5건 미만 마스킹)
+    # 의도된 분리: 본 패널은 hit_categories 가 아니라 사용자가 selectbox 로
+    # 선택한 카테고리 기준. 검색 실패(hit 0건) 시 hit_categories 가 비어
+    # 카테고리 식별 불가 → 사용자 선택값으로만 분포 가능.
     cat_total: Counter[str] = Counter()
     cat_low: Counter[str] = Counter()
     for r in rows:
@@ -774,9 +798,11 @@ def _tab_radar(sb):
                 "표본": f"{cat_low[c]}/{tot}",
             })
     with lc2:
+        st.markdown("##### 사용자가 어느 카테고리로 질의했을 때 검색 실패했는가")
         st.dataframe(cat_table, use_container_width=True, hide_index=True)
     st.caption(
-        "저신뢰도 = 검색된 사규 청크 0건. 이 비율이 높은 카테고리는 사규 DB 보강 우선순위."
+        "저신뢰도 = 검색된 사규 청크 0건. hit 카테고리 식별 불가하므로 "
+        "사용자 선택 카테고리 기준. 이 비율이 높은 카테고리는 사규 DB 보강 우선순위."
     )
 
 

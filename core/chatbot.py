@@ -339,6 +339,7 @@ def ask(
                 "is_critical":         False,
                 "critical_kind":       None,
                 "hit_chunk_ids":       [],
+                "hit_categories":      [],
                 "env":                 s.env_tag,
                 "embed_model_version": s.embed_model,
                 "chat_provider":       "blocked",
@@ -411,6 +412,14 @@ def ask(
     # 베타 식별(env) · 임베딩 모델 버전 · SSO/RBAC 슬롯(null) 을 함께 기록.
     # insert 결과 id 는 사용자 피드백(👍/👎) 갱신용으로 호출자에 반환.
     query_log_id: int | None = None
+    # multi-category chunk 의 categories 를 평탄화(중복 허용) — radar 가
+    # 카테고리별 인용 빈도를 정확히 표시하기 위함. RPC 가 categories 를
+    # 반환하지 않는 환경(db/09 미적용)에서는 빈 list 가 적재됨.
+    hit_categories: list[str] = []
+    for _c in contexts:
+        _cats = _c.get("categories") or []
+        if isinstance(_cats, list):
+            hit_categories.extend([cat for cat in _cats if cat])
     try:
         ins = supabase.table("query_logs").insert({
             "category":             category if category and category != "전체" else None,
@@ -418,6 +427,7 @@ def ask(
             "is_critical":          detection.triggered,
             "critical_kind":        detection.kind,
             "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
+            "hit_categories":       hit_categories,
             "env":                  s.env_tag,
             "embed_model_version":  s.embed_model,
             "chat_provider":        used_provider,
