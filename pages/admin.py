@@ -816,6 +816,47 @@ def _tab_review(sb):
             "`expected_keywords` / `forbidden_keywords` 는 `;` 로 구분, "
             "`expected_critical` 은 `true/false`."
         )
+
+        from core.eval_template import REVIEW_CSV_COLUMNS, REVIEW_CSV_EXAMPLE_ROWS
+
+        col_dl, col_help = st.columns([1, 3])
+        with col_dl:
+            st.download_button(
+                "📥 CSV 양식 다운로드",
+                data=_rows_to_csv_bytes(REVIEW_CSV_EXAMPLE_ROWS),
+                file_name="DF_COMPASS_검수양식.csv",
+                mime="text/csv",
+                help="검수자에게 배포할 양식. UTF-8(BOM) 인코딩으로 Excel 한글 깨짐 없음. 예시 3건 포함.",
+                use_container_width=True,
+            )
+        with col_help:
+            with st.expander("ℹ️ 양식 작성 가이드", expanded=False):
+                st.markdown(
+                    """
+**컬럼 9개 (모두 선택 — `question`만 필수)**
+
+| 컬럼 | 설명 | 예시 |
+|---|---|---|
+| `domain` | 검수 도메인 (검수자 영역) | 윤리 / CSR / 안전 / 정보보안 / 공정거래 / 재무 / 영업 / 총무 / 환경 / 기타 |
+| `category` | 사규 카테고리 | 공통 / CSR / 공정거래 / 정보보안 / 안전 / 재무 / 영업 / 총무 / 환경 |
+| `question` | 검수용 질문 (필수) | 자유 텍스트 |
+| `expected_keywords` | 답변에 등장해야 하는 키워드 | `선물;수수;신고` (`;` 세미콜론 구분) |
+| `expected_citation` | 답변에 인용돼야 하는 사규/규정명 | `윤리강령` |
+| `expected_critical` | 심각 사안 응답 모드 발동 기대 | `true` / `false` |
+| `expected_critical_kind` | 심각 사안 종류 (`expected_critical=true` 시 권장) | `safety` / `harassment` / 빈 칸 |
+| `forbidden_keywords` | 답변에 등장하면 안 되는 키워드 | `;` 세미콜론 구분 |
+| `notes` | 검수자 메모 | 자유 텍스트 |
+
+**작성 규칙**
+
+- 한 행 = 한 검수 케이스
+- 리스트 컬럼(`expected_keywords`, `forbidden_keywords`)은 반드시 `;` 세미콜론 구분 (콤마는 CSV 셀 구분자와 충돌하므로 사용 금지)
+- `expected_critical`, `forbidden_keywords` 등 boolean·리스트는 빈 셀 허용
+- 다운로드 양식의 예시 3건은 참고용. **실제 검수 시 삭제 후 작성하거나 덮어쓰기**
+- 저장 시 Excel "CSV UTF-8 (쉼표로 분리)" 형식 권장. 양식이 BOM 포함 UTF-8이라 그대로 열고 저장하면 인코딩 유지됨
+                    """
+                )
+
         upl = st.file_uploader("CSV 업로드", type=["csv"])
         if upl:
             raw = upl.read()
