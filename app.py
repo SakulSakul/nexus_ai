@@ -1036,7 +1036,11 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 try:
                     if attempt > 0:
                         sb = _supabase()
-                    ans = ask(sb, question=q, category=cat, progress_callback=_on_progress)
+                    # 첫 시도만 callback 활성화 — retry 는 silent 로 단계 메시지
+                    # 중복 표시 방지. retry 경로는 그대로 두되 사용자에게는
+                    # 자연스럽게 한 번의 흐름으로 보이게 한다.
+                    cb = _on_progress if attempt == 0 else None
+                    ans = ask(sb, question=q, category=cat, progress_callback=cb)
                     break
                 except Exception as e:
                     last_err = e
