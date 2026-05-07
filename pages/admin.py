@@ -508,7 +508,16 @@ def _tab_versions(sb):
     if not rows:
         st.info("등록된 문서가 없습니다.")
         return
-    st.dataframe(rows, use_container_width=True)
+    # 다중 선택 가능한 dataframe — 일괄 삭제 영역에서 selection 사용.
+    # selection_mode="multi-row" + on_select="rerun" 로 row 클릭·Shift/Ctrl 클릭 다중 선택.
+    event = st.dataframe(
+        rows,
+        use_container_width=True,
+        selection_mode="multi-row",
+        on_select="rerun",
+        key="docs_table_select",
+    )
+    selected_rows = event.selection.rows if event and event.selection else []
 
     # 관리부서 인라인 편집기. 적재 시 비워뒀거나 사규 본문 표기가
     # 바뀐 경우 admin 이 코드 수정 없이 즉시 갱신할 수 있도록 제공.
@@ -553,31 +562,106 @@ def _tab_versions(sb):
                     st.success(f"저장됨: {title}")
                     st.rerun()
 
-    # ── 문서 완전 삭제 (체크박스 확인 + 명시 버튼) ────────────────
+    # ── 문서 일괄 삭제 (다중 선택 + 체크박스 확인 + 명시 버튼) ────
     # archive 만으로는 vector 인덱스가 시간 지나며 비대해짐. 완전 삭제는
     # nexus_chunks 도 ON DELETE CASCADE 로 같이 사라져 검색 인덱스도 정리됨.
+    # Storage 의 원본 docx (nexus-docs-original 버킷) 도 함께 정리.
     st.markdown("---")
-    st.markdown("#### 🗑️ 문서 완전 삭제 (되돌릴 수 없음)")
-    del_options = {
-        f"#{r['id'][:8]} · {r.get('title','(제목없음)')} · {r.get('version','')} · {r.get('status','')}": r["id"]
-        for r in rows
-    }
-    target_label = st.selectbox("삭제할 문서", options=["(선택)"] + list(del_options.keys()),
-                                key="del_doc_select")
-    confirm = st.checkbox("위 문서를 완전히 삭제하는 데 동의합니다 (사규 원본 + 임베딩 청크 모두 삭제)",
-                          key="del_doc_confirm")
-    if st.button("⚠ 완전 삭제 실행", disabled=not confirm or target_label == "(선택)",
-                 key="del_doc_btn"):
-        target_id = del_options[target_label]
-        try:
-            admin_sb.table("nexus_documents").delete().eq("id", target_id).execute()
-            _audit(admin_sb, action="document_delete",
-                   target=str(target_id),
-                   details={"label": target_label})
-            st.success(f"삭제됨: {target_label}")
-            st.rerun()
-        except Exception as e:
-            st.error(f"삭제 실패: {e}")
+    st.markdown("#### 🗑️ 문서 일괄 삭제 (되돌릴 수 없음)")
+    st.caption(
+        "위 표에서 행을 다중 선택한 뒤 삭제할 수 있습니다. "
+        "nexus_chunks 와 Storage 의 원본 docx 도 함께 정리됩니다."
+    )
+
+    if not selected_rows:
+        st.info("삭제할 행을 위 표에서 선택하세요.")
+    else:
+        selected_ids: list[str] = []
+        selected_titles: list[str] = []
+        selected_storage_paths: list[str] = []
+        for idx in selected_rows:
+            row = rows[idx]
+            selected_ids.append(row["id"])
+            selected_titles.append(
+                f"{row.get('title', '?')} ({row.get('version', '?')})"
+            )
+            sp = row.get("source_storage_path")
+            if sp:
+                selected_storage_paths.append(sp)
+
+        st.warning(f"**{len(selected_ids)}건 선택됨**")
+        with st.expander("선택된 사규 목록", expanded=(len(selected_ids) <= 5)):
+            for t in selected_titles:
+                st.write(f"- {t}")
+
+        # 5건 초과 시 추가 경고 — 일상적 정리(1~3건)는 한 번에, 대량 실수만 차단.
+        if len(selected_ids) > 5:
+            st.error(
+                f"⚠️ {len(selected_ids)}건은 평소보다 많은 양입니다. "
+                "의도한 작업인지 다시 확인하세요."
+            )
+
+        confirm = st.checkbox(
+            f"위 {len(selected_ids)}건의 문서를 완전히 삭제하는 데 동의합니다 "
+            "(chunks · Storage 원본 docx 포함, 되돌릴 수 없음)",
+            key="bulk_delete_confirm",
+        )
+
+        if st.button(
+            "⚠ 일괄 삭제 실행",
+            type="primary",
+            disabled=not confirm,
+            key="bulk_delete_btn",
+        ):
+            # 1단계 — DB 일괄 삭제 (chunks CASCADE 자동)
+            db_ok = False
+            try:
+                admin_sb.table("nexus_documents").delete().in_(
+                    "id", selected_ids
+                ).execute()
+                db_ok = True
+            except Exception as e:
+                st.error(f"DB 삭제 실패: {e}")
+
+            # 2단계 — Storage 원본 docx 일괄 정리 (best-effort)
+            # ingest.py:93 와 동일한 버킷명 사용.
+            storage_ok = True
+            storage_err: str | None = None
+            if db_ok and selected_storage_paths:
+                try:
+                    admin_sb.storage.from_("nexus-docs-original").remove(
+                        selected_storage_paths
+                    )
+                except Exception as e:
+                    storage_ok = False
+                    storage_err = str(e)
+
+            # 3단계 — 감사 로그 (다건이면 count + ids + titles 기록)
+            if db_ok:
+                _audit(
+                    admin_sb,
+                    action="document_bulk_delete",
+                    target=f"{len(selected_ids)} docs",
+                    details={
+                        "count": len(selected_ids),
+                        "ids": selected_ids,
+                        "titles": selected_titles,
+                        "storage_cleaned": storage_ok,
+                    },
+                )
+
+            # 4단계 — 결과 표시 + rerun
+            if db_ok and storage_ok:
+                st.success(
+                    f"✅ {len(selected_ids)}건 삭제 완료 (DB + Storage)"
+                )
+            elif db_ok and not storage_ok:
+                st.warning(
+                    f"⚠ DB 삭제 완료 ({len(selected_ids)}건), "
+                    f"Storage 정리 부분 실패: {storage_err}"
+                )
+            if db_ok:
+                st.rerun()
 
 
 def _tab_radar(sb):
