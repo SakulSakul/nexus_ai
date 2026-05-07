@@ -393,6 +393,7 @@ def ask(
     category: str | None,
     extra_pii_terms: list[str] | None = None,
     progress_callback: Callable[[str, dict], None] | None = None,
+    prev_turn: dict | None = None,
 ) -> Answer:
     """답변 생성 entry point.
 
@@ -403,6 +404,11 @@ def ask(
     stage 순서 (정상 흐름): "analyze" → "search_start" → "search_done" →
     "generate" → "complete". "search_done" payload 는
     {doc_titles, doc_kind_counts, total} 키를 담는다.
+
+    prev_turn: {"question": str, "answer": str} 또는 None. 사용자가 "🔗 관련
+    질문" 모드를 선택해 직전 1턴 컨텍스트를 유지할 때 app.py 가 전달.
+    None 이면 단일 턴 동작(기존). build_user_prompt 가 <이전 대화> 섹션을
+    프롬프트 앞에 prepend 한다. injection early-exit 분기는 prev_turn 무시.
     """
     def _emit(stage: str, payload: dict | None = None) -> None:
         if progress_callback is None:
@@ -486,7 +492,7 @@ def ask(
         "total": len(contexts),
     })
 
-    user = build_user_prompt(masked, contexts)
+    user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
     raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
         SYSTEM_PROMPT, user, include_thinking=False,

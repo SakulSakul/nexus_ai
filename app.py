@@ -959,6 +959,32 @@ def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
             st.rerun()
 
 
+def _render_mode_buttons(msg_idx: int) -> None:
+    """답변 마지막에 멀티 턴 모드 버튼 표시 (정상 답변 한정).
+
+    "🔗 관련 질문" → next_turn_mode="followup" → 다음 _run_ask 가 직전 1턴
+    (질문/답변)을 prev_turn 으로 ask() 에 전달.
+    "✨ 새 주제" → next_turn_mode="new" → prev_turn=None.
+
+    msg_idx: history 인덱스. 위젯 키 충돌 방지 + 다중 클릭 차단용.
+    """
+    clicked_key = f"_mode_clicked_{msg_idx}"
+    already_clicked = st.session_state.get(clicked_key, False)
+    col1, col2, _ = st.columns([1, 1, 4])
+    with col1:
+        if st.button("🔗 관련 질문", key=f"mode_fu_{msg_idx}", disabled=already_clicked):
+            st.session_state["next_turn_mode"] = "followup"
+            st.session_state[clicked_key] = True
+            st.toast("🔗 관련 질문 모드 — 다음 입력은 이전 답변과 연결됩니다")
+            st.rerun()
+    with col2:
+        if st.button("✨ 새 주제", key=f"mode_new_{msg_idx}", disabled=already_clicked):
+            st.session_state["next_turn_mode"] = "new"
+            st.session_state[clicked_key] = True
+            st.toast("✨ 새 주제로 시작합니다")
+            st.rerun()
+
+
 def _render_critical_banner() -> None:
     st.markdown(
         """
@@ -982,6 +1008,29 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 "베타 비용 가드 정책입니다. 내일 다시 이용해 주세요."
             )
         return
+
+    # 멀티 턴 모드 체크 (한 턴 한정, pop 으로 즉시 삭제). 사용자가 직전 답변
+    # 마지막에 "🔗 관련 질문" 클릭 → next_turn_mode="followup". 그 외는 "new".
+    mode = st.session_state.pop("next_turn_mode", "new")
+    prev_turn: dict | None = None
+    if mode == "followup":
+        history = st.session_state.get("history", [])
+        # 마지막 assistant entry + 그 직전 user entry 추출
+        last_assistant_idx = None
+        for i in range(len(history) - 1, -1, -1):
+            if history[i][0] == "assistant":
+                last_assistant_idx = i
+                break
+        if last_assistant_idx is not None and last_assistant_idx > 0:
+            if history[last_assistant_idx - 1][0] == "user":
+                prev_turn = {
+                    "question": history[last_assistant_idx - 1][1],
+                    "answer": history[last_assistant_idx][1],
+                }
+
+    if prev_turn is not None:
+        st.caption("🔗 관련 추가 질문 모드 — 이전 답변과 연결됩니다")
+
     _push_history(("user", q, {}))
     with st.chat_message("user"):
         st.markdown(q)
@@ -1039,7 +1088,13 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     # 중복 표시 방지. retry 경로는 그대로 두되 사용자에게는
                     # 자연스럽게 한 번의 흐름으로 보이게 한다.
                     cb = _on_progress if attempt == 0 else None
-                    ans = ask(sb, question=q, category=cat, progress_callback=cb)
+                    ans = ask(
+                        sb,
+                        question=q,
+                        category=cat,
+                        progress_callback=cb,
+                        prev_turn=prev_turn,
+                    )
                     break
                 except Exception as e:
                     last_err = e
@@ -1124,6 +1179,11 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             "query_log_id": ans.query_log_id,
         },
     ))
+
+    # 멀티 턴 모드 버튼 — 정상 답변 한정. 에러 흐름(line 1164-1169)에서는
+    # 호출하지 않음(이전 답변이 에러인 메시지에 "관련 질문" 노출은 무의미).
+    msg_idx = len(st.session_state["history"]) - 1
+    _render_mode_buttons(msg_idx)
 
 
 _CONSENT_BODY_MD = """
@@ -1364,6 +1424,12 @@ def main():
                 _render_contexts(meta["contexts"])
             if role == "assistant" and meta.get("query_log_id"):
                 _render_feedback(sb, msg_idx=idx, query_log_id=meta["query_log_id"])
+            # 멀티 턴 모드 버튼 — 마지막 assistant 메시지 + 정상 답변 한정.
+            # 중간 메시지나 에러 답변에 버튼 노출 시 disabled 노이즈 발생 → 차단.
+            if (role == "assistant"
+                    and idx == len(_history) - 1
+                    and meta.get("query_log_id") is not None):
+                _render_mode_buttons(idx)
 
     # Example questions (empty state only)
     clicked_q: str | None = None
