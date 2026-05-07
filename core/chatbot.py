@@ -27,6 +27,81 @@ from .retriever import hybrid_search
 SEARCH_PROCESS_MARKER = "[검색 과정]"
 
 
+# ── 카테고리 자동 추론 ──────────────────────────────────────────
+# 사용자 질의에서 도메인 키워드를 매칭해 hybrid_search 의 카테고리
+# 필터로 사용. 명시 카테고리 인자(ask 의 category) 가 있으면 그것을
+# 우선하고, 추론 실패(None) 시 전체 검색(기존 동작) 으로 fallback.
+# Phase 4 운영 데이터로 키워드 정밀화 예정.
+CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "인사": (
+        "성희롱", "괴롭힘", "갑질", "징계기준",
+        "인수인계", "동호회", "자율준수", "조직문화",
+        "근태", "휴가", "퇴사", "인사평가",
+    ),
+    "공통": (
+        "CREDO", "크레도", "핵심가치", "신세계그룹",
+        "사건사고", "민감정보", "기부금", "사규관리",
+        "임직원 징계", "윤리", "행동강령",
+    ),
+    "CSR": (
+        "클린뱅크", "강사료", "선물", "수수", "상품권",
+        "대외출강", "외부강연", "외부 강의",
+    ),
+    "공정거래": (
+        "반품", "입점", "퇴점", "판촉", "표시광고",
+        "협력회사", "경영정보", "비용전가", "할인광고",
+        "SNS 인플루언서",
+    ),
+    "정보보안": (
+        "정보보안", "정보보호", "개발보안", "운영보안",
+        "생활보안", "보안 정책",
+    ),
+    "안전": (
+        "중대재해", "재해", "응급", "응급조치", "화재",
+        "추락", "쓰러진", "의식을 잃은", "실종아동",
+        "어린이 안전", "공기질", "위험성평가", "휴게시설",
+        "전기기계", "안전보건", "비상시", "비상시대비",
+    ),
+    "재무": (
+        "회계", "재무", "예산", "출장비", "교통비",
+        "법인카드", "지출", "결제", "지불", "미수금",
+        "내부회계", "전결", "제3채무", "자산 실사",
+        "상품반출입", "상품재고", "매출금", "출납",
+    ),
+    "총무": (
+        "인감", "구매", "인테리어", "이사회",
+        "영상정보기기", "CCTV",
+    ),
+    "영업": (
+        "AEO", "보세화물", "출입통제", "거래업체",
+        "매장 습득물", "물류 안전",
+    ),
+    "환경": (
+        "환경", "녹색 구매", "환경경영", "환경영향평가",
+        "환경 리스크", "환경운영", "환경 사건",
+    ),
+}
+
+
+def infer_categories(question: str, max_cats: int = 3) -> list[str] | None:
+    """질의에서 카테고리 자동 추론. hit 점수 합계 내림차순 상위 max_cats.
+
+    매칭 키워드가 하나도 없으면 None — 호출자는 기존 전체 검색 fallback.
+    회귀 안전: 명시 인자 우선, 추론 실패 시 기존 동작 유지.
+    """
+    if not question or not question.strip():
+        return None
+    hits: dict[str, int] = {}
+    for cat, kws in CATEGORY_KEYWORDS.items():
+        for kw in kws:
+            if kw in question:
+                hits[cat] = hits.get(cat, 0) + 1
+    if not hits:
+        return None
+    sorted_cats = sorted(hits.items(), key=lambda x: x[1], reverse=True)
+    return [c for c, _ in sorted_cats[:max_cats]]
+
+
 def _split_answer_and_process(raw: str) -> tuple[str, str]:
     """LLM 응답에서 [검색 과정] 섹션 분리.
 
@@ -548,12 +623,20 @@ def ask(
     if not detection.triggered:
         detection = detect(masked, keywords)
 
-    # 카테고리 필터: 단일 카테고리 선택 시 ['공통', 선택] 합집합으로 폭을 약간 넓힘.
+    # 카테고리 필터:
+    # 1) 명시 인자(category) 가 있으면 그것 + '공통' 합집합으로 폭 넓힘
+    # 2) 명시 인자 없으면 질의에서 자동 추론(infer_categories) — 상위 3개
+    #    + '공통' 합집합. retrieval 정확도 향상 목표
+    # 3) 추론도 실패하면 None (전체 검색) — 기존 동작 fallback
     cats: list[str] | None
     if category and category != "전체":
         cats = list({"공통", category})
     else:
-        cats = None
+        inferred = infer_categories(question)
+        if inferred:
+            cats = list(set(inferred) | {"공통"})
+        else:
+            cats = None
 
     # 심각 사안일 때는 안전 카테고리도 우선적으로 합집합에 포함
     if detection.triggered:
