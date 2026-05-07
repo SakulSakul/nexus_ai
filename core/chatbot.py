@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 import time
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .config import settings, load_hotlines
 from .critical_mode import CriticalDetection, detect, enforce_structure, load_keywords
@@ -345,13 +346,72 @@ def _extract_action_items(answer: str) -> list[str]:
     return [m.group(1).strip() for m in _RE_ACTION_BLOCK.finditer(target)][:3]
 
 
+# doc_kind 별 분산 비율 (베타 단계 고정. 운영 중 조정 필요 시
+# NEXUS_DOC_KIND_RATIOS 환경변수로 외부화 검토).
+# 의미 그룹: {rule, penalty} = 사규 기준 블록, {case} = 사건사례 블록.
+# SYSTEM_PROMPT 의 [출력 구조] ③ 가 두 블록을 각각 채우도록 의무화하므로
+# retriever 결과가 한 doc_kind 만 잡혀 잘리면 상대 블록이 폴백 메시지로
+# 깨짐 → 사용자 답변 품질 저하. 본 분산으로 양 블록 모두 들어가도록 보장.
+_DOC_KIND_RATIOS: "OrderedDict[str, int]" = OrderedDict([
+    ("rule", 3),
+    ("penalty", 2),
+    ("case", 2),
+])
+
+
+def _balance_by_doc_kind(
+    contexts: list[dict],
+    ratios: "OrderedDict[str, int]" = _DOC_KIND_RATIOS,
+) -> list[dict]:
+    """검색 결과를 doc_kind 별 비율로 분산 추출.
+
+    - 입력 contexts 는 점수 내림차순 정렬 가정 (RPC RRF score desc).
+    - 각 doc_kind 에서 ratios[kind] 만큼 추출 (있는 만큼만).
+    - 부족해도 다른 kind 로 메우지 않음 — 빈 자리는 SYSTEM_PROMPT 폴백
+      "해당 유형 문서가 검색되지 않았습니다" 가 사용자에게 정직한 신호.
+    - 결과 순서: ratios 정의 순(rule → penalty → case) 으로 의미 그룹별
+      인접 배치. 각 그룹 내에서는 입력 점수 순서를 보존.
+    - unknown doc_kind 는 무시.
+    """
+    if not contexts:
+        return []
+    by_kind: dict[str, list[dict]] = {kind: [] for kind in ratios}
+    for c in contexts:
+        kind = c.get("doc_kind")
+        if kind in by_kind:
+            by_kind[kind].append(c)
+    result: list[dict] = []
+    for kind, n in ratios.items():
+        result.extend(by_kind[kind][:n])
+    return result
+
+
 def ask(
     supabase: Any,
     *,
     question: str,
     category: str | None,
     extra_pii_terms: list[str] | None = None,
+    progress_callback: Callable[[str, dict], None] | None = None,
 ) -> Answer:
+    """답변 생성 entry point.
+
+    progress_callback: 단계별 진행 알림(stage, payload). app.py 의 st.status
+    UI 가 사용. None 이면 emit 비활성. 콜백 내부 예외는 흡수되어 ask 본 흐름을
+    깨뜨리지 않음. injection early-exit 분기에서는 호출되지 않음.
+
+    stage 순서 (정상 흐름): "analyze" → "search_start" → "search_done" →
+    "generate" → "complete". "search_done" payload 는
+    {doc_titles, doc_kind_counts, total} 키를 담는다.
+    """
+    def _emit(stage: str, payload: dict | None = None) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(stage, payload or {})
+        except Exception:
+            pass  # callback 실패가 ask 본 흐름을 깨면 안 됨
+
     s = settings()
 
     # Prompt injection 1차 필터 — LLM 호출 전 차단으로 토큰 비용·로깅 노이즈 절감.
@@ -387,6 +447,7 @@ def ask(
             query_log_id=None,
         )
 
+    _emit("analyze")
     masked = mask_pii(question, extra_pii_terms or [])
 
     # 심각 사안 트리거 감지 (마스킹 전 원문 기준이 더 정확하므로 원문에도 검사)
@@ -411,9 +472,22 @@ def ask(
 
     t0 = time.perf_counter()
 
-    contexts = hybrid_search(supabase, question=masked, categories=cats, top_k=s.top_k)
+    _emit("search_start")
+    # doc_kind 분산: 큰 풀에서 검색 후 비율로 잘라냄. 한 doc_kind 가 풀에서
+    # 우세할 때 다른 kind 가 풀에서 빠질 위험 완화 위해 합계 + 여유분 3.
+    pool_size = sum(_DOC_KIND_RATIOS.values()) + 3
+    contexts_raw = hybrid_search(
+        supabase, question=masked, categories=cats, top_k=pool_size,
+    )
+    contexts = _balance_by_doc_kind(contexts_raw)
+    _emit("search_done", {
+        "doc_titles": [c.get("doc_title", "") for c in contexts if c.get("doc_title")],
+        "doc_kind_counts": dict(Counter(c.get("doc_kind") for c in contexts)),
+        "total": len(contexts),
+    })
 
     user = build_user_prompt(masked, contexts)
+    _emit("generate")
     raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
         SYSTEM_PROMPT, user, include_thinking=False,
     )
@@ -480,6 +554,7 @@ def ask(
         import sys as _sys
         print(f"[query_logs INSERT failed] {_e}", file=_sys.stderr, flush=True)
 
+    _emit("complete")
     return Answer(
         text=final,
         is_critical=detection.triggered,

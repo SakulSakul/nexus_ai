@@ -992,12 +992,51 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     tb_str = ""
     friendly_msg = ""
     with st.chat_message("assistant"):
-        with st.spinner("문서 검색 및 답변 생성 중..."):
+        with st.status("문서 검색 및 답변 생성 중...", expanded=True) as status:
+            # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
+            # ("search_done") → ("generate") → ("complete") 순으로 호출.
+            # injection early-exit 분기에서는 callback 미호출(정상).
+            def _on_progress(stage: str, payload: dict) -> None:
+                if stage == "analyze":
+                    st.write("🔍 질문을 분석하고 있어요...")
+                elif stage == "search_start":
+                    st.write("📚 관련 사규를 찾고 있어요...")
+                elif stage == "search_done":
+                    total = payload.get("total", 0)
+                    if total == 0:
+                        st.write("📋 검색 결과 없음 — 답변에 한계가 있을 수 있어요")
+                        return
+                    counts = payload.get("doc_kind_counts", {})
+                    parts: list[str] = []
+                    if counts.get("rule"):
+                        parts.append(f"사규 {counts['rule']}건")
+                    if counts.get("penalty"):
+                        parts.append(f"징계기준 {counts['penalty']}건")
+                    if counts.get("case"):
+                        parts.append(f"사례 {counts['case']}건")
+                    count_str = " · ".join(parts) if parts else f"{total}건"
+                    # 중복 doc_title 제거 + 첫 3개 + 외 N건
+                    seen: set[str] = set()
+                    unique_titles: list[str] = []
+                    for t in payload.get("doc_titles", []):
+                        if t and t not in seen:
+                            unique_titles.append(t)
+                            seen.add(t)
+                    shown = unique_titles[:3]
+                    more = len(unique_titles) - len(shown)
+                    title_str = ", ".join(shown)
+                    if more > 0:
+                        title_str += f" 외 {more}건"
+                    st.write(f"📋 검색 완료 ({count_str}): {title_str}")
+                elif stage == "generate":
+                    st.write("🧠 답변을 작성하고 있어요...")
+                # "complete" 는 status.update 가 처리하므로 별도 메시지 불필요
+
             for attempt in range(3):
                 try:
                     if attempt > 0:
                         sb = _supabase()
-                    ans = ask(sb, question=q, category=cat)
+                    ans = ask(sb, question=q, category=cat, progress_callback=_on_progress)
                     break
                 except Exception as e:
                     last_err = e
@@ -1006,6 +1045,12 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     if "client has been closed" in str(e).lower() and attempt < 2:
                         continue
                     break
+
+            # status 컨테이너 라벨 마무리 — 답변 본문은 status 밖에서 렌더링
+            if ans is None:
+                status.update(label="⚠️ 답변 생성 실패", state="error", expanded=True)
+            else:
+                status.update(label="✅ 답변 완료", state="complete", expanded=False)
 
         if ans is None:
             err_text = str(last_err or "")
