@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 import datetime as _dt
 import time as _time
 
-from core.chatbot import ask, get_avg_latency_seconds, record_feedback
+from core.chatbot import ask, ask_stream, get_avg_latency_seconds, record_feedback
 from core.config import CATEGORIES, get_secret, load_hotlines, settings, validate_settings
 
 
@@ -1042,6 +1042,11 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     tb_str = ""
     friendly_msg = ""
     with st.chat_message("assistant"):
+        # 답변 본문 placeholder — streaming 점진 표시 + 후처리 단일 update.
+        # status 컨테이너보다 위쪽 영역에 자리 잡아 사용자는 처리 단계 메시지
+        # 위에서 답변이 점진적으로 그려지는 걸 본다. status 종료(collapsed)
+        # 후에도 placeholder 는 그대로 답변 본문을 유지.
+        answer_placeholder = st.empty()
         with st.status("문서 검색 및 답변 생성 중...", expanded=True) as status:
             # 답변 대기 UX — 경과 시간 + 평균 응답 시간 표시.
             # session_state 5분 TTL 캐시 — 매 호출마다 SELECT 하지 않게.
@@ -1119,21 +1124,35 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     st.write("🧠 답변을 작성하고 있어요...")
                 # "complete" 는 status.update 가 처리하므로 별도 메시지 불필요
 
+            stream_buffer = ""
             for attempt in range(3):
                 try:
                     if attempt > 0:
                         sb = _supabase()
+                        # retry 시 부분 stream 표시 폐기 — 새 시도가 처음부터 점진 표시
+                        stream_buffer = ""
+                        answer_placeholder.empty()
                     # 첫 시도만 callback 활성화 — retry 는 silent 로 단계 메시지
                     # 중복 표시 방지. retry 경로는 그대로 두되 사용자에게는
                     # 자연스럽게 한 번의 흐름으로 보이게 한다.
                     cb = _on_progress if attempt == 0 else None
-                    ans = ask(
+                    # streaming 답변 — ask_stream 가 ("chunk", str) / ("done",
+                    # Answer) yield. critical / injection / stream 예외 시
+                    # 내부에서 ask() 동기 위임 → ("done", Answer) 단일 yield.
+                    for kind, val in ask_stream(
                         sb,
                         question=q,
                         category=cat,
                         progress_callback=cb,
                         prev_turn=prev_turn,
-                    )
+                    ):
+                        if kind == "chunk":
+                            stream_buffer += val
+                            # 커서 ▎ 로 streaming 표시. answer_placeholder 가
+                            # status 위쪽에 자리잡아 사용자가 답변 점진 그려짐을 본다.
+                            answer_placeholder.markdown(stream_buffer + "▎")
+                        elif kind == "done":
+                            ans = val
                     break
                 except Exception as e:
                     last_err = e
@@ -1150,6 +1169,8 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 status.update(label="✅ 답변 완료", state="complete", expanded=False)
 
         if ans is None:
+            # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
+            answer_placeholder.empty()
             err_text = str(last_err or "")
             if "double precision" in err_text or "structure of query" in err_text:
                 friendly_msg = (
@@ -1190,7 +1211,10 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     st.markdown(ans.thinking)
             if ans.is_critical:
                 _render_critical_banner()
-            st.markdown(ans.text)
+            # 후처리(_ensure_citation/_normalize_citation_block) 적용된 final
+            # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
+            # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
+            answer_placeholder.markdown(ans.text)
             st.markdown(
                 f'<p class="nx-elapsed">{ans.elapsed:.1f}s</p>',
                 unsafe_allow_html=True,

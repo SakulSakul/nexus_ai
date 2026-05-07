@@ -12,7 +12,7 @@ import re
 import time
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from .config import settings, load_hotlines
 from .critical_mode import CriticalDetection, detect, enforce_structure, load_keywords
@@ -743,6 +743,261 @@ def ask(
         elapsed=elapsed,
         query_log_id=query_log_id,
     )
+
+
+def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
+    """Gemini streaming generator. 청크 단위 yield. transient backoff 동일.
+
+    Claude fallback provider 는 stream 미지원 — primary(Gemini) streaming 만.
+    transient(429/503) 시 backoff 후 재시도. 최종 실패 시 raise — ask_stream
+    이 ask() 동기 흐름으로 fallback.
+    """
+    from google import genai
+    from google.genai import types
+    s = settings()
+    cli = genai.Client(api_key=s.gemini_api_key)
+    cfg = types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=s.temperature,
+        top_p=s.top_p,
+    )
+
+    last_err: Exception | None = None
+    for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
+        try:
+            for chunk in cli.models.generate_content_stream(
+                model=s.chat_model, contents=user, config=cfg,
+            ):
+                # thought parts drop — SYSTEM_PROMPT 가 [검색 과정] 섹션을
+                # text 본문에 포함시키므로 raw thought 는 더 이상 사용 안 함.
+                try:
+                    parts = chunk.candidates[0].content.parts
+                except (AttributeError, IndexError, TypeError):
+                    parts = None
+                if parts:
+                    for part in parts:
+                        if getattr(part, "thought", False):
+                            continue
+                        text = getattr(part, "text", None) or ""
+                        if text:
+                            yield text
+                else:
+                    text = getattr(chunk, "text", None) or ""
+                    if text:
+                        yield text
+            return
+        except Exception as e:
+            last_err = e
+            if _is_transient(e) and attempt < _GEMINI_BACKOFF_ATTEMPTS - 1:
+                wait = _GEMINI_BACKOFF_BASE * (2 ** attempt)
+                print(
+                    f"[Gemini stream backoff] attempt {attempt+1}/"
+                    f"{_GEMINI_BACKOFF_ATTEMPTS} sleep {wait:.0f}s",
+                    flush=True,
+                )
+                time.sleep(wait)
+                continue
+            raise
+    if last_err is not None:
+        raise last_err
+
+
+def _stream_filter_process_marker(stream: Iterator[str]) -> Iterator[tuple[str, str]]:
+    """raw stream → (kind, text) 튜플 stream 변환.
+
+    yield 종류:
+      ("raw", str)    — 모든 청크 (후처리용 raw 누적). 항상 발생
+      ("chunk", str)  — 사용자 화면 표시용 본문 토큰 (SEARCH_PROCESS_MARKER
+                        이전만). marker 등장 후 chunk 더 이상 yield 안 함.
+
+    구현: marker 의 prefix 일부가 청크 끝에 들어올 가능성 → 안전하게
+    (marker 길이 - 1) 만큼 buffer 보류. 청크 합쳐서 marker 전체 발견 시
+    그 이전만 마지막 chunk 로 yield.
+    """
+    buf = ""
+    seen_marker = False
+    marker_len = len(SEARCH_PROCESS_MARKER)
+    for chunk in stream:
+        yield ("raw", chunk)
+        if seen_marker:
+            continue
+        buf += chunk
+        idx = buf.find(SEARCH_PROCESS_MARKER)
+        if idx >= 0:
+            pre = buf[:idx]
+            if pre:
+                yield ("chunk", pre)
+            seen_marker = True
+            buf = ""
+        else:
+            safe = len(buf) - (marker_len - 1)
+            if safe > 0:
+                yield ("chunk", buf[:safe])
+                buf = buf[safe:]
+    if buf and not seen_marker:
+        yield ("chunk", buf)
+
+
+def ask_stream(
+    supabase: Any,
+    *,
+    question: str,
+    category: str | None,
+    extra_pii_terms: list[str] | None = None,
+    progress_callback: Callable[[str, dict], None] | None = None,
+    prev_turn: dict | None = None,
+) -> Iterator[tuple[str, Any]]:
+    """Streaming 답변. yield 프로토콜:
+        ("chunk", str)   — 점진 표시할 본문 토큰
+        ("done", Answer) — 종료 + 후처리 적용된 최종 metadata
+
+    Critical 트리거 / injection 차단 / streaming 예외 시 ask() 동기 흐름에
+    위임하고 ("done", Answer) 단일 yield. enforce_structure 4단 답변 구조
+    가 답변 전체 리포맷을 요구하기 때문.
+
+    검수 회차(run_review) 등 답변 완성본만 필요한 호출자는 기존 ask() 사용.
+    """
+    s = settings()
+
+    def _emit(stage: str, payload: dict | None = None) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(stage, payload or {})
+        except Exception:
+            pass
+
+    # injection 차단 — ask() 가 BLOCKED 분기 처리
+    if _looks_like_injection(question):
+        yield ("done", ask(
+            supabase, question=question, category=category,
+            extra_pii_terms=extra_pii_terms,
+            progress_callback=progress_callback,
+            prev_turn=prev_turn,
+        ))
+        return
+
+    _emit("analyze")
+    masked = mask_pii(question, extra_pii_terms or [])
+    keywords = load_keywords(supabase)
+    detection: CriticalDetection = detect(question, keywords)
+    if not detection.triggered:
+        detection = detect(masked, keywords)
+
+    # critical 트리거 시 enforce_structure 가 답변 전체 리포맷 → streaming
+    # 비활성. ask() 동기 흐름으로 fallback. 답변 한 번에 표시.
+    if detection.triggered:
+        ans = ask(
+            supabase, question=question, category=category,
+            extra_pii_terms=extra_pii_terms,
+            progress_callback=progress_callback,
+            prev_turn=prev_turn,
+        )
+        yield ("done", ans)
+        return
+
+    # 일반 모드 — streaming 진행
+    cats: list[str] | None
+    if category and category != "전체":
+        cats = list({"공통", category})
+    else:
+        inferred = infer_categories(question)
+        cats = list(set(inferred) | {"공통"}) if inferred else None
+
+    t0 = time.perf_counter()
+    _emit("search_start")
+    pool_size = sum(_DOC_KIND_RATIOS.values()) + 3
+    contexts_raw = hybrid_search(
+        supabase, question=masked, categories=cats, top_k=pool_size,
+    )
+    contexts = _balance_by_doc_kind(contexts_raw)
+    _emit("search_done", {
+        "doc_titles": [c.get("doc_title", "") for c in contexts if c.get("doc_title")],
+        "doc_kind_counts": dict(Counter(c.get("doc_kind") for c in contexts)),
+        "total": len(contexts),
+    })
+
+    user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
+    _emit("generate")
+
+    used_provider = (s.chat_provider or "gemini").lower()
+    used_model = s.chat_model
+    used_fallback = False
+
+    raw_full = ""
+    try:
+        for kind, val in _stream_filter_process_marker(
+            _gen_gemini_stream(SYSTEM_PROMPT, user)
+        ):
+            if kind == "raw":
+                raw_full += val
+            elif kind == "chunk":
+                yield ("chunk", val)
+    except Exception as stream_err:
+        # streaming 실패 → ask() 동기 fallback. 부분 답변 폐기, 처음부터 재시도.
+        # 사용자에는 점진 표시되던 본문이 ask() 결과로 한 번에 갱신됨(app.py
+        # placeholder 패턴이 final 로 단일 update).
+        import sys as _sys
+        print(f"[ask_stream → ask fallback] {stream_err}",
+              file=_sys.stderr, flush=True)
+        ans = ask(
+            supabase, question=question, category=category,
+            extra_pii_terms=extra_pii_terms,
+            progress_callback=progress_callback,
+            prev_turn=prev_turn,
+        )
+        yield ("done", ans)
+        return
+
+    # 후처리 — ask() 와 동일 순서
+    answer_text, process_text_raw = _split_answer_and_process(raw_full)
+    process_text = _format_process_section(process_text_raw)
+    effective_process = process_text if s.show_thinking else ""
+    answer_text = _ensure_citation(answer_text, contexts)
+    answer_text = _normalize_citation_block(answer_text, contexts)
+
+    elapsed = time.perf_counter() - t0
+
+    # query_logs INSERT — ask() 와 동일 페이로드
+    query_log_id: int | None = None
+    hit_categories: list[str] = []
+    for _c in contexts:
+        _cats = _c.get("categories") or []
+        if isinstance(_cats, list):
+            hit_categories.extend([cat for cat in _cats if cat])
+    try:
+        ins = supabase.table("query_logs").insert({
+            "category":             category if category and category != "전체" else None,
+            "query_masked":         masked,
+            "is_critical":          False,
+            "critical_kind":        None,
+            "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
+            "hit_categories":       hit_categories,
+            "env":                  s.env_tag,
+            "embed_model_version":  s.embed_model,
+            "chat_provider":        used_provider,
+            "chat_model_version":   used_model,
+            "elapsed_ms":           int(elapsed * 1000),
+            "used_fallback":        used_fallback,
+        }).execute()
+        if ins.data:
+            query_log_id = ins.data[0].get("id")
+    except Exception as _e:
+        import sys as _sys
+        print(f"[query_logs INSERT failed (stream)] {_e}",
+              file=_sys.stderr, flush=True)
+
+    _emit("complete")
+    yield ("done", Answer(
+        text=answer_text,
+        is_critical=False,
+        critical_kind=None,
+        contexts=contexts,
+        masked_question=masked,
+        thinking=effective_process,
+        elapsed=elapsed,
+        query_log_id=query_log_id,
+    ))
 
 
 def get_avg_latency_seconds(
