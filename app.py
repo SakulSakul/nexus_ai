@@ -856,7 +856,7 @@ def _render_contexts(contexts: list[dict]) -> None:
             cite = _html.escape(cite_raw)
             cite_html = f'<span class="nx-doc-cite">{cite}</span>' if cite else ""
             text = _html.escape((c.get("text") or "")[:480])
-            st.markdown(
+            st.html(
                 f"""
                 <div class="nx-doc-card">
                   <div class="nx-doc-header">
@@ -866,8 +866,7 @@ def _render_contexts(contexts: list[dict]) -> None:
                   </div>
                   <p class="nx-doc-text">{text}</p>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
 
