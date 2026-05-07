@@ -167,6 +167,14 @@ def suggest_categories(text: str) -> list[str]:
     return hits
 
 
-def looks_like_hr_procedure(title: str, text_sample: str) -> bool:
+def match_hr_procedure_hints(title: str, text_sample: str) -> list[str]:
+    """매칭된 HR_PROCEDURE_HINTS 단어 리스트 반환. 빈 리스트면 차단 대상 아님.
+
+    admin UI 가 어떤 hint 가 매칭됐는지 사용자에게 표시하고 sensitive_kind
+    추정에 활용한다. looks_like_hr_procedure 는 본 함수 결과의 boolean 캐스팅."""
     blob = f"{title}\n{text_sample[:2000]}"
-    return any(h in blob for h in HR_PROCEDURE_HINTS)
+    return [h for h in HR_PROCEDURE_HINTS if h in blob]
+
+
+def looks_like_hr_procedure(title: str, text_sample: str) -> bool:
+    return bool(match_hr_procedure_hints(title, text_sample))

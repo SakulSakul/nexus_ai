@@ -1,7 +1,10 @@
 """문서 적재 파이프라인.
 
 - DOCX 파서로 청크 생성 → Gemini 임베딩 → Supabase insert
-- 신고절차 문서는 차단 (NEXUS 적재 제외, 인사 챗봇 전용)
+- 신고절차 문서는 기본 차단 (NEXUS 적재 제외, 인사 챗봇 전용).
+  단 admin 이 명시적으로 force_sensitive_kind 를 전달하면 sensitive 마킹
+  으로 차단 우회 적재 가능 — 직장 내 괴롭힘 예방·대응지침 / 성희롱 예방
+  지침 같은 사규를 RAG 답변에 노출시키기 위한 의도된 경로.
 - 신규 버전 적재 시 같은 title 의 active 문서를 archived 로 자동 전환
 """
 
@@ -37,11 +40,17 @@ def ingest_docx(
     confirmed_categories: list[str] | None = None,
     department: str | None = None,
     source_filename: str | None = None,
+    force_sensitive_kind: str | None = None,   # None | 'harassment' | 'safety'
 ) -> IngestResult:
     chunks: list[Chunk] = parse_docx(file_bytes)
     sample = "\n".join(c.text for c in chunks[:6])
-    if looks_like_hr_procedure(title, sample):
+    if looks_like_hr_procedure(title, sample) and not force_sensitive_kind:
+        # 기본 차단 동작 보존 — admin UI 가 sensitive 마킹을 명시적으로
+        # 전달하지 않으면 그대로 skip (인사 챗봇 영역).
         return IngestResult(None, 0, True, False)
+    # force_sensitive_kind 가 있으면 차단 우회 — admin 이 명시적으로 sensitive
+    # 마킹으로 적재를 승인한 케이스. 본문은 일반 사규처럼 적재되며, meta.
+    # sensitive_kind 가 답변 단의 핫라인 자동 노출 트리거에 활용된다(PR 2).
 
     # 카테고리 자동 추천 (관리자 확인 후 confirmed_categories 로 override 가능)
     auto_cats = suggest_categories(sample) if confirmed_categories is None else confirmed_categories
@@ -70,6 +79,11 @@ def ingest_docx(
     except Exception:
         pass
 
+    # meta jsonb — sensitive 마킹은 admin 이 명시적으로 강제 적재한 경우만 저장.
+    meta_dict: dict[str, Any] = {"auto_categories": auto_cats}
+    if force_sensitive_kind:
+        meta_dict["sensitive_kind"] = force_sensitive_kind
+
     doc_row = supabase.table("nexus_documents").insert({
         "title": title,
         "doc_kind": doc_kind,
@@ -79,7 +93,7 @@ def ingest_docx(
         "status": "active",
         "uploaded_by": uploaded_by,
         "owning_department": department_norm,
-        "meta": {"auto_categories": auto_cats},
+        "meta": meta_dict,
     }).execute().data[0]
 
     document_id = doc_row["id"]

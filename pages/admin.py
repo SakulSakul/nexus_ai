@@ -22,7 +22,8 @@ import streamlit as st
 from core.config import CATEGORIES, settings
 from core.review import run_review, threshold_breached
 from parser.docx_parser import (
-    looks_like_hr_procedure, parse_docx, suggest_categories,
+    looks_like_hr_procedure, match_hr_procedure_hints,
+    parse_docx, suggest_categories,
 )
 from parser.ingest import ingest_docx
 
@@ -377,14 +378,44 @@ def _tab_upload(sb):
         title_default = uf.name.rsplit(".", 1)[0]
         chunks = _cached_parse(file_bytes)
         sample = "\n".join(c.text for c in chunks[:6])
-        blocked = looks_like_hr_procedure(title_default, sample)
+        matched_hints = match_hr_procedure_hints(title_default, sample)
         auto_cats = suggest_categories(sample)
 
-        label = f"🚫 {uf.name}" if blocked else f"📄 {uf.name}  ·  청크 {len(chunks)}개"
-        with st.expander(label, expanded=not blocked):
-            if blocked:
-                st.error("신고·조사 절차 문서로 판단됩니다. 적재에서 제외됩니다.")
-                continue
+        # 신고·조사 절차 hint 매칭 시 ⚠ 라벨로 expander 펼쳐 매칭 단어 노출.
+        # admin 이 sensitive 마킹 강제 적재 체크박스를 체크해야만 일반 적재
+        # 폼이 이어 노출된다. 미체크 시 기존 차단 동작 보존(continue).
+        if matched_hints:
+            label = f"⚠ {uf.name}  ·  신고·조사 절차 hint 매칭"
+            expanded = True
+        else:
+            label = f"📄 {uf.name}  ·  청크 {len(chunks)}개"
+            expanded = False
+
+        with st.expander(label, expanded=expanded):
+            sensitive_kind: str | None = None
+            if matched_hints:
+                # harassment 신호 단어가 하나라도 포함되면 harassment, 없으면 safety.
+                # safety 폴백은 "신고처리"/"조사위원회"/"신고 절차" 같은 일반
+                # 안전 사고 신고 절차 사규를 admin 이 직접 강제 적재할 때를 위함.
+                harassment_hints = {"괴롭힘 신고", "성희롱 신고", "고충처리"}
+                sensitive_kind = (
+                    "harassment"
+                    if any(h in harassment_hints for h in matched_hints)
+                    else "safety"
+                )
+                st.warning(
+                    f"신고·조사 절차 사규로 판단됨. "
+                    f"매칭된 단어: **{', '.join(matched_hints)}**\n\n"
+                    "이 사규는 적재 시 sensitive 마킹되며, RAG 답변에서 자동으로 핫라인 안내가 "
+                    "추가됩니다 (현재 사용자 질의에 괴롭힘/성희롱/갑질 등 키워드 포함 시 동작; "
+                    "키워드 회피 질의 대응은 PR 2)."
+                )
+                force = st.checkbox(
+                    f"⚠ sensitive 마킹('{sensitive_kind}')으로 강제 적재",
+                    key=f"ul_force_sensitive_{fkey}",
+                )
+                if not force:
+                    continue
 
             st.caption(f"자동 추천 카테고리: **{', '.join(auto_cats)}** — 아래에서 수정")
             col1, col2 = st.columns(2)
@@ -446,6 +477,10 @@ def _tab_upload(sb):
                 "eff": eff,
                 "cats": cats,
                 "department": dept,
+                # matched_hints 가 비어있으면 None — meta.sensitive_kind 미저장.
+                # 강제 적재 케이스만 "harassment"/"safety" 가 ingest_docx 에 전달돼
+                # nexus_documents.meta.sensitive_kind 로 마킹된다.
+                "force_sensitive_kind": sensitive_kind,
             })
 
     if not valid_configs:
@@ -473,6 +508,7 @@ def _tab_upload(sb):
                         confirmed_categories=cfg["cats"],
                         department=cfg["department"],
                         source_filename=cfg["fname"],
+                        force_sensitive_kind=cfg.get("force_sensitive_kind"),
                     )
                     if res.skipped_hr_procedure:
                         st.error(f"**{cfg['fname']}** — 신고절차 문서로 차단됨")
@@ -492,6 +528,7 @@ def _tab_upload(sb):
                                    "filename": cfg["fname"],
                                    "chunks": res.chunks_inserted,
                                    "archived_previous": res.archived_previous,
+                                   "sensitive_kind": cfg.get("force_sensitive_kind"),
                                },
                                actor=uploader or None)
                 except Exception as e:
