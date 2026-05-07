@@ -745,6 +745,40 @@ def ask(
     )
 
 
+def get_avg_latency_seconds(
+    supabase: Any, *, sample_size: int = 100, fallback: int = 10,
+) -> int:
+    """query_logs.elapsed_ms 최근 N건의 P50(중앙값) 을 초 단위로 반환.
+
+    답변 대기 UX 의 "평균 약 N초" 표시용. 평균 대신 P50 을 쓰는 이유는
+    backoff/timeout outlier 가 평균을 왜곡하기 때문. 데이터 < 5건이거나
+    조회 에러면 fallback(기본 10초). 호출자(app.py) 가 session 단위
+    캐시(5분 TTL) 권장 — 매 답변 호출마다 SELECT 하지 않게.
+
+    실제 컬럼명(스키마): elapsed_ms / ts (db/01 + db/07).
+    """
+    try:
+        result = (
+            supabase.table("query_logs")
+                    .select("elapsed_ms")
+                    .order("ts", desc=True)
+                    .limit(sample_size)
+                    .execute()
+        )
+        rows = result.data or []
+        latencies = [
+            r["elapsed_ms"] for r in rows
+            if r.get("elapsed_ms") and r["elapsed_ms"] > 0
+        ]
+        if len(latencies) < 5:
+            return fallback
+        latencies.sort()
+        median_ms = latencies[len(latencies) // 2]
+        return max(3, round(median_ms / 1000))
+    except Exception:
+        return fallback
+
+
 def record_feedback(supabase: Any, *, query_log_id: int,
                     feedback: int, comment: str | None = None) -> bool:
     """사용자 피드백(👍=1 / 👎=-1) 을 query_logs 에 기록. 성공 여부 반환."""

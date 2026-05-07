@@ -5,8 +5,9 @@ from __future__ import annotations
 import streamlit as st
 
 import datetime as _dt
+import time as _time
 
-from core.chatbot import ask, record_feedback
+from core.chatbot import ask, get_avg_latency_seconds, record_feedback
 from core.config import CATEGORIES, get_secret, load_hotlines, settings, validate_settings
 
 
@@ -1041,6 +1042,41 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
     friendly_msg = ""
     with st.chat_message("assistant"):
         with st.status("문서 검색 및 답변 생성 중...", expanded=True) as status:
+            # 답변 대기 UX — 경과 시간 + 평균 응답 시간 표시.
+            # session_state 5분 TTL 캐시 — 매 호출마다 SELECT 하지 않게.
+            _now = _time.time()
+            if (
+                "avg_latency_s" not in st.session_state
+                or _now - st.session_state.get("avg_latency_at", 0) > 300
+            ):
+                st.session_state["avg_latency_s"] = get_avg_latency_seconds(sb)
+                st.session_state["avg_latency_at"] = _now
+            _avg_s = st.session_state["avg_latency_s"]
+            # JS setInterval 로 실시간 카운터. status 컨테이너 lifecycle 이
+            # 끝나면 DOM 노드(dfc-elapsed) 가 사라져 clearInterval 자동 호출.
+            st.markdown(
+                f"""
+<div style="background:#FAF6F1;padding:10px 14px;border-radius:10px;
+            font-family:'Pretendard',-apple-system,sans-serif;font-size:13px;
+            color:#666;display:flex;justify-content:space-between;
+            align-items:center;margin:8px 0;border:1px solid #EDE6DC;">
+  <span>⏱️ <span id="dfc-elapsed" style="font-weight:600;color:#C8102E;">0</span>초 경과</span>
+  <span style="color:#999;">평균 약 {_avg_s}초</span>
+</div>
+<script>
+  (function() {{
+    var start = Date.now();
+    var timerId = setInterval(function() {{
+      var elem = document.getElementById('dfc-elapsed');
+      if (!elem) {{ clearInterval(timerId); return; }}
+      elem.innerText = Math.round((Date.now() - start) / 1000);
+    }}, 250);
+  }})();
+</script>
+""",
+                unsafe_allow_html=True,
+            )
+
             # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
             # ("search_done") → ("generate") → ("complete") 순으로 호출.
             # injection early-exit 분기에서는 callback 미호출(정상).
