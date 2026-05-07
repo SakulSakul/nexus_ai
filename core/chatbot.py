@@ -351,6 +351,78 @@ def _ensure_citation(answer: str, contexts: list[dict]) -> str:
     return answer + f"\n\n[참조: {', '.join(cites[:5])}]"
 
 
+# 토큰 분리(한글 + 영문 + 숫자) — citation 정규화 fuzzy 매칭용
+_TOKEN_RE = re.compile(r"[\w가-힣]+")
+# 조항 추출 (제N조 / 제N조의M / 제N조 제M항)
+_ARTICLE_RE = re.compile(r"(제\s*\d+\s*조(?:의\s*\d+)?(?:\s*제\s*\d+\s*항)?)")
+# [참조: ...] 블록 매칭 — 본문 내 다중 출현 모두 처리
+_CITE_BLOCK_RE = re.compile(r"\[참조:\s*([^\]]+)\]")
+# citation 정규화 임계값 — 너무 낮으면 오인 매칭, 너무 높으면 변형 미커버.
+# 0.6 은 "(CSR) 클린뱅크 운영 지침" vs "클린뱅크 운영지침" 케이스 통과 기준.
+_CITATION_NORMALIZE_THRESHOLD = 0.6
+
+
+def _tokens(s: str) -> set[str]:
+    return {t.lower() for t in _TOKEN_RE.findall(s)}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _normalize_citation_block(answer: str, contexts: list[dict]) -> str:
+    """LLM 이 [참조: ...] 안에 변형 출력했을 때 contexts 의 정확한
+    doc_title 로 교체. 매칭 신뢰도(jaccard) ≥ 0.6 인 경우만 교체. 못
+    찾으면 원본 유지(회귀 안전). 사례집 형식은 변환 외.
+
+    예: LLM "[참조: 클린뱅크 운영지침 제3조]"
+         + contexts [{"doc_title": "(CSR) 클린뱅크 운영 지침", ...}]
+         → "[참조: (CSR) 클린뱅크 운영 지침 제3조]"
+    """
+    if not contexts or "[참조:" not in answer:
+        return answer
+
+    doc_titles: list[tuple[str, set[str]]] = []
+    for c in contexts:
+        t = c.get("doc_title") or c.get("title")
+        if t:
+            doc_titles.append((t, _tokens(t)))
+    if not doc_titles:
+        return answer
+
+    def _replace(match: re.Match[str]) -> str:
+        block_inner = match.group(1).strip()
+        # 사례집(#N) 인용은 doc_title 매칭 대상 아님 — 원본 유지
+        if "사례집" in block_inner:
+            return match.group(0)
+
+        sources = [s.strip() for s in block_inner.split(",") if s.strip()]
+        normalized: list[str] = []
+        for src in sources:
+            src_tokens = _tokens(src)
+            if not src_tokens:
+                normalized.append(src)
+                continue
+            best_score = 0.0
+            best_title: str | None = None
+            for title, t_tokens in doc_titles:
+                score = _jaccard(src_tokens, t_tokens)
+                if score > best_score:
+                    best_score = score
+                    best_title = title
+            if best_score >= _CITATION_NORMALIZE_THRESHOLD and best_title:
+                article_match = _ARTICLE_RE.search(src)
+                article = article_match.group(1) if article_match else ""
+                normalized.append(f"{best_title} {article}".rstrip())
+            else:
+                normalized.append(src)
+        return f"[참조: {', '.join(normalized)}]"
+
+    return _CITE_BLOCK_RE.sub(_replace, answer)
+
+
 def _extract_action_items(answer: str) -> list[str]:
     """권장 행동 섹션 본문에서만 numbered list 추출. 사규 인용에 포함된
     일반 numbered list (정의/적용범위/위반 시 등) 가 권장 행동으로 오인되어
@@ -525,6 +597,9 @@ def ask(
     effective_process = process_text if s.show_thinking else ""
 
     answer_text = _ensure_citation(answer_text, contexts)
+    # LLM 변형 출력 정규화 — [참조:] 블록 안의 doc_title 을 contexts 기준
+    # 정확 형태로 교체. 임계값 미달 시 원본 유지(회귀 안전).
+    answer_text = _normalize_citation_block(answer_text, contexts)
 
     if detection.triggered:
         actions = _extract_action_items(answer_text)
