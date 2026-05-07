@@ -1047,21 +1047,27 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
         # 위에서 답변이 점진적으로 그려지는 걸 본다. status 종료(collapsed)
         # 후에도 placeholder 는 그대로 답변 본문을 유지.
         answer_placeholder = st.empty()
-        with st.status("문서 검색 및 답변 생성 중...", expanded=True) as status:
-            # 답변 대기 UX — 경과 시간 + 평균 응답 시간 표시.
-            # session_state 5분 TTL 캐시 — 매 호출마다 SELECT 하지 않게.
-            _now = _time.time()
-            if (
-                "avg_latency_s" not in st.session_state
-                or _now - st.session_state.get("avg_latency_at", 0) > 300
-            ):
-                st.session_state["avg_latency_s"] = get_avg_latency_seconds(sb)
-                st.session_state["avg_latency_at"] = _now
-            _avg_s = st.session_state["avg_latency_s"]
-            # JS setInterval 로 실시간 카운터. st.markdown(unsafe_allow_html)
-            # 은 sandbox 차단으로 setInterval DOM 갱신이 무효화 → components.
-            # html() 의 iframe 안에서 self-contained timer 동작. iframe 자체가
-            # status 컨테이너 lifecycle 동안만 살아있어 답변 완료 시 자동 정리.
+        # Timer placeholder — status 밖에 자리 잡아 status collapsed 후에도
+        # 그대로 보이도록. 답변 진행 중에는 components.html 의 JS 카운터,
+        # 답변 완료 시 markdown 으로 "X초 만에 답변 완료" 정적 메시지로 교체.
+        timer_placeholder = st.empty()
+
+        # avg_latency 캐시 (status 진입 전 계산 — timer_placeholder 가 status
+        # 밖에서 components.html 을 그리려면 _avg_s 가 미리 결정돼야 함).
+        _now = _time.time()
+        if (
+            "avg_latency_s" not in st.session_state
+            or _now - st.session_state.get("avg_latency_at", 0) > 300
+        ):
+            st.session_state["avg_latency_s"] = get_avg_latency_seconds(sb)
+            st.session_state["avg_latency_at"] = _now
+        _avg_s = st.session_state["avg_latency_s"]
+
+        # JS setInterval 실시간 카운터. components.html 의 iframe 안에서
+        # self-contained 동작 — st.markdown(unsafe_allow_html) sandbox 우회.
+        # 답변 완료 시 timer_placeholder.markdown(...) 으로 정적 메시지 교체
+        # → iframe 자체가 사라지면서 setInterval 도 자동 cleanup.
+        with timer_placeholder.container():
             components.html(
                 f"""
 <div id="dfc-elapsed-wrap" style="background:#FAF6F1;padding:10px 14px;
@@ -1085,6 +1091,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 height=60,
             )
 
+        with st.status("문서 검색 및 답변 생성 중...", expanded=True) as status:
             # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
             # ("search_done") → ("generate") → ("complete") 순으로 호출.
             # injection early-exit 분기에서는 callback 미호출(정상).
@@ -1171,6 +1178,8 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
         if ans is None:
             # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
             answer_placeholder.empty()
+            # Timer 도 정리 — 카운터가 에러 후에도 계속 증가하면 부적절
+            timer_placeholder.empty()
             err_text = str(last_err or "")
             if "double precision" in err_text or "structure of query" in err_text:
                 friendly_msg = (
@@ -1215,6 +1224,15 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
             # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
             answer_placeholder.markdown(ans.text)
+            # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
+            # 지면서 setInterval 도 자동 cleanup. ans.elapsed (서버 측 perf
+            # counter) 가 사용자 wall-clock 보다 정확.
+            timer_placeholder.markdown(
+                "<div style='color:#888;font-size:12px;padding:6px 0;"
+                "font-family:-apple-system,Pretendard,sans-serif;'>"
+                f"⏱️ {ans.elapsed:.1f}초 만에 답변 완료</div>",
+                unsafe_allow_html=True,
+            )
             st.markdown(
                 f'<p class="nx-elapsed">{ans.elapsed:.1f}s</p>',
                 unsafe_allow_html=True,
