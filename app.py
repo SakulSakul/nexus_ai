@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 import datetime as _dt
 import time as _time
@@ -1052,29 +1053,31 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 st.session_state["avg_latency_s"] = get_avg_latency_seconds(sb)
                 st.session_state["avg_latency_at"] = _now
             _avg_s = st.session_state["avg_latency_s"]
-            # JS setInterval 로 실시간 카운터. status 컨테이너 lifecycle 이
-            # 끝나면 DOM 노드(dfc-elapsed) 가 사라져 clearInterval 자동 호출.
-            st.markdown(
+            # JS setInterval 로 실시간 카운터. st.markdown(unsafe_allow_html)
+            # 은 sandbox 차단으로 setInterval DOM 갱신이 무효화 → components.
+            # html() 의 iframe 안에서 self-contained timer 동작. iframe 자체가
+            # status 컨테이너 lifecycle 동안만 살아있어 답변 완료 시 자동 정리.
+            components.html(
                 f"""
-<div style="background:#FAF6F1;padding:10px 14px;border-radius:10px;
-            font-family:'Pretendard',-apple-system,sans-serif;font-size:13px;
-            color:#666;display:flex;justify-content:space-between;
-            align-items:center;margin:8px 0;border:1px solid #EDE6DC;">
+<div id="dfc-elapsed-wrap" style="background:#FAF6F1;padding:10px 14px;
+     border-radius:10px;font-family:-apple-system,'Segoe UI',sans-serif;
+     font-size:13px;color:#666;display:flex;justify-content:space-between;
+     align-items:center;border:1px solid #EDE6DC;box-sizing:border-box;">
   <span>⏱️ <span id="dfc-elapsed" style="font-weight:600;color:#C8102E;">0</span>초 경과</span>
   <span style="color:#999;">평균 약 {_avg_s}초</span>
 </div>
 <script>
   (function() {{
     var start = Date.now();
-    var timerId = setInterval(function() {{
-      var elem = document.getElementById('dfc-elapsed');
-      if (!elem) {{ clearInterval(timerId); return; }}
+    var elem = document.getElementById('dfc-elapsed');
+    if (!elem) return;
+    setInterval(function() {{
       elem.innerText = Math.round((Date.now() - start) / 1000);
     }}, 250);
   }})();
 </script>
 """,
-                unsafe_allow_html=True,
+                height=60,
             )
 
             # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
