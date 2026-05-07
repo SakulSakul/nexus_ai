@@ -32,11 +32,25 @@ class ScoreCard:
     failure_reasons: list[str]
 
 
+# 공백·구두점·구분자 제거용 — keyword 매칭 시 미세한 띄어쓰기/조사 차이로
+# 인한 false-negative 흡수 (예: expected="응급 조치", 답변="응급조치를").
+_MATCH_NORMALIZE_RE = re.compile(r"[\s\-_·,.]+")
+
+
+def _normalize_for_match(s: str) -> str:
+    """공백·구두점·하이픈 제거 + lowercase. accuracy 매칭 정밀화용."""
+    return _MATCH_NORMALIZE_RE.sub("", s.lower())
+
+
 def _accuracy(answer: str, keywords: list[str]) -> float:
     if not keywords:
         return 1.0
-    hits = sum(1 for k in keywords if k and k.strip() and k in answer)
-    return hits / len([k for k in keywords if k and k.strip()])
+    valid_kws = [k for k in keywords if k and k.strip()]
+    if not valid_kws:
+        return 1.0
+    norm_ans = _normalize_for_match(answer)
+    hits = sum(1 for k in valid_kws if _normalize_for_match(k) in norm_ans)
+    return hits / len(valid_kws)
 
 
 def _forbidden(answer: str, forbidden: list[str]) -> float:
