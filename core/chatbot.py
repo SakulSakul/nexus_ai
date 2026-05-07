@@ -7,6 +7,7 @@ temperature/top_p 는 환각 제어를 위해 0/0.1 고정이 기본값이며,
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections import Counter, OrderedDict
@@ -138,6 +139,13 @@ _TRANSIENT_HINTS = (
     "high demand", "overloaded", "overload",
 )
 
+# Gemini transient(429/503/RESOURCE_EXHAUSTED) 응답 시 backoff. Streamlit
+# Cloud free tier 검수 회차에서 분당 quota 초과로 회차 멈춤이 빈번 → 충분한
+# 회복 시간 확보. 기본 15s × 2^n × 5회 = 15→30→60→120→240s (총 ~470s).
+# 정상 응답 흐름엔 무영향(transient 미발생 시 backoff 진입 자체 안 함).
+_GEMINI_BACKOFF_BASE = float(os.getenv("GEMINI_BACKOFF_BASE", "15"))
+_GEMINI_BACKOFF_ATTEMPTS = int(os.getenv("GEMINI_BACKOFF_ATTEMPTS", "5"))
+
 
 def _is_transient(e: Exception) -> bool:
     """503/429/RESOURCE_EXHAUSTED 류 모델 트래픽 폭주 신호 식별.
@@ -173,7 +181,7 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
     res = None
     last_err: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
         _ex = ThreadPoolExecutor(max_workers=1)
         try:
             _fut = _ex.submit(cli.models.generate_content,
@@ -182,14 +190,20 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
             break
         except _Timeout as e:
             last_err = RuntimeError("Gemini 호출이 60초 내 응답하지 않았습니다.")
-            if attempt < 2:
-                time.sleep(1.5 * (2 ** attempt))
+            if attempt < _GEMINI_BACKOFF_ATTEMPTS - 1:
+                time.sleep(_GEMINI_BACKOFF_BASE * (2 ** attempt))
                 continue
             raise last_err from e
         except Exception as e:
             last_err = e
-            if _is_transient(e) and attempt < 2:
-                time.sleep(1.5 * (2 ** attempt))   # 1.5s → 3s
+            if _is_transient(e) and attempt < _GEMINI_BACKOFF_ATTEMPTS - 1:
+                wait = _GEMINI_BACKOFF_BASE * (2 ** attempt)
+                print(
+                    f"[Gemini backoff] attempt {attempt+1}/"
+                    f"{_GEMINI_BACKOFF_ATTEMPTS} sleep {wait:.0f}s",
+                    flush=True,
+                )
+                time.sleep(wait)
                 continue
             raise
         finally:
