@@ -969,40 +969,44 @@ def _render_action_buttons(
     후 rerun → main() 다음 사이클에서 _run_ask(reroll_of=...) 로 처리.
     original_q / prev_answer 가 None 이면 reroll 버튼 disabled (history meta
     가 누락된 fallback 메시지 등).
+
+    레이아웃: _render_feedback 와 동일한 col.button(...) 직접 호출 패턴.
+    side-effect(rerun)는 columns 블록 밖에서 처리 — col_a 의 rerun 이 col_b
+    렌더 직전에 실행돼 두 번째 버튼이 누락되는 일을 차단.
     """
     hr_open: set = st.session_state.setdefault("hr_open", set())
     rerolled: set = st.session_state.setdefault("rerolled_msgs", set())
     already_rerolled = msg_idx in rerolled
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        hr_label = "📞 인사팀 문의 닫기" if msg_idx in hr_open else "📞 인사팀 문의"
-        if st.button(hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True):
-            if msg_idx in hr_open:
-                hr_open.remove(msg_idx)
-            else:
-                hr_open.add(msg_idx)
-            st.rerun()
-    with col_b:
-        reroll_label = "🔄 다시 답변 받음" if already_rerolled else "🔄 다시 답변"
-        reroll_help = (
-            "이미 다시 답변을 받았습니다 (1회 한정)" if already_rerolled
-            else "이전 답변과 다른 관점으로 한 번 더 답변받기"
-        )
-        if st.button(
-            reroll_label,
-            key=f"reroll_btn_{msg_idx}",
-            disabled=not can_reroll,
-            use_container_width=True,
-            help=reroll_help,
-        ):
-            rerolled.add(msg_idx)
-            st.session_state["_pending_reroll"] = {
-                "original_q":  original_q,
-                "prev_answer": prev_answer,
-            }
-            st.rerun()
+    hr_label = "📞 인사팀 문의 닫기" if msg_idx in hr_open else "📞 인사팀 문의"
+    reroll_label = "🔄 다시 답변 받음" if already_rerolled else "🔄 다시 답변"
+    reroll_help = (
+        "이미 다시 답변을 받았습니다 (1회 한정)" if already_rerolled
+        else "이전 답변과 다른 관점으로 한 번 더 답변받기"
+    )
+    col_a, col_b = st.columns(2)
+    hr_clicked = col_a.button(
+        hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True,
+    )
+    reroll_clicked = col_b.button(
+        reroll_label, key=f"reroll_btn_{msg_idx}",
+        disabled=not can_reroll, use_container_width=True,
+        help=reroll_help,
+    )
+    if hr_clicked:
+        if msg_idx in hr_open:
+            hr_open.remove(msg_idx)
+        else:
+            hr_open.add(msg_idx)
+        st.rerun()
+    if reroll_clicked:
+        rerolled.add(msg_idx)
+        st.session_state["_pending_reroll"] = {
+            "original_q":  original_q,
+            "prev_answer": prev_answer,
+        }
+        st.rerun()
     if msg_idx in hr_open:
         _render_hr_inquiry_panel(hotlines)
 
@@ -1274,7 +1278,7 @@ def _run_ask(
             if ans is None:
                 status.update(label="⚠️ 답변 생성 실패", state="error", expanded=True)
             else:
-                status.update(label="✅ 검색 단계 (펼쳐서 확인)", state="complete", expanded=False)
+                status.update(label="🔍 처리 단계", state="complete", expanded=False)
 
         if ans is None:
             # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
