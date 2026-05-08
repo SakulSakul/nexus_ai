@@ -974,11 +974,18 @@ def _render_action_buttons(
     side-effect(rerun)는 columns 블록 밖에서 처리 — col_a 의 rerun 이 col_b
     렌더 직전에 실행돼 두 번째 버튼이 누락되는 일을 차단.
     """
+    import sys as _sys
     hr_open: set = st.session_state.setdefault("hr_open", set())
     rerolled: set = st.session_state.setdefault("rerolled_msgs", set())
     already_rerolled = msg_idx in rerolled
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
+    print(
+        f"[action_buttons] entered. msg_idx={msg_idx}, "
+        f"original_q={bool(original_q)}, prev_answer={bool(prev_answer)}, "
+        f"can_reroll={can_reroll}",
+        file=_sys.stderr, flush=True,
+    )
     hr_label = "📞 인사팀 문의 닫기" if msg_idx in hr_open else "📞 인사팀 문의"
     reroll_label = "🔄 다시 답변 받음" if already_rerolled else "🔄 다시 답변"
     reroll_help = (
@@ -986,14 +993,21 @@ def _render_action_buttons(
         else "이전 답변과 다른 관점으로 한 번 더 답변받기"
     )
     col_a, col_b = st.columns(2)
+    print("[action_buttons] columns created", file=_sys.stderr, flush=True)
     hr_clicked = col_a.button(
         hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True,
+    )
+    print("[action_buttons] hr button rendered", file=_sys.stderr, flush=True)
+    print(
+        f"[action_buttons] about to render reroll. disabled={not can_reroll}",
+        file=_sys.stderr, flush=True,
     )
     reroll_clicked = col_b.button(
         reroll_label, key=f"reroll_btn_{msg_idx}",
         disabled=not can_reroll, use_container_width=True,
         help=reroll_help,
     )
+    print("[action_buttons] reroll button rendered", file=_sys.stderr, flush=True)
     if hr_clicked:
         if msg_idx in hr_open:
             hr_open.remove(msg_idx)
@@ -1009,6 +1023,7 @@ def _render_action_buttons(
         st.rerun()
     if msg_idx in hr_open:
         _render_hr_inquiry_panel(hotlines)
+    print("[action_buttons] exited normally", file=_sys.stderr, flush=True)
 
 
 def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
