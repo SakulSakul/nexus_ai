@@ -1855,7 +1855,7 @@ def main():
     st.markdown(
         '<div style="text-align:center; color:#888; font-size:11px; '
         'padding:24px 0 8px 0; border-top:1px solid #eee; margin-top:32px;">'
-        '© 2026 신세계디에프 (Shinsegae Duty Free) · 신세계그룹<br>'
+        '© 2026 신세계디에프 (Shinsegae Duty Free) · 인사담당 CSR팀<br>'
         '본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. '
         '인사·신고 행정 사항은 인사팀에 직접 문의하세요.'
         '</div>',
