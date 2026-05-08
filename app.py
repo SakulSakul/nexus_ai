@@ -596,36 +596,6 @@ html, body, .stApp {
   flex-shrink: 0;
 }
 
-/* Elapsed time */
-.nx-elapsed {
-  font-size: 11px;
-  color: #AEAEAE;
-  letter-spacing: 0.05em;
-  margin-top: 10px;
-}
-
-/* 베타 배너 — 환경 식별 명시. 운영 이관 시 NEXUS_ENV=prod 로 자동 숨김. */
-.nx-beta-banner {
-  background: #1A1A1A;
-  color: #FFFFFF;
-  padding: 10px 18px;
-  margin: 0 0 16px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.nx-beta-tag {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  background: #FFFFFF;
-  color: #1A1A1A;
-  padding: 2px 7px;
-}
-
 /* Sidebar brand block */
 .nx-brand {
   padding: 28px 0 20px;
@@ -717,6 +687,13 @@ html body [data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial
     -webkit-font-smoothing: antialiased !important;
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
 }
+
+/* caption 색 대비 보강 — WCAG 친화 */
+div[data-testid="stCaptionContainer"] p,
+.stCaption,
+small {
+    color: #555 !important;
+}
 </style>
 """
 
@@ -802,7 +779,7 @@ def _sidebar(sb, hotlines: dict) -> str:
             """,
             unsafe_allow_html=True,
         )
-        with st.expander("ℹ️ DF COMPASS 안내", expanded=True):
+        with st.expander("ℹ️ DF COMPASS 안내", expanded=False):
             st.markdown("""
 **DF COMPASS** — 디에프 컴파스
 
@@ -846,7 +823,7 @@ def _render_contexts(contexts: list[dict]) -> None:
     if not contexts:
         return
     import html as _html
-    with st.expander("REFERENCE DOCUMENTS", expanded=False):
+    with st.expander("참고 사규", expanded=False):
         for c in contexts:
             # 모든 DB 출처 값은 escape — 악성 DOCX 본문(<script>) 가 admin
             # 업로드 경로로 들어와 사용자에게 stored XSS 로 실행되는 경로 차단.
@@ -912,13 +889,11 @@ def _render_beta_banner() -> None:
     if (s.env_tag or "").lower() in _PROD_ENV_VALUES:
         return
     st.markdown(
-        f"""
-        <div class="nx-beta-banner">
-          <span class="nx-beta-tag">BETA</span>
-          본 환경은 베타 테스트({s.env_tag})이며 개인 인프라에서 운영됩니다 ·
-          LLM: Gemini 유료(주) / Claude API(보조), 둘 다 학습 비활성 · 답변 품질 검증 단계입니다.
-        </div>
-        """,
+        '<div style="background:#f4f4f4; color:#666; padding:8px 14px; '
+        'border-radius:6px; font-size:12px; margin-bottom:16px;">'
+        '🛡️ 베타 환경입니다. 입력하신 내용은 모델 학습에 사용되지 않습니다. '
+        '<span style="color:#888;">자세한 안내는 좌측 사이드바 참조.</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -1175,7 +1150,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             if ans is None:
                 status.update(label="⚠️ 답변 생성 실패", state="error", expanded=True)
             else:
-                status.update(label="✅ 답변 완료", state="complete", expanded=False)
+                status.update(label="✅ 검색 단계 (펼쳐서 확인)", state="complete", expanded=False)
 
         if ans is None:
             # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
@@ -1233,10 +1208,6 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 "<div style='color:#888;font-size:12px;padding:6px 0;"
                 "font-family:-apple-system,Pretendard,sans-serif;'>"
                 f"⏱️ {ans.elapsed:.1f}초 만에 답변 완료</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f'<p class="nx-elapsed">{ans.elapsed:.1f}s</p>',
                 unsafe_allow_html=True,
             )
             _render_contexts(ans.contexts)
@@ -1498,11 +1469,6 @@ def main():
             if role == "assistant" and meta.get("critical"):
                 _render_critical_banner()
             st.markdown(content)
-            if role == "assistant" and meta.get("elapsed"):
-                st.markdown(
-                    f'<p class="nx-elapsed">{meta["elapsed"]:.1f}s</p>',
-                    unsafe_allow_html=True,
-                )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
             if role == "assistant" and meta.get("query_log_id"):
@@ -1518,6 +1484,16 @@ def main():
     clicked_q: str | None = None
     if not st.session_state["history"]:
         clicked_q = _show_example_questions()
+
+    st.markdown(
+        '<div style="text-align:center; color:#888; font-size:11px; '
+        'padding:24px 0 8px 0; border-top:1px solid #eee; margin-top:32px;">'
+        '© 2026 신세계디에프 (Shinsegae Duty Free) · 신세계그룹<br>'
+        '본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. '
+        '인사·신고 행정 사항은 인사팀에 직접 문의하세요.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단
     q = st.chat_input("질문을 입력하세요…", max_chars=2000) or clicked_q
