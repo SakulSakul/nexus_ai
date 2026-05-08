@@ -967,47 +967,41 @@ def _render_action_buttons(
     다시 답변 — 1회 한정. session_state["rerolled_msgs"] set 으로 msg_idx 별
     중복 차단. 클릭 시 session_state["_pending_reroll"] 에 reroll request 적재
     후 rerun → main() 다음 사이클에서 _run_ask(reroll_of=...) 로 처리.
-    original_q / prev_answer 가 None 이면 reroll 버튼 disabled (history meta
-    가 누락된 fallback 메시지 등).
 
-    레이아웃: _render_feedback 와 동일한 col.button(...) 직접 호출 패턴.
-    side-effect(rerun)는 columns 블록 밖에서 처리 — col_a 의 rerun 이 col_b
-    렌더 직전에 실행돼 두 번째 버튼이 누락되는 일을 차단.
+    can_reroll=False (이미 받음 / original_q·prev_answer 누락) 일 때 reroll
+    자리는 button 대신 회색 markdown placeholder 로 대체. Streamlit 1.57
+    widget rerun diffing 에서 disabled+help 인자가 reroll 측에만 붙으면 col_b
+    button 의 ID 안정성이 깨져 rerun 마다 button 이 누적되는 회귀가 관측되어,
+    inquiry 버튼과 인자 시그니처를 동일하게 정렬 (disabled/help 모두 제거).
     """
-    import sys as _sys
     hr_open: set = st.session_state.setdefault("hr_open", set())
     rerolled: set = st.session_state.setdefault("rerolled_msgs", set())
     already_rerolled = msg_idx in rerolled
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
-    print(
-        f"[action_buttons] entered. msg_idx={msg_idx}, "
-        f"original_q={bool(original_q)}, prev_answer={bool(prev_answer)}, "
-        f"can_reroll={can_reroll}",
-        file=_sys.stderr, flush=True,
-    )
     hr_label = "📞 인사팀 문의 닫기" if msg_idx in hr_open else "📞 인사팀 문의"
-    reroll_label = "🔄 다시 답변 받음" if already_rerolled else "🔄 다시 답변"
-    reroll_help = (
-        "이미 다시 답변을 받았습니다 (1회 한정)" if already_rerolled
-        else "이전 답변과 다른 관점으로 한 번 더 답변받기"
-    )
     col_a, col_b = st.columns(2)
-    print("[action_buttons] columns created", file=_sys.stderr, flush=True)
     hr_clicked = col_a.button(
         hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True,
     )
-    print("[action_buttons] hr button rendered", file=_sys.stderr, flush=True)
-    print(
-        f"[action_buttons] about to render reroll. disabled={not can_reroll}",
-        file=_sys.stderr, flush=True,
-    )
-    reroll_clicked = col_b.button(
-        reroll_label, key=f"reroll_btn_{msg_idx}",
-        disabled=not can_reroll, use_container_width=True,
-        help=reroll_help,
-    )
-    print("[action_buttons] reroll button rendered", file=_sys.stderr, flush=True)
+    if can_reroll:
+        reroll_clicked = col_b.button(
+            "🔄 다시 답변",
+            key=f"reroll_btn_{msg_idx}",
+            use_container_width=True,
+        )
+    else:
+        # disabled 인자를 쓰지 않고 markdown placeholder 로 회색 표기.
+        # 이미 다시 답변 받았거나 history meta 가 누락된 fallback 메시지.
+        col_b.markdown(
+            "<div style='text-align:center; padding:8px 0; "
+            "color:#aaa; font-size:14px; border:1px solid #eee; "
+            "border-radius:4px; background:#fafafa;'>"
+            "🔄 다시 답변 받음"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        reroll_clicked = False
     if hr_clicked:
         if msg_idx in hr_open:
             hr_open.remove(msg_idx)
@@ -1023,7 +1017,6 @@ def _render_action_buttons(
         st.rerun()
     if msg_idx in hr_open:
         _render_hr_inquiry_panel(hotlines)
-    print("[action_buttons] exited normally", file=_sys.stderr, flush=True)
 
 
 def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
