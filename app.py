@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 import datetime as _dt
 import time as _time
 
-from core.chatbot import ask, ask_stream, get_avg_latency_seconds, record_feedback
+from core.chatbot import ask, ask_stream, get_avg_latency_seconds
 from core.config import CATEGORIES, get_secret, load_hotlines, settings, validate_settings
 
 
@@ -883,6 +883,24 @@ _REROLL_PREFIX = (
     "강조하여 답변해주세요. 단, 사실관계는 정확해야 합니다.\n\n원 질문: "
 )
 
+# 피드백 사유 chip 옵션 — _render_feedback 가 부정/긍정 분기로 사용.
+# DB 의 feedback_reasons (jsonb) 에 선택값 그대로 저장되어 admin 측 집계
+# 시 한국어 라벨이 그대로 드러남 — 진단 가독성을 위해 의도된 설계.
+_FB_REASONS_NEG = [
+    "사실과 달라요",
+    "출처가 부족해요",
+    "질문 의도 못 파악",
+    "답변이 모호함",
+    "신고·문의 안내 누락",
+    "기타",
+]
+_FB_REASONS_POS = [
+    "정확해요",
+    "출처가 명확",
+    "실무에 바로 적용 가능",
+    "기타",
+]
+
 
 def _push_history(item) -> None:
     """history 에 push 후 cap 초과 시 앞쪽부터 자른다 (FIFO).
@@ -1019,24 +1037,160 @@ def _render_action_buttons(
         _render_hr_inquiry_panel(hotlines)
 
 
+def _record_feedback_click(sb, query_log_id: int, *, positive: bool) -> bool:
+    """클릭 시점 즉시 기록 — feedback (기존 ±1, admin/radar 호환) +
+    feedback_type (신규, 'positive'/'negative') + feedback_at 동시 갱신.
+
+    db/04 의 feedback (smallint) 컨벤션은 -1/+1 (db/04_beta_hooks.sql:25).
+    """
+    import sys
+    from datetime import datetime, timezone
+    try:
+        sb.table("query_logs").update({
+            "feedback":      1 if positive else -1,
+            "feedback_type": "positive" if positive else "negative",
+            "feedback_at":   datetime.now(timezone.utc).isoformat(),
+        }).eq("id", query_log_id).execute()
+        return True
+    except Exception as e:
+        print(f"[fb click update failed] query_log_id={query_log_id} err={e}",
+              file=sys.stderr, flush=True)
+        return False
+
+
+def _record_feedback_submit(sb, query_log_id: int, *,
+                            reasons: list[str], comment: str | None) -> bool:
+    """제출 시 reasons (jsonb 배열) + comment (기존 text) 추가 갱신.
+    feedback_at 은 클릭 시점 그대로 둔다."""
+    import sys
+    try:
+        payload: dict = {"feedback_reasons": reasons}
+        if comment:
+            payload["feedback_comment"] = comment[:500]
+        sb.table("query_logs").update(payload).eq("id", query_log_id).execute()
+        return True
+    except Exception as e:
+        print(f"[fb submit update failed] query_log_id={query_log_id} err={e}",
+              file=sys.stderr, flush=True)
+        return False
+
+
 def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
-    """답변 1건당 👍/👎 한 번. session_state 로 중복 클릭 차단."""
+    """답변 1건당 피드백 — CTA + 사유 chip + 자유 의견.
+
+    상태 (session_state):
+      feedback_clicked: dict[msg_idx → 'positive' | 'negative']
+      feedback_submitted: set[msg_idx]
+
+    상태별 렌더:
+      (A) 미클릭 → CTA 라벨 + caption + 두 버튼
+      (B) 클릭 후, 미제출 → 두 버튼 영역은 markdown placeholder
+                            (선택된 쪽만 강조). 그 아래 사유 chip + textarea +
+                            [제출] [건너뛰기] 폼 펼침.
+      (C) 제출 또는 건너뛰기 → "✅ 피드백 감사합니다" caption 만.
+
+    Streamlit 1.57 widget rerun diffing 회피 (PR-1B 후속에서 학습):
+      - disabled / help 인자 사용 금지 → 분기로 button vs markdown 토글
+      - 모든 위젯 key 에 msg_idx 포함
+
+    history replay 동작: session_state 의 feedback_submitted 가 같은 세션 내
+    유지되므로 새로고침 없이는 (C) 상태 자연스럽게 재현. 페이지 새로고침으로
+    session_state 초기화 시 history 자체도 비어 replay 자체가 안 일어남
+    (베타 단계 비용 가드).
+    """
     if not query_log_id:
         return
-    key_state = f"_fb_state_{msg_idx}"
-    state = st.session_state.get(key_state)
-    if state in ("up", "down"):
-        st.caption("👍 의견 감사합니다." if state == "up" else "👎 의견 감사합니다. 사유는 운영자가 검토합니다.")
+    clicked: dict = st.session_state.setdefault("feedback_clicked", {})
+    submitted: set = st.session_state.setdefault("feedback_submitted", set())
+
+    # (C) 제출 또는 건너뛰기 완료
+    if msg_idx in submitted:
+        st.caption("✅ 피드백 감사합니다.")
         return
-    c1, c2, _ = st.columns([1, 1, 8])
-    if c1.button("👍", key=f"fb_up_{msg_idx}"):
-        if record_feedback(sb, query_log_id=query_log_id, feedback=1):
-            st.session_state[key_state] = "up"
+
+    state = clicked.get(msg_idx)  # None | 'positive' | 'negative'
+
+    # (A) 미클릭
+    if state is None:
+        st.markdown("**이 답변이 정확하고 도움이 되셨나요?**")
+        st.caption("베타 단계입니다. 여러분의 피드백이 답변 품질 개선에 직결됩니다.")
+        col_pos, col_neg = st.columns(2)
+        pos_clicked = col_pos.button(
+            "👍 도움됐어요", key=f"fb_pos_{msg_idx}", use_container_width=True,
+        )
+        neg_clicked = col_neg.button(
+            "👎 아쉬워요", key=f"fb_neg_{msg_idx}", use_container_width=True,
+        )
+        if pos_clicked:
+            if _record_feedback_click(sb, query_log_id, positive=True):
+                clicked[msg_idx] = "positive"
+                st.rerun()
+        if neg_clicked:
+            if _record_feedback_click(sb, query_log_id, positive=False):
+                clicked[msg_idx] = "negative"
+                st.rerun()
+        return
+
+    # (B) 클릭 후 — 두 버튼 자리는 markdown placeholder (선택된 쪽만 강조)
+    is_positive = (state == "positive")
+    pos_selected_html = (
+        "<div style='text-align:center; padding:8px 0; color:#1A1A1A; "
+        "font-size:14px; border:2px solid #1A1A1A; border-radius:4px; "
+        "background:#fff; font-weight:600;'>✓ 👍 도움됐어요</div>"
+    )
+    pos_inactive_html = (
+        "<div style='text-align:center; padding:8px 0; color:#aaa; "
+        "font-size:14px; border:1px solid #eee; border-radius:4px; "
+        "background:#fafafa;'>👍 도움됐어요</div>"
+    )
+    neg_selected_html = (
+        "<div style='text-align:center; padding:8px 0; color:#1A1A1A; "
+        "font-size:14px; border:2px solid #1A1A1A; border-radius:4px; "
+        "background:#fff; font-weight:600;'>✓ 👎 아쉬워요</div>"
+    )
+    neg_inactive_html = (
+        "<div style='text-align:center; padding:8px 0; color:#aaa; "
+        "font-size:14px; border:1px solid #eee; border-radius:4px; "
+        "background:#fafafa;'>👎 아쉬워요</div>"
+    )
+    col_a, col_b = st.columns(2)
+    col_a.markdown(pos_selected_html if is_positive else pos_inactive_html,
+                   unsafe_allow_html=True)
+    col_b.markdown(neg_selected_html if not is_positive else neg_inactive_html,
+                   unsafe_allow_html=True)
+
+    # 사유 chip + 자유 의견
+    options = _FB_REASONS_POS if is_positive else _FB_REASONS_NEG
+    chip_label = ("어떤 점이 좋았나요? (복수 선택 가능)" if is_positive
+                  else "어떤 점이 아쉬웠나요? (복수 선택 가능)")
+    reasons = st.pills(
+        chip_label,
+        options=options,
+        selection_mode="multi",
+        key=f"fb_reasons_{msg_idx}",
+    )
+    comment = st.text_area(
+        "자유 의견 (선택)",
+        height=80,
+        placeholder="구체적인 의견을 자유롭게 적어주세요 (선택)",
+        key=f"fb_comment_{msg_idx}",
+    )
+    col_submit, col_skip = st.columns(2)
+    submit_clicked = col_submit.button(
+        "제출", key=f"fb_submit_{msg_idx}", use_container_width=True,
+    )
+    skip_clicked = col_skip.button(
+        "건너뛰기", key=f"fb_skip_{msg_idx}", use_container_width=True,
+    )
+    if submit_clicked:
+        if _record_feedback_submit(sb, query_log_id,
+                                   reasons=reasons or [], comment=comment):
+            submitted.add(msg_idx)
             st.rerun()
-    if c2.button("👎", key=f"fb_down_{msg_idx}"):
-        if record_feedback(sb, query_log_id=query_log_id, feedback=-1):
-            st.session_state[key_state] = "down"
-            st.rerun()
+    if skip_clicked:
+        # 건너뛰기 — DB 추가 쓰기 없음 (이미 클릭 시 type/at 기록됨)
+        submitted.add(msg_idx)
+        st.rerun()
 
 
 def _render_mode_buttons(msg_idx: int) -> None:
