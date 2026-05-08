@@ -1528,6 +1528,29 @@ def _run_ask(
         ))
         return
 
+    # PR-2.5: reroll 시 query_logs.query_masked 에 _REROLL_PREFIX 가 mask_pii
+    # 거쳐 그대로 박힘 (core/chatbot.ask_stream 가 effective_q 를 직접 저장).
+    # core/ 시그니처 무수정 제약상 호출 측에서 사후 UPDATE 로 보정. select 후
+    # marker("원 질문: ") 기준으로 split → mask_pii 가 prefix 본문 일부를
+    # 마스킹해도 marker 자체는 보존되므로 안전. 실패해도 답변 흐름 무방해.
+    if reroll_of is not None and ans.query_log_id is not None:
+        try:
+            cur = sb.table("query_logs").select("query_masked")\
+                .eq("id", ans.query_log_id).execute()
+            masked_raw = (cur.data[0].get("query_masked") if cur.data else "") or ""
+            marker = "원 질문: "
+            mark_idx = masked_raw.find(marker)
+            cleaned = (masked_raw[mark_idx + len(marker):].strip()
+                       if mark_idx >= 0 else masked_raw)
+            sb.table("query_logs").update({
+                "query_masked": cleaned,
+                "is_reroll":    True,
+            }).eq("id", ans.query_log_id).execute()
+        except Exception as e:
+            import sys
+            print(f"[PR-2.5 reroll fixup failed] id={ans.query_log_id} err={e}",
+                  file=sys.stderr, flush=True)
+
     _push_history((
         "assistant", ans.text,
         {
