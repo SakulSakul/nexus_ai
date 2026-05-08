@@ -873,6 +873,16 @@ _PROD_ENV_VALUES = {"prod", "production"}
 
 _HISTORY_CAP = 100  # session_state["history"] 최대 entry 수 (FIFO 자르기)
 
+# 🔄 다시 답변 — core/chatbot.ask 시그니처에 temperature/system_prompt
+# override 인자가 없어 호출 측에서 model 파라미터 조정이 불가. 차선책으로
+# 사용자 question 앞에 다음 prefix 를 prepend + prev_turn 으로 이전 답변
+# 컨텍스트를 ask_stream 에 전달 → LLM 이 이전 답변과 다른 관점으로 작성.
+# core/ 시그니처는 무수정.
+_REROLL_PREFIX = (
+    "[다시 답변 요청] 이전 답변과 다른 관점·다른 근거 사규·다른 측면을 "
+    "강조하여 답변해주세요. 단, 사실관계는 정확해야 합니다.\n\n원 질문: "
+)
+
 
 def _push_history(item) -> None:
     """history 에 push 후 cap 초과 시 앞쪽부터 자른다 (FIFO).
@@ -916,6 +926,85 @@ def _check_rate_limit() -> bool:
     rec["count"] += 1
     st.session_state["_rate_rec"] = rec
     return True
+
+
+def _render_hr_inquiry_panel(hotlines: dict[str, str]) -> None:
+    """인사팀 문의 안내 박스 — hotline_config 4개 키 매핑, 빈 값은 렌더 생략.
+    DB 스키마 변경 없이 기존 키만 사용 (`hr_contact_text`, `hr_chatbot_url`,
+    `internal_report_url`, `external_hotline`)."""
+    hr_text = (hotlines.get("hr_contact_text") or "").strip()
+    hr_chatbot = (hotlines.get("hr_chatbot_url") or "").strip()
+    anon_url = (hotlines.get("internal_report_url") or "").strip()
+    ext_hotline = (hotlines.get("external_hotline") or "").strip()
+    with st.container(border=True):
+        st.markdown("**📞 인사팀 문의 채널**")
+        st.markdown(hr_text or "인사팀에 직접 문의하세요.")
+        # URL 항목은 placeholder(example.invalid) 일 수 있으므로 그대로 link_button —
+        # admin 이 hotline_config 갱신하면 즉시 반영.
+        if hr_chatbot:
+            st.link_button("💬 사내 인사 챗봇", hr_chatbot, use_container_width=True)
+        if anon_url:
+            st.link_button("🔒 익명 신고 채널", anon_url, use_container_width=True)
+        if ext_hotline:
+            # 외부 상담채널은 URL 이 아닌 전화번호("고용노동부 1350") 가 들어
+            # 있어 link_button 부적합 → 텍스트 라인으로.
+            st.markdown(f"📞 외부 상담채널: {ext_hotline}")
+        st.caption(
+            "⚠️ 본 답변은 사규 해석 보조이며, 인사 행정 결정은 인사팀 문의가 우선합니다."
+        )
+
+
+def _render_action_buttons(
+    msg_idx: int,
+    *,
+    original_q: str | None,
+    prev_answer: str | None,
+    hotlines: dict[str, str],
+) -> None:
+    """답변 본문 직후 두 액션: [📞 인사팀 문의] [🔄 다시 답변].
+
+    인사팀 문의 — toggle. session_state["hr_open"] set 으로 msg_idx 별 독립.
+    다시 답변 — 1회 한정. session_state["rerolled_msgs"] set 으로 msg_idx 별
+    중복 차단. 클릭 시 session_state["_pending_reroll"] 에 reroll request 적재
+    후 rerun → main() 다음 사이클에서 _run_ask(reroll_of=...) 로 처리.
+    original_q / prev_answer 가 None 이면 reroll 버튼 disabled (history meta
+    가 누락된 fallback 메시지 등).
+    """
+    hr_open: set = st.session_state.setdefault("hr_open", set())
+    rerolled: set = st.session_state.setdefault("rerolled_msgs", set())
+    already_rerolled = msg_idx in rerolled
+    can_reroll = (original_q is not None and prev_answer is not None
+                  and not already_rerolled)
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        hr_label = "📞 인사팀 문의 닫기" if msg_idx in hr_open else "📞 인사팀 문의"
+        if st.button(hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True):
+            if msg_idx in hr_open:
+                hr_open.remove(msg_idx)
+            else:
+                hr_open.add(msg_idx)
+            st.rerun()
+    with col_b:
+        reroll_label = "🔄 다시 답변 받음" if already_rerolled else "🔄 다시 답변"
+        reroll_help = (
+            "이미 다시 답변을 받았습니다 (1회 한정)" if already_rerolled
+            else "이전 답변과 다른 관점으로 한 번 더 답변받기"
+        )
+        if st.button(
+            reroll_label,
+            key=f"reroll_btn_{msg_idx}",
+            disabled=not can_reroll,
+            use_container_width=True,
+            help=reroll_help,
+        ):
+            rerolled.add(msg_idx)
+            st.session_state["_pending_reroll"] = {
+                "original_q":  original_q,
+                "prev_answer": prev_answer,
+            }
+            st.rerun()
+    if msg_idx in hr_open:
+        _render_hr_inquiry_panel(hotlines)
 
 
 def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
@@ -976,7 +1065,21 @@ def _render_critical_banner() -> None:
     )
 
 
-def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
+def _run_ask(
+    sb, q: str, cat: str, hotlines: dict,
+    *,
+    reroll_of: dict | None = None,
+) -> None:
+    """답변 생성. reroll_of={"original_q","prev_answer"} 면 다시 답변 모드.
+
+    reroll 모드에서는:
+      - user 메시지 chat_message + history push 를 skip (사용자가 새로 입력
+        한 게 아니므로). 답변 카드만 새로 추가 → 두 답변을 비교 가능.
+      - prev_turn 자동 설정 (이전 답변을 LLM 컨텍스트에).
+      - question 앞에 _REROLL_PREFIX prepend → 다른 관점 강조.
+    core/chatbot.ask 시그니처는 무수정 (temperature/system_prompt override
+    인자가 없어 호출 측 차선책).
+    """
     import sys
     import traceback
     if not _check_rate_limit():
@@ -990,9 +1093,27 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
 
     # 멀티 턴 모드 체크 (한 턴 한정, pop 으로 즉시 삭제). 사용자가 직전 답변
     # 마지막에 "🔗 관련 질문" 클릭 → next_turn_mode="followup". 그 외는 "new".
+    # reroll 모드에서는 followup 결정 무시 (reroll 이 prev_turn 을 강제).
     mode = st.session_state.pop("next_turn_mode", "new")
     prev_turn: dict | None = None
-    if mode == "followup":
+    effective_q = q
+    if reroll_of is not None:
+        prev_turn = {
+            "question": reroll_of["original_q"],
+            "answer":   reroll_of["prev_answer"],
+        }
+        effective_q = _REROLL_PREFIX + reroll_of["original_q"]
+        # 호출 인자 가시성 — reroll prefix·prev_turn 가 실제 ask_stream 으로
+        # 들어가는지 확인 (검증 체크리스트 항목 6 대체 — temperature override
+        # 가 core 시그니처상 불가하므로 question/prev_turn 만 확인).
+        import sys as _sys
+        print(
+            f"[reroll] prefix_applied=True prev_q_len={len(prev_turn['question'])} "
+            f"prev_a_len={len(prev_turn['answer'])} effective_q_head="
+            f"{effective_q[:80]!r}",
+            file=_sys.stderr, flush=True,
+        )
+    elif mode == "followup":
         history = st.session_state.get("history", [])
         # 마지막 assistant entry + 그 직전 user entry 추출
         last_assistant_idx = None
@@ -1007,12 +1128,15 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     "answer": history[last_assistant_idx][1],
                 }
 
-    if prev_turn is not None:
+    if reroll_of is not None:
+        st.caption("🔄 같은 질문에 다른 관점에서 답변 (1회 한정) — 이전 답변은 위에 그대로 유지")
+    elif prev_turn is not None:
         st.caption("🔗 관련 추가 질문 모드 — 이전 답변과 연결됩니다")
 
-    _push_history(("user", q, {}))
-    with st.chat_message("user"):
-        st.markdown(q)
+    if reroll_of is None:
+        _push_history(("user", q, {}))
+        with st.chat_message("user"):
+            st.markdown(q)
 
     ans = None
     last_err: Exception | None = None
@@ -1125,7 +1249,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                     # 내부에서 ask() 동기 위임 → ("done", Answer) 단일 yield.
                     for kind, val in ask_stream(
                         sb,
-                        question=q,
+                        question=effective_q,
                         category=cat,
                         progress_callback=cb,
                         prev_turn=prev_turn,
@@ -1211,14 +1335,30 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
                 unsafe_allow_html=True,
             )
             _render_contexts(ans.contexts)
+            # 액션 버튼 (📞 인사팀 문의 / 🔄 다시 답변) — 답변 본문 직후, 피드백 위.
+            # msg_idx 는 곧 push 될 assistant 엔트리의 인덱스 (= 현재 history 길이).
+            # original_q: reroll 모드면 reroll_of 의 원 질문, 정상이면 직전 user 메시지(q).
+            _action_msg_idx = len(st.session_state["history"])
+            _action_orig_q = (reroll_of["original_q"]
+                              if reroll_of is not None else q)
+            _render_action_buttons(
+                _action_msg_idx,
+                original_q=_action_orig_q,
+                prev_answer=ans.text,
+                hotlines=hotlines,
+            )
             # 피드백 UI — 답변마다 고유 인덱스로 위젯 키 분리.
-            _render_feedback(sb, msg_idx=len(st.session_state["history"]),
+            _render_feedback(sb, msg_idx=_action_msg_idx,
                              query_log_id=ans.query_log_id)
 
+    # original_q: history replay 시 액션 버튼(다시 답변)이 원 질문을 복원하는
+    # 데 필요. reroll 모드면 최초 질문, 정상 모드면 사용자 입력 q.
+    _saved_orig_q = (reroll_of["original_q"] if reroll_of is not None else q)
     if ans is None:
         _push_history((
             "assistant", friendly_msg,
-            {"contexts": [], "critical": False, "kind": None, "thinking": "", "elapsed": 0.0},
+            {"contexts": [], "critical": False, "kind": None, "thinking": "",
+             "elapsed": 0.0, "original_q": _saved_orig_q},
         ))
         return
 
@@ -1231,6 +1371,7 @@ def _run_ask(sb, q: str, cat: str, hotlines: dict) -> None:
             "thinking": ans.thinking,
             "elapsed": ans.elapsed,
             "query_log_id": ans.query_log_id,
+            "original_q": _saved_orig_q,
         },
     ))
 
@@ -1471,6 +1612,15 @@ def main():
             st.markdown(content)
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
+            # 액션 버튼 — 정상 답변(query_log_id 있음) 한정. 에러 답변은 다시
+            # 답변 시 동일 에러 반복 가능성 + 인사팀 문의는 의미 없으므로 미노출.
+            if (role == "assistant" and meta.get("query_log_id") is not None):
+                _render_action_buttons(
+                    idx,
+                    original_q=meta.get("original_q"),
+                    prev_answer=content,
+                    hotlines=hotlines,
+                )
             if role == "assistant" and meta.get("query_log_id"):
                 _render_feedback(sb, msg_idx=idx, query_log_id=meta["query_log_id"])
             # 멀티 턴 모드 버튼 — 마지막 assistant 메시지 + 정상 답변 한정.
@@ -1494,6 +1644,14 @@ def main():
         '</div>',
         unsafe_allow_html=True,
     )
+
+    # 🔄 다시 답변 — 액션 버튼 클릭 시 session_state 에 적재된 reroll request.
+    # rerun 다음 사이클에 history replay 후 본 분기에서 ask_stream 재호출.
+    # pop 으로 즉시 제거 — 동일 reroll 이 두 번 실행되는 일을 차단.
+    pending = st.session_state.pop("_pending_reroll", None)
+    if pending is not None:
+        _run_ask(sb, q="", cat=cat, hotlines=hotlines, reroll_of=pending)
+        return
 
     # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단
     q = st.chat_input("질문을 입력하세요…", max_chars=2000) or clicked_q
