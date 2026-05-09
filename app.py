@@ -1937,20 +1937,42 @@ _CONSENT_COOKIE_NAME = "df_compass_consent_v"
 def _consent_gate(sb) -> bool:
     """베타 환경에서 동의 미완료 시 동의 화면을 렌더하고 False 반환.
     호출자는 False 면 st.stop() 으로 본 화면 렌더를 차단해야 한다.
-    운영(`NEXUS_ENV=prod*`)에서는 항상 True (게이트 비활성)."""
+    운영(`NEXUS_ENV=prod*`)에서는 항상 True (게이트 비활성).
+
+    PR-Fun1.1 hotfix3: form_placeholder.empty() 패턴 폐기.
+      - 동의 통과 검증을 form 렌더링 _위_ 에서 분기 — 동의 후엔 form 코드
+        자체가 실행되지 않음.
+      - cookie set 은 submit cycle 에서 직접 호출하지 않고 session_state 의
+        pending flag 로 다음 cycle 에 미룸. cm.set() 의 component frame 이
+        메인 UI 와 함께 그려져 cookie 실제 set + form 잔재 0.
+    """
     s = settings()
     if not (s.env_tag or "").startswith("beta"):
         return True
 
     cur_ver = s.consent_version
-    # 같은 session 내 즉시 통과
+    cm = _consent_cookie_manager()
+
+    # PR-Fun1.1 hotfix3: pending cookie set 처리 — 직전 submit 의 deferred
+    # cookie set 을 본 cycle 에서 실행. cm.set() 의 streamlit component 가
+    # 본 cycle 의 frame 에 그려져 JS 가 실제 cookie 를 저장한다.
+    _pending = st.session_state.pop("_pending_consent_cookie", None)
+    if _pending:
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            cm.set(
+                _CONSENT_COOKIE_NAME, _pending,
+                expires_at=_dt.now() + _td(days=30),
+                key="set_consent_cookie",
+            )
+        except Exception:
+            pass
+
+    # 분기 1: 같은 session 통과
     if st.session_state.get("beta_consent_v") == cur_ver:
         return True
 
-    # PR-Fun1.1 작업 1-B: 30일 영속 cookie. cookies dict 가 None 또는
-    # 키 부재 → 게이트 form 그대로. 다음 cycle 에 cookie 동기화되어 매칭
-    # 시 자동 통과 + session_state sync.
-    cm = _consent_cookie_manager()
+    # 분기 2: cookie 30일 영속 통과
     try:
         cookies = cm.get_all() or {}
     except Exception:
@@ -1959,6 +1981,7 @@ def _consent_gate(sb) -> bool:
         st.session_state["beta_consent_v"] = cur_ver
         return True
 
+    # 여기 도달 = 동의 미완. form 직접 그리기 (placeholder 패턴 폐기).
     st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -1976,19 +1999,14 @@ def _consent_gate(sb) -> bool:
     st.markdown(_CONSENT_BODY_MD)
     st.markdown("---")
 
-    # PR-Fun1.1 작업 1-A: form 영역을 placeholder 안에 두고 동의 성공 시
-    # placeholder.empty() 로 즉시 cleanup → rerun 동기화 시간 영향 없이
-    # 사용자 화면에서 form 자체가 사라짐.
-    form_placeholder = st.empty()
-    with form_placeholder.container():
-        with st.form("beta_consent_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                name = st.text_input("성명 *", value="")
-            with c2:
-                emp_no = st.text_input("사번 (선택)", value="")
-            agree = st.checkbox("위 내용을 모두 읽고 베타 참가에 동의합니다.")
-            submitted = st.form_submit_button("동의하고 시작", type="primary")
+    with st.form("beta_consent_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            name = st.text_input("성명 *", value="")
+        with c2:
+            emp_no = st.text_input("사번 (선택)", value="")
+        agree = st.checkbox("위 내용을 모두 읽고 베타 참가에 동의합니다.")
+        submitted = st.form_submit_button("동의하고 시작", type="primary")
 
     if submitted:
         # 입력 검증 — stored XSS / SQL 페이로드 차단 + 형식 강제.
@@ -2028,22 +2046,12 @@ def _consent_gate(sb) -> bool:
                 with st.expander("기술 세부정보", expanded=False):
                     st.code(err or "(no detail)")
             else:
-                # 작업 1-A: form 즉시 제거.
-                form_placeholder.empty()
-                # 작업 1-B: 30일 cookie 영속 set.
-                try:
-                    from datetime import datetime as _dt, timedelta as _td
-                    cm.set(
-                        _CONSENT_COOKIE_NAME, cur_ver,
-                        expires_at=_dt.now() + _td(days=30),
-                        key="set_consent_cookie",
-                    )
-                except Exception:
-                    # cookie set 실패해도 session_state 로 같은 session 통과.
-                    # 다음 진입 시 form 다시 표시될 수 있음 (UX 불편 정도).
-                    pass
+                # PR-Fun1.1 hotfix3: cookie set 은 다음 cycle 로 deferred —
+                # cm.set() 의 component frame 이 form 과 같은 cycle 에 그려져
+                # disabled-looking 잔재를 만들던 issue 해결.
                 st.session_state["beta_consent_v"] = cur_ver
                 st.session_state["beta_consent_participant"] = participant
+                st.session_state["_pending_consent_cookie"] = cur_ver
                 st.rerun()
 
     return False
