@@ -1088,21 +1088,24 @@ def _render_empty_state(sb) -> None:
         if doc_title:
             tip_text = _cached_daily_tip(now.date().isoformat(), doc_title)
         if doc_title and tip_text:
-            tip_col1, tip_col2 = st.columns([5, 1])
-            with tip_col1:
-                st.markdown(
-                    f"<div style='background:#f8fafc;border-left:3px solid #94a3b8;"
-                    f"padding:8px 12px;margin:8px 0;border-radius:4px;"
-                    f"font-size:13px;'>"
-                    f"💡 <strong>오늘의 사규 한 입</strong> — {tip_text}<br>"
-                    f"<span style='color:#64748b;font-size:11px;'>"
-                    f"출처 후보: {doc_title}</span></div>",
-                    unsafe_allow_html=True,
-                )
-            with tip_col2:
-                if st.button("👉 알아보기", key="tip_explore", use_container_width=True):
-                    st.session_state["pending_q"] = f"{doc_title} 에 대해 알려주세요"
-                    st.rerun()
+            # PR-Fun1.1 작업 2: column 분리 제거. col2 가 너무 좁아 button
+            # 클릭 영역이 부족했던 issue 수정. 박스 + button 단일 row 로.
+            st.markdown(
+                f"<div style='background:#f8fafc;border-left:3px solid #94a3b8;"
+                f"padding:8px 12px;margin:8px 0;border-radius:4px;"
+                f"font-size:13px;'>"
+                f"💡 <strong>오늘의 사규 한 입</strong> — {tip_text}<br>"
+                f"<span style='color:#64748b;font-size:11px;'>"
+                f"출처 후보: {doc_title}</span></div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "👉 이 사규 알아보기",
+                key="tip_explore",
+                use_container_width=False,
+            ):
+                st.session_state["pending_q"] = f"{doc_title} 에 대해 알려주세요"
+                st.rerun()
 
         st.markdown(
             "<div style='font-size:12px;color:#64748b;margin:12px 0 6px 0;'>"
@@ -1913,6 +1916,21 @@ def _record_consent(sb, *, name: str, emp_no: str, version: str, env: str,
         return False, msg
 
 
+@st.cache_resource(show_spinner=False)
+def _consent_cookie_manager():
+    """PR-Fun1.1 작업 1-B: extra-streamlit-components 의 CookieManager.
+
+    한 번만 생성해야 component 중복 mount 방지 — st.cache_resource.
+    cookie 동기화는 첫 cycle 에 None 일 수 있으므로 호출 측이 None
+    대비. 다음 cycle 에 정상 dict.
+    """
+    import extra_streamlit_components as stx
+    return stx.CookieManager(key="df_compass_consent_cookie_mgr")
+
+
+_CONSENT_COOKIE_NAME = "df_compass_consent_v"
+
+
 def _consent_gate(sb) -> bool:
     """베타 환경에서 동의 미완료 시 동의 화면을 렌더하고 False 반환.
     호출자는 False 면 st.stop() 으로 본 화면 렌더를 차단해야 한다.
@@ -1922,7 +1940,20 @@ def _consent_gate(sb) -> bool:
         return True
 
     cur_ver = s.consent_version
+    # 같은 session 내 즉시 통과
     if st.session_state.get("beta_consent_v") == cur_ver:
+        return True
+
+    # PR-Fun1.1 작업 1-B: 30일 영속 cookie. cookies dict 가 None 또는
+    # 키 부재 → 게이트 form 그대로. 다음 cycle 에 cookie 동기화되어 매칭
+    # 시 자동 통과 + session_state sync.
+    cm = _consent_cookie_manager()
+    try:
+        cookies = cm.get_all() or {}
+    except Exception:
+        cookies = {}
+    if cookies.get(_CONSENT_COOKIE_NAME) == cur_ver:
+        st.session_state["beta_consent_v"] = cur_ver
         return True
 
     st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
@@ -1942,14 +1973,19 @@ def _consent_gate(sb) -> bool:
     st.markdown(_CONSENT_BODY_MD)
     st.markdown("---")
 
-    with st.form("beta_consent_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            name = st.text_input("성명 *", value="")
-        with c2:
-            emp_no = st.text_input("사번 (선택)", value="")
-        agree = st.checkbox("위 내용을 모두 읽고 베타 참가에 동의합니다.")
-        submitted = st.form_submit_button("동의하고 시작", type="primary")
+    # PR-Fun1.1 작업 1-A: form 영역을 placeholder 안에 두고 동의 성공 시
+    # placeholder.empty() 로 즉시 cleanup → rerun 동기화 시간 영향 없이
+    # 사용자 화면에서 form 자체가 사라짐.
+    form_placeholder = st.empty()
+    with form_placeholder.container():
+        with st.form("beta_consent_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                name = st.text_input("성명 *", value="")
+            with c2:
+                emp_no = st.text_input("사번 (선택)", value="")
+            agree = st.checkbox("위 내용을 모두 읽고 베타 참가에 동의합니다.")
+            submitted = st.form_submit_button("동의하고 시작", type="primary")
 
     if submitted:
         # 입력 검증 — stored XSS / SQL 페이로드 차단 + 형식 강제.
@@ -1989,6 +2025,20 @@ def _consent_gate(sb) -> bool:
                 with st.expander("기술 세부정보", expanded=False):
                     st.code(err or "(no detail)")
             else:
+                # 작업 1-A: form 즉시 제거.
+                form_placeholder.empty()
+                # 작업 1-B: 30일 cookie 영속 set.
+                try:
+                    from datetime import datetime as _dt, timedelta as _td
+                    cm.set(
+                        _CONSENT_COOKIE_NAME, cur_ver,
+                        expires_at=_dt.now() + _td(days=30),
+                        key="set_consent_cookie",
+                    )
+                except Exception:
+                    # cookie set 실패해도 session_state 로 같은 session 통과.
+                    # 다음 진입 시 form 다시 표시될 수 있음 (UX 불편 정도).
+                    pass
                 st.session_state["beta_consent_v"] = cur_ver
                 st.session_state["beta_consent_participant"] = participant
                 st.rerun()
@@ -2032,6 +2082,15 @@ def main():
     cat = _sidebar(sb, hotlines)
 
     _render_beta_banner()
+
+    # PR-Fun1.1 작업 3: pending_q early exit — 빠른 액션·Daily Tip·
+    # suggestions 카드 클릭으로 적재된 query 가 있으면 empty state /
+    # history replay / footer 등을 모두 건너뛰고 즉시 _run_ask 진입 →
+    # st.status() spinner 가 사용자 화면 전환 직후 즉시 표시됨.
+    _pending_q = st.session_state.pop("pending_q", None)
+    if _pending_q:
+        _run_ask(sb, _pending_q, cat, hotlines)
+        return
 
     # Hero section
     st.markdown(
@@ -2111,10 +2170,10 @@ def main():
                     and meta.get("query_log_id") is not None):
                 _render_mode_buttons(idx)
 
-    # PR-Fun1: 빠른 액션 카드 / suggestions 카드 / Daily Tip 알아보기 클릭은
-    # session_state['pending_q'] 를 통해 query 전달. 여기서 pop 해서 일반
-    # chat_input 흐름과 동일하게 _run_ask 로 진입.
-    clicked_q: str | None = st.session_state.pop("pending_q", None)
+    # PR-Fun1.1 작업 3: pending_q 는 main() 입구의 early exit 가 처리.
+    # 여기까지 흘러왔다는 건 카드 클릭 query 가 없었다는 의미라 chat_input
+    # 만 처리. clicked_q 변수는 호환성 위해 유지하되 None 으로 둠.
+    clicked_q: str | None = None
 
     st.markdown(
         '<div style="text-align:center; color:#888; font-size:11px; '
