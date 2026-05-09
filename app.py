@@ -1916,13 +1916,16 @@ def _record_consent(sb, *, name: str, emp_no: str, version: str, env: str,
         return False, msg
 
 
-@st.cache_resource(show_spinner=False)
 def _consent_cookie_manager():
     """PR-Fun1.1 작업 1-B: extra-streamlit-components 의 CookieManager.
 
-    한 번만 생성해야 component 중복 mount 방지 — st.cache_resource.
-    cookie 동기화는 첫 cycle 에 None 일 수 있으므로 호출 측이 None
-    대비. 다음 cycle 에 정상 dict.
+    PR-Fun1.1 hotfix2: @st.cache_resource 제거. CookieManager 는 streamlit
+    component (widget) 을 등록하므로 cached function 안에서 호출 시
+    CachedWidgetWarning 발생. 동일 key 로 매 rerun 마다 호출해도
+    component 가 reuse 되므로 캐시 불필요.
+
+    cookie 동기화는 첫 cycle 에 None 일 수 있으므로 호출 측이 None 대비.
+    다음 cycle 에 정상 dict.
     """
     import extra_streamlit_components as stx
     return stx.CookieManager(key="df_compass_consent_cookie_mgr")
