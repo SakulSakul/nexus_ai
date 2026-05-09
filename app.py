@@ -950,6 +950,12 @@ def _render_contexts(contexts: list[dict]) -> None:
 
 
 def _show_example_questions() -> str | None:
+    """SAMPLE_QUESTIONS 8개 chip — empty state 에 노출 (PR-Fun1.4 부활).
+
+    PR-Fun1.4: click 패턴을 PR-Fun1 의 pending_q + rerun 으로 통일.
+    return 값은 None 항상 — 호출 측은 무시. main() 의 clicked_q =
+    pop("pending_q") 흐름이 처리.
+    """
     st.markdown(
         """
         <div class="nx-eq-header">
@@ -963,7 +969,8 @@ def _show_example_questions() -> str | None:
     cols = st.columns(2)
     for i, q in enumerate(_EXAMPLE_QUESTIONS):
         if cols[i % 2].button(q, key=f"eq_{i}", use_container_width=True):
-            return q
+            st.session_state["pending_q"] = q
+            st.rerun()
     return None
 
 
@@ -1116,6 +1123,12 @@ def _render_empty_state(sb) -> None:
                 "- 고의/반복적인 경우: 감급, 감봉\n\n"
                 "📎 **참고 사규:** (재무) 법인카드 관리 지침, (공통) 임직원 징계기준"
             )
+
+    # PR-Fun1.4 작업 4: SAMPLE_QUESTIONS 8개 chip 부활. chat_message 바깥
+    # (empty state 의 chat 흐름 다음) 에 노출 — 사쿨 명세 "챗봇 인사 아래".
+    # 8개 hardcode (_EXAMPLE_QUESTIONS) 그대로 보존. 클릭은 pending_q 패턴
+    # 으로 통일되어 main() 의 clicked_q 흐름이 처리.
+    _show_example_questions()
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
