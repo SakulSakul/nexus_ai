@@ -310,10 +310,24 @@ def _render_query_logs_health_banner(sb) -> None:
 
     배너 자체가 페이지 진입을 막지는 않음(st.stop 없음). 운영자가
     "확인했음" 클릭 시 세션 동안 숨김.
+
+    PR-S1: query_logs SELECT 는 RLS 로 anon 차단되어 service_role
+    클라이언트로만 가능. _supabase_admin() 미설정 시 안내 배너로 폴백.
     """
     if st.session_state.get("health_warn_dismissed"):
         return
-    health = _query_logs_health_check(sb)
+    admin_sb = _supabase_admin()
+    if admin_sb is None:
+        st.warning(
+            "⚠️ `SUPABASE_SERVICE_ROLE_KEY` 미설정 — query_logs 헬스 체크"
+            "와 레이더 통계가 동작하지 않습니다. (PR-S1 RLS 차단 후 admin "
+            "경로는 service_role 키 필수)"
+        )
+        if st.button("확인했음 (이 세션 동안 숨김)", key="dismiss_health_warn"):
+            st.session_state["health_warn_dismissed"] = True
+            st.rerun()
+        return
+    health = _query_logs_health_check(admin_sb)
     if health["ok"] and health["count"] > 0:
         return  # 정상 트래픽 — 배너 없음
 
@@ -705,12 +719,22 @@ def _tab_radar(sb):
     st.subheader("📡 리스크 트렌드 레이더")
     days = st.slider("조회 기간(일)", 7, 90, 30)
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
+    # PR-S1: query_logs SELECT 는 service_role 만 가능. anon sb 인자는
+    # 다른 테이블(hotline_config_public 등) 호환 위해 시그니처 유지하되
+    # query_logs 만 admin_sb 로 분리.
+    admin_sb = _supabase_admin()
+    if admin_sb is None:
+        st.error(
+            "⚠️ `SUPABASE_SERVICE_ROLE_KEY` 미설정 — 레이더 통계 사용 불가. "
+            "(PR-S1 RLS 차단)"
+        )
+        return
     # select * 로 받아서 컬럼 부재(예: db/06 미적용)에 내성. 아래 모든 접근은
     # r.get("...") 로 안전 처리되므로 신규 컬럼이 없어도 동작 유지.
     # PostgREST 자체 에러(스키마 캐시 stale, RLS 등) 도 친화적으로 표시.
     try:
         rows = (
-            sb.table("query_logs")
+            admin_sb.table("query_logs")
               .select("*")
               .gte("ts", since)
               .execute()
