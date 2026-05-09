@@ -866,6 +866,7 @@ def _render_category_chip(contexts: list[dict]) -> None:
 
 def _render_suggestion_cards(
     suggestions: list[str], *, is_critical: bool, msg_idx: int,
+    ans_id: int | None = None,
 ) -> None:
     """PR-Fun1 작업 3: 답변 끝의 후속 질문 카드 3개.
 
@@ -874,7 +875,13 @@ def _render_suggestion_cards(
     생성되지 않으나, 이중 방어로 UI 단도 차단.
 
     클릭 시 session_state['pending_q'] 로 query 적재 + rerun → main 의
-    chat_input 처리부가 pop 해서 _run_ask 호출.
+    chat_input 처리부가 pop 해서 _run_ask 호출 (SAMPLE_QUESTIONS chip 과
+    동일 패턴, 작업 7).
+
+    PR-Fun1.4 작업 7: button key 안정화. live answer (msg_idx=len(history))
+    와 history replay (msg_idx=idx) 의 idx 가 cycle 사이에 다를 수 있어
+    button widget 재생성 → click event 손실 위험. ans_id (query_log_id)
+    가 있으면 우선 사용. None 이면 msg_idx fallback.
     """
     if is_critical or not suggestions:
         return
@@ -884,10 +891,11 @@ def _render_suggestion_cards(
         "💡 <strong>이런 질문도 해볼 수 있어요</strong></div>",
         unsafe_allow_html=True,
     )
+    key_id = ans_id if ans_id is not None else msg_idx
     cols = st.columns(min(3, len(suggestions)))
     for i, q in enumerate(suggestions[:3]):
         if cols[i].button(
-            q, key=f"sugg_{msg_idx}_{i}", use_container_width=True,
+            q, key=f"sugg_{key_id}_{i}", use_container_width=True,
         ):
             st.session_state["pending_q"] = q
             st.rerun()
@@ -1776,10 +1784,12 @@ def _run_ask(
             )
             _render_contexts(ans.contexts)
             # PR-Fun1 작업 3: 후속 질문 카드 (critical 시 비활성).
+            # PR-Fun1.4 작업 7: ans_id (query_log_id) 로 button key 안정화.
             _render_suggestion_cards(
                 getattr(ans, "suggestions", []) or [],
                 is_critical=ans.is_critical,
                 msg_idx=len(st.session_state["history"]),
+                ans_id=getattr(ans, "query_log_id", None),
             )
             # PR-Fun1 작업 5: 랜덤 격려 멘트 (critical 시 critical_pool).
             _render_closing_remark(
@@ -2156,11 +2166,13 @@ def main():
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
             # PR-Fun1 작업 3·5: suggestions 카드 + 격려 멘트 (replay).
+            # PR-Fun1.4 작업 7: ans_id 로 live answer 와 동일 button key 보장.
             if role == "assistant" and meta.get("query_log_id") is not None:
                 _render_suggestion_cards(
                     list(meta.get("suggestions") or []),
                     is_critical=bool(meta.get("critical")),
                     msg_idx=idx,
+                    ans_id=meta.get("query_log_id"),
                 )
                 _render_closing_remark(
                     bool(meta.get("critical")), msg_idx=idx,
