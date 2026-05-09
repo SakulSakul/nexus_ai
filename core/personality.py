@@ -152,7 +152,7 @@ def pick_random_doc_title(supabase: Any) -> str | None:
 # ── 빠른 액션 카드 (PR-Fun1 작업 2) ─────────────────────────
 # Empty state 에 노출. 클릭 시 session_state.chat_input 자동 채움.
 QUICK_ACTIONS: tuple[tuple[str, str, str], ...] = (
-    ("🎫", "휴가·출장",  "휴가 신청 절차"),
+    ("🛫", "출장비",     "출장비 정산 한도 알려줘"),
     ("💳", "법인카드",   "법인카드 사용 가능한 경우"),
     ("📝", "신고 절차",  "신고는 어디로 어떻게 하나요?"),
     ("🤝", "동호회",     "사내 동호회 활동 지원"),
