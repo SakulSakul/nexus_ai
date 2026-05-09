@@ -1107,19 +1107,10 @@ def _render_empty_state(sb) -> None:
                 st.session_state["pending_q"] = f"{doc_title} 에 대해 알려주세요"
                 st.rerun()
 
-        st.markdown(
-            "<div style='font-size:12px;color:#64748b;margin:12px 0 6px 0;'>"
-            "빠른 시작 — 자주 묻는 카테고리</div>",
-            unsafe_allow_html=True,
-        )
-        from core.personality import QUICK_ACTIONS
-        cols = st.columns(len(QUICK_ACTIONS))
-        for i, (icon, label, query) in enumerate(QUICK_ACTIONS):
-            if cols[i].button(
-                f"{icon} {label}", key=f"qa_{i}", use_container_width=True,
-            ):
-                st.session_state["pending_q"] = query
-                st.rerun()
+        # PR-Fun1.3: 빠른 액션 카드 4개 제거 — product 가치 < 비용 (콘텐츠
+        # 큐레이션 부담 + UI 복잡도 + bug risk). empty state = 챗봇 인사 +
+        # Daily Tip + 답변 예시 expander 만 유지. core.personality.
+        # QUICK_ACTIONS 변수는 보존 (미래 부활 여지).
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
@@ -2199,6 +2190,13 @@ def main():
         unsafe_allow_html=True,
     )
 
+    # PR-Fun1.3: chat_input widget 을 다른 분기 처리 _전_에 호출 —
+    # _run_ask 호출 후 main() 가 일찍 종료되더라도 chat_input widget 이
+    # 매 rerun 에 등록되도록 보장. streamlit chat_input 은 화면 하단
+    # sticky 라 호출 위치와 무관하게 항상 동일 위치에 렌더된다.
+    # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단.
+    q_input = st.chat_input("질문을 입력하세요…", max_chars=2000)
+
     # 🔄 다시 답변 — 액션 버튼 클릭 시 session_state 에 적재된 reroll request.
     # rerun 다음 사이클에 history replay 후 본 분기에서 ask_stream 재호출.
     # pop 으로 즉시 제거 — 동일 reroll 이 두 번 실행되는 일을 차단.
@@ -2207,8 +2205,8 @@ def main():
         _run_ask(sb, q="", cat=cat, hotlines=hotlines, reroll_of=pending)
         return
 
-    # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단
-    q = st.chat_input("질문을 입력하세요…", max_chars=2000) or clicked_q
+    # 카드 클릭 query (clicked_q) 또는 chat_input 직접 입력 (q_input).
+    q = q_input or clicked_q
     if not q:
         return
 
