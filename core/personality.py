@@ -1,0 +1,217 @@
+"""DF COMPASS · personality / fun 묶음 (PR-Fun1).
+
+empty-state 인사·Daily Tip·답변 후 격려 멘트의 random pool 과 fallback
+hardcoded 인사를 한 곳에 모은다. UI 호출은 app.py 가 random.choice 또는
+LLM 호출 (cache_data 데코) 로.
+
+가드레일:
+- core/ 식별자 무수정 (본 모듈은 신규 — 기존 식별자 영향 X).
+- LLM 호출 비용 최소화 — empty-state 인사 1시간, Daily Tip 1일 cache.
+- critical 답변 시 critical_pool 만 사용 (호출자가 ans.is_critical 분기).
+- LLM 호출 실패 시 시간대·요일 반영 hardcoded fallback.
+"""
+
+from __future__ import annotations
+
+import random
+from datetime import datetime
+from typing import Any
+
+
+# ── 답변 후 격려 멘트 random pool ──────────────────────────
+NORMAL_CLOSING_POOL: tuple[str, ...] = (
+    "수고 많으셨어요. 더 궁금한 점 있으시면 물어봐 주세요.",
+    "오늘도 좋은 하루 되세요. 추가 질문 환영입니다.",
+    "이 답변이 도움 됐길 바라요.",
+    "더 알아보고 싶은 점 있으면 언제든 물어봐 주세요.",
+    "도움 되셨길 바라요. 다른 질문도 환영합니다.",
+    "차근히 잘 정리됐길 바라요.",
+    "필요한 정보 더 있으면 편하게 물어보세요.",
+)
+
+CRITICAL_CLOSING_POOL: tuple[str, ...] = (
+    "혼자 감당하지 마세요. CSR팀에 언제든 연락 주세요.",
+    "도움이 필요하시면 핫라인에 문의 바랍니다.",
+    "회사는 늘 곁에 있습니다. 필요할 때 핫라인을 이용해 주세요.",
+)
+
+
+def closing_remark(*, is_critical: bool) -> str:
+    """답변 후 화면 caption 으로 표시할 격려 멘트 1개 random pick."""
+    pool = CRITICAL_CLOSING_POOL if is_critical else NORMAL_CLOSING_POOL
+    return random.choice(pool)
+
+
+# ── empty-state 인사 fallback (LLM 다운 시) ─────────────────
+# 시간대·요일 반영 hardcoded pool. LLM 호출 실패해도 personality 살림.
+def fallback_greeting(now: datetime | None = None) -> str:
+    n = now or datetime.now()
+    weekday = n.weekday()        # 0=Mon ... 6=Sun
+    hour = n.hour
+
+    is_friday = (weekday == 4)
+    is_monday = (weekday == 0)
+    is_weekend = (weekday >= 5)
+
+    if is_weekend:
+        return "주말에도 수고 많으십니다. 무엇을 도와드릴까요?"
+    if is_friday and hour >= 14:
+        return "주말 앞두고 잘 정리하세요. 사규 관련 질문은 언제든 환영입니다."
+    if is_monday and hour < 12:
+        return "한 주 시작 좋습니다. 사규·윤리 관련 궁금한 점 편하게 물어보세요."
+    if 5 <= hour < 12:
+        return "안녕하세요. DF COMPASS 입니다. 좋은 아침입니다."
+    if 12 <= hour < 14:
+        return "점심 시간 수고 많으십니다. 답변이 필요하면 편하게 질문해 주세요."
+    if 14 <= hour < 18:
+        return "수고 많으십니다. 무엇을 도와드릴까요?"
+    if 18 <= hour < 22:
+        return "오늘 하루도 고생 많으셨습니다. 마무리 전에 답변이 필요하면 도와드릴게요."
+    return "늦은 시간까지 수고 많으십니다. 사규 관련 질문은 언제든 환영입니다."
+
+
+# ── 동적 인사 LLM prompt builder ────────────────────────────
+GREETING_SYSTEM_PROMPT = (
+    "당신은 신세계디에프 사내 윤리·컴플라이언스 챗봇 'DF COMPASS' 의 인사말 "
+    "생성기입니다. 임직원이 페이지에 처음 들어왔을 때 보여줄 1~2문장 인사말을 "
+    "생성합니다.\n\n"
+    "규칙:\n"
+    "- 합니다체 기본. 진중하되 따뜻하게.\n"
+    "- 매번 동일한 인사 금지. 시간대·요일 분위기를 자연스럽게 반영.\n"
+    "- 1~2문장, 70자 이내.\n"
+    "- 느낌표 자제. 과도한 친근함·이모지 금지.\n"
+    "- '안녕하세요'로 시작 가능하지만 매번 같은 형식 금지.\n"
+    "- 챗봇 사용 안내 (예시 질문 등) 는 포함하지 마세요. 인사말만 출력.\n"
+    "- 출력은 인사말 본문만. 따옴표·접두사·메타 코멘트 없이."
+)
+
+
+def build_greeting_user_prompt(now: datetime | None = None) -> str:
+    n = now or datetime.now()
+    weekday_kr = ("월", "화", "수", "목", "금", "토", "일")[n.weekday()]
+    hour = n.hour
+    if 5 <= hour < 12:    period = "오전"
+    elif 12 <= hour < 14: period = "점심"
+    elif 14 <= hour < 18: period = "오후"
+    elif 18 <= hour < 22: period = "저녁"
+    else:                 period = "야간"
+    return (
+        f"현재 한국 시간: {weekday_kr}요일 {period} ({hour}시 무렵).\n"
+        "이 분위기에 맞는 인사말 1~2문장을 생성해 주세요."
+    )
+
+
+# ── Daily Tip ────────────────────────────────────────────────
+TIP_SYSTEM_PROMPT = (
+    "당신은 신세계디에프 사내 윤리·컴플라이언스 챗봇의 '오늘의 사규 한 입' "
+    "코너입니다. 임직원이 부담 없이 한 줄 사규 fun fact 로 흥미를 갖게 합니다.\n\n"
+    "규칙:\n"
+    "- 합니다체 기본. 가볍지만 정확하게.\n"
+    "- 1문장, 80자 이내.\n"
+    "- 사규 제목은 그대로 인용하되, 본문은 직역하지 말고 풀어서 친근하게.\n"
+    "- 농담·과장·창작 금지. 사실 기반.\n"
+    "- 출력은 한 줄 본문만. 따옴표·접두사·이모지 없이."
+)
+
+
+def build_tip_user_prompt(doc_title: str) -> str:
+    return (
+        f"오늘 소개할 사규: 「{doc_title}」.\n"
+        "이 사규의 가장 핵심적이고 임직원 일상 업무에 도움 되는 한 줄을 "
+        "흥미롭게 풀어 주세요."
+    )
+
+
+def pick_random_doc_title(supabase: Any) -> str | None:
+    """nexus_documents 에서 active 문서 random 1개의 doc_title 반환.
+
+    실패·결과 없음 시 None — 호출자는 Tip 섹션 자체를 숨기면 됨.
+    SELECT 권한 anon 가정 (db/01 의 nexus_documents 는 현재 anon SELECT
+    허용 상태). RLS 적용된 query_logs 와는 별개 테이블.
+    """
+    try:
+        res = (
+            supabase.table("nexus_documents")
+            .select("title")
+            .eq("status", "active")
+            .limit(200)  # over-fetch 후 client-side random — RPC 추가 비용 회피
+            .execute()
+        )
+        rows = res.data or []
+        if not rows:
+            return None
+        titles = [str(r.get("title") or "").strip() for r in rows]
+        titles = [t for t in titles if t]
+        if not titles:
+            return None
+        return random.choice(titles)
+    except Exception:
+        return None
+
+
+# ── 빠른 액션 카드 (PR-Fun1 작업 2) ─────────────────────────
+# Empty state 에 노출. 클릭 시 session_state.chat_input 자동 채움.
+QUICK_ACTIONS: tuple[tuple[str, str, str], ...] = (
+    ("🎫", "휴가·출장",  "휴가 신청 절차"),
+    ("💳", "법인카드",   "법인카드 사용 가능한 경우"),
+    ("📝", "신고 절차",  "신고는 어디로 어떻게 하나요?"),
+    ("🤝", "동호회",     "사내 동호회 활동 지원"),
+)
+
+
+# ── 카테고리별 색·아이콘 (PR-Fun1 작업 4) ───────────────────
+# 답변 본문은 무수정. UI 단의 작은 chip 만 카테고리별 동적 변경.
+# 가독성 우선 — 본문 색·배경은 손대지 않음.
+CATEGORY_VISUAL: dict[str, tuple[str, str]] = {
+    # category_name: (icon, hex_color)
+    "재무":     ("💳", "#1d4ed8"),  # blue
+    "인사":     ("👥", "#15803d"),  # green
+    "CSR":      ("🤝", "#a16207"),  # yellow-brown (가독성)
+    "안전":     ("⚠️", "#c2410c"),  # orange
+    "공통":     ("📋", "#475569"),  # slate
+    "정보보안": ("🔒", "#7e22ce"),  # purple
+    "영업":     ("🛒", "#1e3a8a"),  # navy
+    "공정거래": ("⚖️", "#0f766e"),  # teal
+    "총무":     ("📦", "#475569"),  # slate
+    "환경":     ("🌱", "#15803d"),  # green
+}
+_CATEGORY_DEFAULT = ("📋", "#475569")
+
+
+def category_visual(contexts: list[dict]) -> tuple[str, str, str]:
+    """contexts 의 가장 빈도 높은 카테고리 → (icon, color, label).
+
+    contexts[i].categories 는 list[str] (db/09 마이그 후). 평탄화 후 가장
+    많이 등장한 카테고리를 골라 시각 메타 반환. "공통" 이 1위면 2위 사용
+    (cross-cutting 카테고리는 fallback 의미라 실 도메인 우선).
+    """
+    if not contexts:
+        return (*_CATEGORY_DEFAULT, "")
+    from collections import Counter
+    flat: list[str] = []
+    for c in contexts:
+        cats = c.get("categories") or []
+        if isinstance(cats, list):
+            flat.extend(str(x) for x in cats if x)
+    if not flat:
+        # categories 컬럼 부재 (db/09 미적용) — doc_title prefix 로 fallback
+        import re as _re
+        for c in contexts:
+            t = str(c.get("doc_title") or "")
+            m = _re.match(r"^\(\s*([^)\s][^)]*?)\s*\)", t)
+            if m:
+                flat.append(m.group(1).strip())
+                break
+    if not flat:
+        return (*_CATEGORY_DEFAULT, "")
+    counts = Counter(flat)
+    # 공통 외 1위 우선
+    primary = None
+    for cat, _n in counts.most_common():
+        if cat != "공통":
+            primary = cat
+            break
+    if primary is None:
+        primary = "공통"
+    icon, color = CATEGORY_VISUAL.get(primary, _CATEGORY_DEFAULT)
+    return (icon, color, primary)
