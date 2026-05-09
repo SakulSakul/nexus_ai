@@ -694,6 +694,24 @@ div[data-testid="stCaptionContainer"] p,
 small {
     color: #555 !important;
 }
+
+/* PR-Fun1.8: 로딩 단계 emoji animation. spin / pulse 두 가지. */
+@keyframes nx-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+@keyframes nx-pulse {
+    0%, 100% { opacity: 1;   transform: scale(1);    }
+    50%      { opacity: 0.55; transform: scale(1.18); }
+}
+.nx-spin {
+    animation: nx-spin 2s linear infinite;
+    display: inline-block;
+}
+.nx-pulse {
+    animation: nx-pulse 1.4s ease-in-out infinite;
+    display: inline-block;
+}
 </style>
 """
 
@@ -1694,12 +1712,16 @@ def _run_ask(
                 height=60,
             )
 
-        # PR-Fun1.6: st.status 폐기 → st.empty placeholder + emoji progress
-        # 한 줄 패턴. 단계별 markdown 갱신 + 답변 그려진 후 placeholder.empty().
+        # PR-Fun1.6: st.empty placeholder + emoji progress 한 줄 패턴.
+        # PR-Fun1.8: CSS keyframes (nx-spin / nx-pulse) class + st.progress
+        # bar 단계별 갱신. emoji 자체 애니메이션 + 시각적 진행률.
         progress_placeholder = st.empty()
+        progress_bar = st.progress(0, text="진행 중...")
         progress_placeholder.markdown(
-            "🧭 질문 분석  →  ⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
-            "⏳ 진행 중..."
+            '<span class="nx-spin">🧭</span> 질문 분석  →  '
+            "⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
+            "⏳ 진행 중...",
+            unsafe_allow_html=True,
         )
 
         # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
@@ -1708,21 +1730,30 @@ def _run_ask(
         def _on_progress(stage: str, payload: dict) -> None:
             if stage == "analyze":
                 progress_placeholder.markdown(
-                    "🧭 질문 분석  →  ⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
-                    "⏳ 질문 분석 중..."
+                    '<span class="nx-spin">🧭</span> 질문 분석  →  '
+                    "⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
+                    "⏳ 질문 분석 중...",
+                    unsafe_allow_html=True,
                 )
+                progress_bar.progress(0.15, text="🔍 질문 분석 중...")
             elif stage == "search_start":
                 progress_placeholder.markdown(
-                    "✅ 질문 분석  →  📚 사규 검색  →  ⚪ 답변 작성\n\n"
-                    "⏳ 사규 검색 중..."
+                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
+                    "⚪ 답변 작성\n\n"
+                    "⏳ 사규 검색 중...",
+                    unsafe_allow_html=True,
                 )
+                progress_bar.progress(0.4, text="📚 관련 사규 검색 중...")
             elif stage == "search_done":
                 total = payload.get("total", 0)
                 if total == 0:
                     progress_placeholder.markdown(
-                        "✅ 질문 분석  →  ✅ 사규 검색  →  🧠 답변 작성\n\n"
-                        "⏳ 검색 결과 없음 — 답변에 한계가 있을 수 있어요"
+                        '✅ 질문 분석  →  ✅ 사규 검색  →  '
+                        '<span class="nx-pulse">🧠</span> 답변 작성\n\n'
+                        "⏳ 검색 결과 없음 — 답변에 한계가 있을 수 있어요",
+                        unsafe_allow_html=True,
                     )
+                    progress_bar.progress(0.7, text="✍️ 답변 작성 중...")
                     return
                 # 중복 doc_title 제거 + 첫 3개 + 외 N건
                 seen: set[str] = set()
@@ -1737,13 +1768,17 @@ def _run_ask(
                 if more > 0:
                     title_str += f" 외 {more}건"
                 progress_placeholder.markdown(
-                    "✅ 질문 분석  →  ✅ 사규 검색  →  🧠 답변 작성\n\n"
-                    f"⏳ 보통 20-30초 · {title_str}"
+                    '✅ 질문 분석  →  ✅ 사규 검색  →  '
+                    '<span class="nx-pulse">🧠</span> 답변 작성\n\n'
+                    f"⏳ 보통 20-30초 · {title_str}",
+                    unsafe_allow_html=True,
                 )
+                progress_bar.progress(0.7, text="✍️ 답변 작성 중...")
             elif stage == "generate":
                 # search_done 에서 이미 답변 작성 단계 표시됨. 추가 변경 X.
                 pass
-            # "complete" 는 답변 final 단계에서 progress_placeholder.empty() 로 처리
+            elif stage == "complete":
+                progress_bar.progress(1.0, text="✅ 답변 완료")
 
         stream_buffer = ""
         for attempt in range(3):
@@ -1783,9 +1818,10 @@ def _run_ask(
                     continue
                 break
 
-        # progress placeholder 정리 — 답변 본문 final 표시 _전_에 비움.
+        # progress placeholder + bar 정리 — 답변 본문 final 표시 _전_에 비움.
         # 에러 분기는 아래 if ans is None 에서도 한 번 더 안전망.
         progress_placeholder.empty()
+        progress_bar.empty()
 
         if ans is None:
             # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
