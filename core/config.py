@@ -65,6 +65,14 @@ class Settings:
     chat_fallback_provider: str  # 'gemini' | 'claude' | '' (empty = no fallback)
     claude_model: str            # 기본 'claude-opus-4-7'
     claude_effort: str           # 'low' | 'medium' | 'high' | 'xhigh' | 'max' (max 는 Opus 전용)
+    # ── Confidence threshold (PR-C1) ───────────────────────────
+    # hybrid_search 의 RRF best_score (1/(60+r_vec) + 1/(60+r_kw))
+    # 절대값으로 high/medium/low 3단계 분류.
+    # 이론적 max ≈ 0.0328 (둘 다 1위), cosine 0-1 아님.
+    # 첫 추정값 — 라이브 분포 (eval/run.py best_score 출력) 보고 튜닝.
+    # low 는 best_score < confidence_medium 일 때 자동 (별도 환경변수 없음).
+    confidence_high: float       # NEXUS_CONFIDENCE_HIGH   default 0.025
+    confidence_medium: float     # NEXUS_CONFIDENCE_MEDIUM default 0.015
 
 
 @lru_cache(maxsize=1)
@@ -90,6 +98,8 @@ def settings() -> Settings:
         chat_fallback_provider=get_secret("NEXUS_CHAT_FALLBACK", "claude").lower(),
         claude_model=get_secret("NEXUS_CLAUDE_MODEL", "claude-opus-4-7"),
         claude_effort=get_secret("NEXUS_CLAUDE_EFFORT", "medium").lower(),
+        confidence_high=float(get_secret("NEXUS_CONFIDENCE_HIGH", "0.025")),
+        confidence_medium=float(get_secret("NEXUS_CONFIDENCE_MEDIUM", "0.015")),
     )
 
 

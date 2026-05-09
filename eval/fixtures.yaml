@@ -1,0 +1,77 @@
+# ============================================================
+#  DF COMPASS · Retrieval Eval Fixtures (PR-Q1 starter)
+#
+#  ⚠️ expected_sources 는 클로드 코드가 메모리에서 추측한 사규명입니다.
+#     실제 사규 매핑 (정확한 문서명·괄호 안 분류 표기·조항 등) 은
+#     사쿨이 검증·정정 필요. PR 머지 후 별도 정정 작업.
+#
+#  각 fixture:
+#    id: 고유 식별자 (q01~)
+#    question: 사용자 질문 (mask_pii 전 원문)
+#    expected_sources: 검색되어야 하는 사규명 list (substring 비교).
+#                       빈 list = negative case (hit 0건이 정답)
+#    category: general | critical | multi-domain | negative
+#
+#  카테고리 mix:
+#    general 4 / critical 3 / multi-domain 1 / negative 2 = 10
+# ============================================================
+
+- id: q01
+  question: "법인카드로 동료에게 줄 선물 사도 됨?"
+  expected_sources:
+    - "(재무) 법인카드"
+  category: general
+
+- id: q02
+  question: "출장 갔을 때 식사비 한도가 어떻게 돼요?"
+  expected_sources:
+    - "출장"
+  category: general
+
+- id: q03
+  question: "거래처에서 명절 선물 받았는데 어떻게 처리해야 하나요?"
+  expected_sources:
+    - "윤리"
+  category: general
+
+- id: q04
+  question: "협력사 직원 접대 가능한 한도가 있나요?"
+  expected_sources:
+    - "윤리"
+    - "공정거래"
+  category: general
+
+- id: q05
+  question: "직장 내에서 괴롭힘을 당했어요. 어떻게 신고하나요?"
+  expected_sources:
+    - "직장 내 괴롭힘"
+  category: critical
+
+- id: q06
+  question: "성희롱 피해를 당했을 때 회사 절차가 어떻게 되나요?"
+  expected_sources:
+    - "성희롱"
+  category: critical
+
+- id: q07
+  question: "익명으로 비위 행위를 신고할 수 있는 채널이 있나요?"
+  expected_sources:
+    - "신고"
+  category: critical
+
+- id: q08
+  question: "회사 공금을 개인 용도로 쓴 경우 징계 수위는 어떻게 되나요?"
+  expected_sources:
+    - "징계"
+    - "윤리"
+  category: multi-domain
+
+- id: q09
+  question: "오늘 점심 메뉴 추천해줘"
+  expected_sources: []
+  category: negative
+
+- id: q10
+  question: "주말에 영화 뭐 볼지 추천해줘"
+  expected_sources: []
+  category: negative

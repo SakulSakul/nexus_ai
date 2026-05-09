@@ -207,6 +207,58 @@ class Answer:
     # query_logs.id (insert 결과). 사용자 피드백(👍/👎) 갱신 시 이 id 로 update.
     # insert 실패 시 None.
     query_log_id: int | None = field(default=None)
+    # PR-C1 신뢰도. "high" | "medium" | "low" — app.py 의 chip 표시·
+    # 디버깅용. ask_stream chunk 단계에선 비결정 → "done" 시점에만 채워짐.
+    confidence: str = field(default="high")
+    # contexts best RRF score (1/(60+r_vec) + 1/(60+r_kw)). 0.0~~0.0328.
+    best_score: float = field(default=0.0)
+
+
+# ── PR-C1: Confidence-aware 단호도 ───────────────────────────
+# best_score 의 RRF 단위 임계값으로 high/medium/low 분류.
+# critical 트리거 시는 [Critical Mode 답변 가이드] 가 우선 — confidence
+# prefix 비활성 (ask/ask_stream 호출 측에서 분기).
+
+_CONFIDENCE_PREFIX = (
+    "[NOTE — 시스템 운영 신호]\n"
+    "이 질문에 대한 사규 검색의 신뢰도가 낮다고 판정되었습니다. "
+    "[신뢰도 가이드] 섹션을 활성화하여 답변하세요. 단호 어휘 대신 "
+    "추정형 표현을 쓰고, 답변 끝에 \"정확한 사항은 인사팀·CSR팀에 "
+    "확인 바랍니다\" 한 줄을 추가하세요. 인라인 인용 (📎 + 볼드) 형식과 "
+    "[참조: ...] 통합 출처 표기는 그대로 유지합니다.\n\n"
+)
+
+
+def _classify_confidence(best_score: float, hit_count: int) -> str:
+    """contexts 의 best RRF score + hit count 로 신뢰도 분류.
+
+    hit_count == 0 → 'low' 즉시 (검색 hit 없음).
+    그 외엔 best_score 와 임계값 비교.
+    """
+    if hit_count <= 0:
+        return "low"
+    s = settings()
+    if best_score >= s.confidence_high:
+        return "high"
+    if best_score >= s.confidence_medium:
+        return "medium"
+    return "low"
+
+
+def _maybe_prefix_system_prompt(
+    base_prompt: str, *, is_critical: bool, confidence: str,
+) -> str:
+    """confidence 가 low/medium 이고 critical 아닐 때만 prefix 활성.
+
+    critical 트리거 시는 [Critical Mode 답변 가이드] 가 우선이므로
+    톤 완화 prefix 를 활성하지 않는다 (회사 보호 차원의 단호한 신고
+    안내가 우선).
+    """
+    if is_critical:
+        return base_prompt
+    if confidence == "high":
+        return base_prompt
+    return _CONFIDENCE_PREFIX + base_prompt
 
 
 _TRANSIENT_HINTS = (
@@ -661,10 +713,20 @@ def ask(
         "total": len(contexts),
     })
 
+    # PR-C1: contexts best RRF score 계산 → 신뢰도 분류 → critical 아닐 때만
+    # SYSTEM_PROMPT 에 [신뢰도 가이드] 활성 prefix 주입.
+    _scores = [float(c.get("score") or 0.0) for c in contexts]
+    best_score = max(_scores) if _scores else 0.0
+    confidence = _classify_confidence(best_score, len(contexts))
+    system_prompt_eff = _maybe_prefix_system_prompt(
+        SYSTEM_PROMPT,
+        is_critical=detection.triggered, confidence=confidence,
+    )
+
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
     raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
-        SYSTEM_PROMPT, user, include_thinking=False,
+        system_prompt_eff, user, include_thinking=False,
     )
     # [검색 과정] 섹션을 본문에서 분리. 본문 후처리(_ensure_citation,
     # enforce_structure) 는 answer 부분만 받게 해서 [검색 과정] 텍스트가
@@ -742,6 +804,8 @@ def ask(
         thinking=effective_process,
         elapsed=elapsed,
         query_log_id=query_log_id,
+        confidence=confidence,
+        best_score=best_score,
     )
 
 
@@ -917,6 +981,16 @@ def ask_stream(
         "total": len(contexts),
     })
 
+    # PR-C1: best_score → confidence → SYSTEM_PROMPT prefix.
+    # streaming 경로는 critical 트리거되면 위쪽에서 ask() 동기 위임으로
+    # 빠지므로 여기 도달했다는 건 is_critical=False. 그래도 명시 인자로 전달.
+    _scores = [float(c.get("score") or 0.0) for c in contexts]
+    best_score = max(_scores) if _scores else 0.0
+    confidence = _classify_confidence(best_score, len(contexts))
+    system_prompt_eff = _maybe_prefix_system_prompt(
+        SYSTEM_PROMPT, is_critical=False, confidence=confidence,
+    )
+
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
 
@@ -927,7 +1001,7 @@ def ask_stream(
     raw_full = ""
     try:
         for kind, val in _stream_filter_process_marker(
-            _gen_gemini_stream(SYSTEM_PROMPT, user)
+            _gen_gemini_stream(system_prompt_eff, user)
         ):
             if kind == "raw":
                 raw_full += val
@@ -997,6 +1071,8 @@ def ask_stream(
         thinking=effective_process,
         elapsed=elapsed,
         query_log_id=query_log_id,
+        confidence=confidence,
+        best_score=best_score,
     ))
 
 

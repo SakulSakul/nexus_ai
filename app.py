@@ -819,6 +819,29 @@ def _hotline_button(hotlines: dict[str, str]) -> None:
         st.link_button("신세계면세점 핫라인 제보하기", url, use_container_width=True)
 
 
+def _render_confidence_chip(confidence: str) -> None:
+    """PR-C1: 답변 본문 직후에 검색 신뢰도 chip 을 caption 톤으로 노출.
+
+    confidence: 'high' | 'medium' | 'low'. 그 외 값은 표시 생략.
+    본문(ans.text) 의 [참조: ...] / 종결 멘트(💬...) 과 시각적으로 분리되되
+    눈에 띄는 회색 caption + 색상 점.
+    """
+    chip_map = {
+        "high":   ("🟢", "높은 신뢰도", "#1f7a3a"),
+        "medium": ("🟡", "보조 참고 — 정확한 사항은 인사팀 확인", "#a07020"),
+        "low":    ("🔴", "검색 hit 부족 — 인사팀·CSR팀 확인 권장", "#a93226"),
+    }
+    if confidence not in chip_map:
+        return
+    icon, label, color = chip_map[confidence]
+    st.markdown(
+        f"<div style='font-size:12px;color:{color};padding:4px 0 2px;"
+        f"font-family:-apple-system,Pretendard,sans-serif;'>"
+        f"{icon} <span style='color:{color};'>{label}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_contexts(contexts: list[dict]) -> None:
     if not contexts:
         return
@@ -1491,6 +1514,11 @@ def _run_ask(
             # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
             # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
             answer_placeholder.markdown(ans.text)
+            # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
+            # ans.confidence 는 'high' | 'medium' | 'low'. critical 모드에서는
+            # [Critical Mode 답변 가이드] 가 우선이라 톤 prefix 는 적용 안 됐지만
+            # chip 으로 사용자에 검색 신뢰도 정보는 제공.
+            _render_confidence_chip(ans.confidence)
             # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
             # 지면서 setInterval 도 자동 cleanup. ans.elapsed (서버 측 perf
             # counter) 가 사용자 wall-clock 보다 정확.
@@ -1561,6 +1589,7 @@ def _run_ask(
             "elapsed": ans.elapsed,
             "query_log_id": ans.query_log_id,
             "original_q": _saved_orig_q,
+            "confidence": getattr(ans, "confidence", "high"),
         },
     ))
 
@@ -1827,6 +1856,10 @@ def main():
             if role == "assistant" and meta.get("critical"):
                 _render_critical_banner()
             st.markdown(content)
+            # PR-C1: history replay 에도 chip 노출. 기존 entry (confidence 키 없음)
+            # 는 'high' default 로 회귀 안전.
+            if role == "assistant" and meta.get("query_log_id") is not None:
+                _render_confidence_chip(meta.get("confidence", "high"))
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
             # 액션 버튼 — 정상 답변(query_log_id 있음) 한정. 에러 답변은 다시
