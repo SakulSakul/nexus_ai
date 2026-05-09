@@ -1714,7 +1714,6 @@ def _run_ask(
      font-size:13px;color:#666;display:flex;justify-content:space-between;
      align-items:center;border:1px solid #EDE6DC;box-sizing:border-box;">
   <span>⏱️ <span id="dfc-elapsed" style="font-weight:600;color:#C8102E;">0</span>초 경과</span>
-  <span style="color:#999;">평균 약 {_avg_s}초</span>
 </div>
 <script>
   (function() {{
@@ -1788,7 +1787,7 @@ def _run_ask(
                 progress_placeholder.markdown(
                     '✅ 질문 분석  →  ✅ 사규 검색  →  '
                     '<span class="nx-cycle"></span> 답변 작성\n\n'
-                    f"⏳ 보통 20-30초 · {title_str}",
+                    f"⏳ 보통 30초 안에 · {title_str}",
                     unsafe_allow_html=True,
                 )
                 progress_bar.progress(0.7, text="✍️ 답변 작성 중...")
