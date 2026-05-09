@@ -1611,14 +1611,18 @@ def _run_ask(
                 height=60,
             )
 
-        with st.status("문서 검색 및 답변 생성 중...", expanded=True) as status:
+        with st.status("🔍 질문 처리 중...", expanded=True) as status:
             # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
             # ("search_done") → ("generate") → ("complete") 순으로 호출.
             # injection early-exit 분기에서는 callback 미호출(정상).
+            # PR-Fun1.2 hotfix: status.update 로 collapsed 라벨도 단계별 갱신
+            # → 사용자가 expanded=False 상태에서도 진행 단계 즉시 인지.
             def _on_progress(stage: str, payload: dict) -> None:
                 if stage == "analyze":
+                    status.update(label="🔍 질문 분석 중...")
                     st.write("🔍 질문을 분석하고 있어요...")
                 elif stage == "search_start":
+                    status.update(label="📚 관련 사규 검색 중...")
                     st.write("📚 관련 사규를 찾고 있어요...")
                 elif stage == "search_done":
                     total = payload.get("total", 0)
@@ -1646,10 +1650,13 @@ def _run_ask(
                     title_str = ", ".join(shown)
                     if more > 0:
                         title_str += f" 외 {more}건"
+                    status.update(label=f"📋 검색 완료 ({count_str})")
                     st.write(f"📋 검색 완료 ({count_str}): {title_str}")
                 elif stage == "generate":
+                    status.update(label="✍️ 답변 작성 중...")
                     st.write("🧠 답변을 작성하고 있어요...")
-                # "complete" 는 status.update 가 처리하므로 별도 메시지 불필요
+                elif stage == "complete":
+                    status.update(label="✅ 답변 완료", state="complete")
 
             stream_buffer = ""
             for attempt in range(3):
@@ -2094,14 +2101,10 @@ def main():
 
     _render_beta_banner()
 
-    # PR-Fun1.1 작업 3: pending_q early exit — 빠른 액션·Daily Tip·
-    # suggestions 카드 클릭으로 적재된 query 가 있으면 empty state /
-    # history replay / footer 등을 모두 건너뛰고 즉시 _run_ask 진입 →
-    # st.status() spinner 가 사용자 화면 전환 직후 즉시 표시됨.
-    _pending_q = st.session_state.pop("pending_q", None)
-    if _pending_q:
-        _run_ask(sb, _pending_q, cat, hotlines)
-        return
+    # PR-Fun1.2 hotfix: PR-Fun1.1 의 pending_q early exit 폐기. early exit
+    # 의 return 이 main() 의 chat_input 영역까지 도달 못 하게 해서 답변 후
+    # chat_input 자체가 안 그려졌다 (사용자 다음 질문 불가). 원래 흐름
+    # (chat_input 또는 pending_q 둘 중 하나 채워지면 _run_ask) 복구.
 
     # Hero section
     st.markdown(
@@ -2181,10 +2184,10 @@ def main():
                     and meta.get("query_log_id") is not None):
                 _render_mode_buttons(idx)
 
-    # PR-Fun1.1 작업 3: pending_q 는 main() 입구의 early exit 가 처리.
-    # 여기까지 흘러왔다는 건 카드 클릭 query 가 없었다는 의미라 chat_input
-    # 만 처리. clicked_q 변수는 호환성 위해 유지하되 None 으로 둠.
-    clicked_q: str | None = None
+    # PR-Fun1.2 hotfix: 빠른 액션 카드 / Daily Tip / suggestions 카드 클릭은
+    # session_state['pending_q'] 를 통해 query 전달. 여기서 pop 해서 일반
+    # chat_input 흐름과 OR 결합 — 답변 후에도 chat_input 정상 노출 유지.
+    clicked_q: str | None = st.session_state.pop("pending_q", None)
 
     st.markdown(
         '<div style="text-align:center; color:#888; font-size:11px; '
