@@ -897,7 +897,9 @@ def _render_suggestion_cards(
         if cols[i].button(
             q, key=f"sugg_{key_id}_{i}", use_container_width=True,
         ):
-            st.session_state["pending_q"] = q
+            # PR-Fun1.5: clicked_q 매개체로 분리 (SAMPLE_QUESTIONS 와 통일).
+            # main() 입구 early exit 가 처리 — query carry-over issue 회피.
+            st.session_state["clicked_q"] = q
             st.rerun()
 
 
@@ -977,7 +979,9 @@ def _show_example_questions() -> str | None:
     cols = st.columns(2)
     for i, q in enumerate(_EXAMPLE_QUESTIONS):
         if cols[i % 2].button(q, key=f"eq_{i}", use_container_width=True):
-            st.session_state["pending_q"] = q
+            # PR-Fun1.5: clicked_q 매개체로 분리. main() 입구 early exit
+            # 가 처리 — query carry-over issue 회피.
+            st.session_state["clicked_q"] = q
             st.rerun()
     return None
 
@@ -1307,45 +1311,85 @@ def _render_action_buttons(
         _render_hr_inquiry_panel(hotlines)
 
 
-def _record_feedback_click(sb, query_log_id: int, *, positive: bool) -> bool:
+def _feedback_update(sb, payload: dict, *,
+                     query_log_id: int | None,
+                     masked_question: str | None) -> bool:
+    """PR-Fun1.5: query_log_id 우선 매칭, 없으면 masked_question + 최근 5분
+    ts 윈도우 fallback. PR-S1 의 RLS 가 anon SELECT 차단 → INSERT RETURNING
+    이 빈 list → ans.query_log_id None 인 경우 대비. UPDATE 자체는 anon
+    INSERT/UPDATE 정책 통과로 실제 row 수정 가능 (RETURNING 만 차단).
+
+    매칭이 다중 row 잡을 위험: query_masked 가 동일한 질문의 짧은 시간 내
+    중복 INSERT 거의 X (사용자 1명 기준). 5분 윈도우로 충분 — race 위험은
+    베타 단계 acceptable.
+    """
+    import sys
+    try:
+        if query_log_id:
+            sb.table("query_logs").update(payload).eq("id", query_log_id).execute()
+        elif masked_question:
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            recent = (_dt.now(_tz.utc) - _td(minutes=5)).isoformat()
+            (
+                sb.table("query_logs")
+                .update(payload)
+                .eq("query_masked", masked_question)
+                .gte("ts", recent)
+                .execute()
+            )
+        else:
+            return False
+        return True
+    except Exception as e:
+        print(
+            f"[fb update failed] query_log_id={query_log_id} "
+            f"masked={(masked_question or '')[:40]} err={e}",
+            file=sys.stderr, flush=True,
+        )
+        return False
+
+
+def _record_feedback_click(
+    sb, query_log_id: int | None, *,
+    positive: bool, masked_question: str | None = None,
+) -> bool:
     """클릭 시점 즉시 기록 — feedback (기존 ±1, admin/radar 호환) +
     feedback_type (신규, 'positive'/'negative') + feedback_at 동시 갱신.
 
     db/04 의 feedback (smallint) 컨벤션은 -1/+1 (db/04_beta_hooks.sql:25).
     """
-    import sys
     from datetime import datetime, timezone
-    try:
-        sb.table("query_logs").update({
-            "feedback":      1 if positive else -1,
-            "feedback_type": "positive" if positive else "negative",
-            "feedback_at":   datetime.now(timezone.utc).isoformat(),
-        }).eq("id", query_log_id).execute()
-        return True
-    except Exception as e:
-        print(f"[fb click update failed] query_log_id={query_log_id} err={e}",
-              file=sys.stderr, flush=True)
-        return False
+    payload = {
+        "feedback":      1 if positive else -1,
+        "feedback_type": "positive" if positive else "negative",
+        "feedback_at":   datetime.now(timezone.utc).isoformat(),
+    }
+    return _feedback_update(
+        sb, payload,
+        query_log_id=query_log_id, masked_question=masked_question,
+    )
 
 
-def _record_feedback_submit(sb, query_log_id: int, *,
-                            reasons: list[str], comment: str | None) -> bool:
+def _record_feedback_submit(
+    sb, query_log_id: int | None, *,
+    reasons: list[str], comment: str | None,
+    masked_question: str | None = None,
+) -> bool:
     """제출 시 reasons (jsonb 배열) + comment (기존 text) 추가 갱신.
     feedback_at 은 클릭 시점 그대로 둔다."""
-    import sys
-    try:
-        payload: dict = {"feedback_reasons": reasons}
-        if comment:
-            payload["feedback_comment"] = comment[:500]
-        sb.table("query_logs").update(payload).eq("id", query_log_id).execute()
-        return True
-    except Exception as e:
-        print(f"[fb submit update failed] query_log_id={query_log_id} err={e}",
-              file=sys.stderr, flush=True)
-        return False
+    payload: dict = {"feedback_reasons": reasons}
+    if comment:
+        payload["feedback_comment"] = comment[:500]
+    return _feedback_update(
+        sb, payload,
+        query_log_id=query_log_id, masked_question=masked_question,
+    )
 
 
-def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
+def _render_feedback(
+    sb, msg_idx: int, query_log_id: int | None,
+    *, masked_question: str | None = None,
+) -> None:
     """답변 1건당 피드백 — CTA + 사유 chip + 자유 의견.
 
     상태 (session_state):
@@ -1367,8 +1411,13 @@ def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
     유지되므로 새로고침 없이는 (C) 상태 자연스럽게 재현. 페이지 새로고침으로
     session_state 초기화 시 history 자체도 비어 replay 자체가 안 일어남
     (베타 단계 비용 가드).
+
+    PR-Fun1.5: PR-S1 의 RLS SELECT 차단으로 INSERT RETURNING 빈 list →
+    ans.query_log_id None 가 흔함. masked_question 이 fallback 매칭자로
+    record_feedback 의 update 경로가 query_masked + 최근 5분 ts 윈도우로
+    row 매칭. 둘 다 None 이면 추적 불가 → 가드.
     """
-    if not query_log_id:
+    if not query_log_id and not masked_question:
         return
     clicked: dict = st.session_state.setdefault("feedback_clicked", {})
     submitted: set = st.session_state.setdefault("feedback_submitted", set())
@@ -1392,11 +1441,17 @@ def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
             "👎 아쉬워요", key=f"fb_neg_{msg_idx}", use_container_width=True,
         )
         if pos_clicked:
-            if _record_feedback_click(sb, query_log_id, positive=True):
+            if _record_feedback_click(
+                sb, query_log_id, positive=True,
+                masked_question=masked_question,
+            ):
                 clicked[msg_idx] = "positive"
                 st.rerun()
         if neg_clicked:
-            if _record_feedback_click(sb, query_log_id, positive=False):
+            if _record_feedback_click(
+                sb, query_log_id, positive=False,
+                masked_question=masked_question,
+            ):
                 clicked[msg_idx] = "negative"
                 st.rerun()
         return
@@ -1453,8 +1508,11 @@ def _render_feedback(sb, msg_idx: int, query_log_id: int | None) -> None:
         "건너뛰기", key=f"fb_skip_{msg_idx}", use_container_width=True,
     )
     if submit_clicked:
-        if _record_feedback_submit(sb, query_log_id,
-                                   reasons=reasons or [], comment=comment):
+        if _record_feedback_submit(
+            sb, query_log_id,
+            reasons=reasons or [], comment=comment,
+            masked_question=masked_question,
+        ):
             submitted.add(msg_idx)
             st.rerun()
     if skip_clicked:
@@ -1809,8 +1867,13 @@ def _run_ask(
                 hotlines=hotlines,
             )
             # 피드백 UI — 답변마다 고유 인덱스로 위젯 키 분리.
-            _render_feedback(sb, msg_idx=_action_msg_idx,
-                             query_log_id=ans.query_log_id)
+            # PR-Fun1.5: query_log_id None 일 때 masked_question 으로
+            # fallback 매칭 (RLS RETURNING 차단 우회).
+            _render_feedback(
+                sb, msg_idx=_action_msg_idx,
+                query_log_id=ans.query_log_id,
+                masked_question=getattr(ans, "masked_question", None),
+            )
 
     # original_q: history replay 시 액션 버튼(다시 답변)이 원 질문을 복원하는
     # 데 필요. reroll 모드면 최초 질문, 정상 모드면 사용자 입력 q.
@@ -1858,6 +1921,9 @@ def _run_ask(
             "original_q": _saved_orig_q,
             "confidence": getattr(ans, "confidence", "high"),
             "suggestions": list(getattr(ans, "suggestions", []) or []),
+            # PR-Fun1.5: query_log_id None (RLS RETURNING 차단) 시 피드백
+            # update fallback 매칭 식별자.
+            "masked_question": getattr(ans, "masked_question", None),
         },
     ))
 
@@ -2186,8 +2252,16 @@ def main():
                     prev_answer=content,
                     hotlines=hotlines,
                 )
-            if role == "assistant" and meta.get("query_log_id"):
-                _render_feedback(sb, msg_idx=idx, query_log_id=meta["query_log_id"])
+            # PR-Fun1.5: history replay 도 query_log_id None 케이스 처리.
+            # query_log_id 또는 masked_question 둘 중 하나라도 있으면 표시.
+            if role == "assistant" and (
+                meta.get("query_log_id") or meta.get("masked_question")
+            ):
+                _render_feedback(
+                    sb, msg_idx=idx,
+                    query_log_id=meta.get("query_log_id"),
+                    masked_question=meta.get("masked_question"),
+                )
             # 멀티 턴 모드 버튼 — 마지막 assistant 메시지 + 정상 답변 한정.
             # 중간 메시지나 에러 답변에 버튼 노출 시 disabled 노이즈 발생 → 차단.
             if (role == "assistant"
@@ -2195,11 +2269,8 @@ def main():
                     and meta.get("query_log_id") is not None):
                 _render_mode_buttons(idx)
 
-    # PR-Fun1.2 hotfix: 빠른 액션 카드 / Daily Tip / suggestions 카드 클릭은
-    # session_state['pending_q'] 를 통해 query 전달. 여기서 pop 해서 일반
-    # chat_input 흐름과 OR 결합 — 답변 후에도 chat_input 정상 노출 유지.
-    clicked_q: str | None = st.session_state.pop("pending_q", None)
-
+    # PR-Fun1.5: pending_q 매개체 폐기. clicked_q 매개체는 main() 입구의
+    # early exit 가 별도 처리. 여기엔 chat_input 만 처리.
     st.markdown(
         '<div style="text-align:center; color:#888; font-size:11px; '
         'padding:24px 0 8px 0; border-top:1px solid #eee; margin-top:32px;">'
@@ -2217,6 +2288,15 @@ def main():
     # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단.
     q_input = st.chat_input("질문을 입력하세요…", max_chars=2000)
 
+    # PR-Fun1.5: SAMPLE_QUESTIONS chip / [SUGGESTIONS] 카드 click 의 매개체
+    # session_state['clicked_q'] 처리. main 흐름 다른 분기보다 _먼저_ 처리
+    # → carry-over issue 회피. _run_ask 후 st.rerun() 으로 다음 cycle 에
+    # main() 정상 흐름 복귀 (chat_input widget early 호출로 등록 보장).
+    _clicked = st.session_state.pop("clicked_q", None)
+    if _clicked:
+        _run_ask(sb, _clicked, cat, hotlines)
+        st.rerun()
+
     # 🔄 다시 답변 — 액션 버튼 클릭 시 session_state 에 적재된 reroll request.
     # rerun 다음 사이클에 history replay 후 본 분기에서 ask_stream 재호출.
     # pop 으로 즉시 제거 — 동일 reroll 이 두 번 실행되는 일을 차단.
@@ -2225,12 +2305,11 @@ def main():
         _run_ask(sb, q="", cat=cat, hotlines=hotlines, reroll_of=pending)
         return
 
-    # 카드 클릭 query (clicked_q) 또는 chat_input 직접 입력 (q_input).
-    q = q_input or clicked_q
-    if not q:
+    # chat_input 직접 입력만 처리 (clicked_q 는 위에서 처리).
+    if not q_input:
         return
 
-    _run_ask(sb, q, cat, hotlines)
+    _run_ask(sb, q_input, cat, hotlines)
 
 
 if __name__ == "__main__":
