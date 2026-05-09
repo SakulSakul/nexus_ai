@@ -1518,6 +1518,129 @@ def _tab_consents(sb):
             st.rerun()
 
 
+def _tab_eval(sb):
+    """PR-Q1.1: Retrieval Eval 진입점 — 브라우저 클릭 한 번으로 실행.
+
+    eval/runner.py 의 run_all() 호출 → progress + 결과 표시 + JSON 다운로드.
+    LLM 호출 X (retrieval 만). best_score 분포로 NEXUS_CONFIDENCE_HIGH /
+    MEDIUM 튜닝 baseline 산출.
+
+    sb 인자는 시그니처 일관성 유지 — runner 가 별도로 supabase_client() 를
+    호출 (Streamlit secrets fallback 동일 경로).
+    """
+    st.subheader("🔍 Retrieval Eval")
+    st.caption(
+        "fixture 10개에 대해 hybrid_search 만 호출 (LLM 미호출). "
+        "best_score 분포 = NEXUS_CONFIDENCE_HIGH / MEDIUM 튜닝 baseline. "
+        "fixture 의 expected_sources 는 starter 추측치 — P/R 점수는 정정 후 신뢰."
+    )
+
+    last = st.session_state.get("eval_last_summary")
+
+    col1, col2 = st.columns([1, 4])
+    run_clicked = col1.button("▶ Eval 실행", key="eval_run_btn")
+    if last is not None and not run_clicked:
+        col2.caption(f"마지막 실행: {last.get('timestamp', '?')}")
+
+    if run_clicked:
+        try:
+            from eval.runner import run_all
+            from dataclasses import asdict
+        except Exception as e:
+            st.error(f"runner 임포트 실패: {e}")
+            return
+
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        def _on_progress(i, total, r):
+            progress_text.markdown(
+                f"`{i}/{total}` — **{r.id}** ({r.category}) → "
+                f"best_score `{r.best_score:.4f}` "
+                f"{'✅' if r.passed else '❌'}"
+            )
+            progress_bar.progress(i / total)
+
+        try:
+            summary = run_all(on_progress=_on_progress)
+        except RuntimeError as e:
+            progress_text.empty()
+            progress_bar.empty()
+            st.error(f"Eval 실패: {e}")
+            return
+        except Exception as e:
+            progress_text.empty()
+            progress_bar.empty()
+            st.exception(e)
+            return
+
+        progress_text.success(f"✅ 완료 — {summary.total}/{summary.total}")
+        progress_bar.empty()
+        # session_state 에 dict 로 저장 (rerun 후 dataclass 직렬화 안전).
+        st.session_state["eval_last_summary"] = asdict(summary)
+        last = st.session_state["eval_last_summary"]
+
+    if last is None:
+        st.info("아직 실행 결과 없음. ▶ Eval 실행 클릭.")
+        return
+
+    # 요약 — metric 박스 3개
+    st.markdown("#### 요약")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Pass / Total", f"{last['passed']}/{last['total']}")
+    c2.metric(
+        "avg P / R",
+        f"{last['avg_precision']:.2f} / {last['avg_recall']:.2f}",
+    )
+    c3.metric(
+        "best_score (min·avg·max)",
+        f"{last['score_min']:.4f} · {last['score_avg']:.4f} · {last['score_max']:.4f}",
+    )
+
+    # by category
+    st.markdown("#### 카테고리별")
+    cat_rows = []
+    for cat, m in (last.get("by_category") or {}).items():
+        cat_rows.append({
+            "category": cat,
+            "pass / total": f"{m['passed']}/{m['total']}",
+            "avg P": f"{m['avg_precision']:.2f}",
+            "avg R": f"{m['avg_recall']:.2f}",
+            "score_avg": f"{m['score_avg']:.4f}",
+        })
+    if cat_rows:
+        st.dataframe(cat_rows, hide_index=True, use_container_width=True)
+
+    # per-fixture 표
+    st.markdown("#### per-fixture")
+    rows = []
+    for r in (last.get("fixtures") or []):
+        q = str(r.get("question", ""))
+        rows.append({
+            "id": r.get("id"),
+            "category": r.get("category"),
+            "question": q[:40] + ("…" if len(q) > 40 else ""),
+            "P": f"{r.get('precision', 0):.2f}",
+            "R": f"{r.get('recall', 0):.2f}",
+            "best_score": f"{r.get('best_score', 0):.4f}",
+            "hit": r.get("hit_count", 0),
+            "pass": "✅" if r.get("passed") else "❌",
+        })
+    if rows:
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+
+    # JSON 다운로드 — session_state dict 그대로 직렬화
+    import json as _json
+    ts_safe = str(last.get("timestamp", "unknown")).replace(":", "-")
+    st.download_button(
+        "📥 결과 JSON 다운로드",
+        data=_json.dumps(last, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"eval_{ts_safe}.json",
+        mime="application/json",
+        key="eval_download_json",
+    )
+
+
 def main():
     _require_auth()
 
@@ -1540,6 +1663,7 @@ def main():
     tabs = st.tabs([
         "📥 업로드", "📚 버전", "📡 레이더",
         "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드", "📜 동의",
+        "🔍 Eval",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -1548,6 +1672,7 @@ def main():
     with tabs[4]: _tab_hotlines(sb)
     with tabs[5]: _tab_keywords(sb)
     with tabs[6]: _tab_consents(sb)
+    with tabs[7]: _tab_eval(sb)
 
 
 if __name__ == "__main__":
