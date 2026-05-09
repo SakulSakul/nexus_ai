@@ -1159,20 +1159,10 @@ def _render_empty_state(sb) -> None:
     )
 
     with st.chat_message("assistant", avatar="🧭"):
-        # PR-Fun2: paul/bani 캐릭터 좌측 + 인사 텍스트 우측 grid layout.
-        # 이미지 width=80, columns([1, 4]) 비율. mockup A 기준.
-        col_img, col_txt = st.columns([1, 4], vertical_alignment="center")
-        with col_img:
-            try:
-                st.image("paul_bani.png", width=80)
-            except Exception:
-                # 파일 부재 시 fallback — 인사 텍스트만 표시 (회귀 안전).
-                pass
-        with col_txt:
-            st.markdown(
-                f"{greeting}\n\n"
-                "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
-            )
+        st.markdown(
+            f"{greeting}\n\n"
+            "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
+        )
         # PR-Fun1.4 작업 4: PR-3 의 답변 예시 expander 복구.
         with st.expander("💡 답변이 어떻게 나오는지 미리 보기", expanded=False):
             st.markdown(
