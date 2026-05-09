@@ -1787,7 +1787,7 @@ def _run_ask(
                 progress_placeholder.markdown(
                     '✅ 질문 분석  →  ✅ 사규 검색  →  '
                     '<span class="nx-cycle"></span> 답변 작성\n\n'
-                    f"⏳ 보통 30초 안에 · {title_str}",
+                    f"⏳ 보통 30초 안에 완료됩니다 · {title_str}",
                     unsafe_allow_html=True,
                 )
                 progress_bar.progress(0.7, text="✍️ 답변 작성 중...")
