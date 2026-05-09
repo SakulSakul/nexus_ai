@@ -712,6 +712,24 @@ small {
     animation: nx-pulse 1.4s ease-in-out infinite;
     display: inline-block;
 }
+/* PR-Fun1.9: 답변 작성 단계 emoji cycling — 0.5초 간격 4개 순환.
+   inline JS <script> 는 streamlit unsafe_allow_html sanitizer 가 차단하므로
+   CSS-only ::before content 변경으로 동일 효과. modern 브라우저 (Chrome/
+   Edge/Safari/FF 최근 버전) 지원. */
+@keyframes nx-cycle {
+    0%, 24%   { content: "🧠"; }
+    25%, 49%  { content: "💭"; }
+    50%, 74%  { content: "✍️"; }
+    75%, 100% { content: "📝"; }
+}
+.nx-cycle {
+    display: inline-block;
+}
+.nx-cycle::before {
+    content: "🧠";
+    animation: nx-cycle 2s linear infinite;
+    display: inline-block;
+}
 </style>
 """
 
@@ -1749,7 +1767,7 @@ def _run_ask(
                 if total == 0:
                     progress_placeholder.markdown(
                         '✅ 질문 분석  →  ✅ 사규 검색  →  '
-                        '<span class="nx-pulse">🧠</span> 답변 작성\n\n'
+                        '<span class="nx-cycle"></span> 답변 작성\n\n'
                         "⏳ 검색 결과 없음 — 답변에 한계가 있을 수 있어요",
                         unsafe_allow_html=True,
                     )
@@ -1769,7 +1787,7 @@ def _run_ask(
                     title_str += f" 외 {more}건"
                 progress_placeholder.markdown(
                     '✅ 질문 분석  →  ✅ 사규 검색  →  '
-                    '<span class="nx-pulse">🧠</span> 답변 작성\n\n'
+                    '<span class="nx-cycle"></span> 답변 작성\n\n'
                     f"⏳ 보통 20-30초 · {title_str}",
                     unsafe_allow_html=True,
                 )
