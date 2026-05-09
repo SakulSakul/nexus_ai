@@ -1686,96 +1686,98 @@ def _run_ask(
                 height=60,
             )
 
-        with st.status("🔍 질문 처리 중...", expanded=True) as status:
-            # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
-            # ("search_done") → ("generate") → ("complete") 순으로 호출.
-            # injection early-exit 분기에서는 callback 미호출(정상).
-            # PR-Fun1.2 hotfix: status.update 로 collapsed 라벨도 단계별 갱신
-            # → 사용자가 expanded=False 상태에서도 진행 단계 즉시 인지.
-            def _on_progress(stage: str, payload: dict) -> None:
-                if stage == "analyze":
-                    status.update(label="🔍 질문 분석 중...")
-                    st.write("🔍 질문을 분석하고 있어요...")
-                elif stage == "search_start":
-                    status.update(label="📚 관련 사규 검색 중...")
-                    st.write("📚 관련 사규를 찾고 있어요...")
-                elif stage == "search_done":
-                    total = payload.get("total", 0)
-                    if total == 0:
-                        st.write("📋 검색 결과 없음 — 답변에 한계가 있을 수 있어요")
-                        return
-                    counts = payload.get("doc_kind_counts", {})
-                    parts: list[str] = []
-                    if counts.get("rule"):
-                        parts.append(f"사규 {counts['rule']}건")
-                    if counts.get("penalty"):
-                        parts.append(f"징계기준 {counts['penalty']}건")
-                    if counts.get("case"):
-                        parts.append(f"사례 {counts['case']}건")
-                    count_str = " · ".join(parts) if parts else f"{total}건"
-                    # 중복 doc_title 제거 + 첫 3개 + 외 N건
-                    seen: set[str] = set()
-                    unique_titles: list[str] = []
-                    for t in payload.get("doc_titles", []):
-                        if t and t not in seen:
-                            unique_titles.append(t)
-                            seen.add(t)
-                    shown = unique_titles[:3]
-                    more = len(unique_titles) - len(shown)
-                    title_str = ", ".join(shown)
-                    if more > 0:
-                        title_str += f" 외 {more}건"
-                    status.update(label=f"📋 검색 완료 ({count_str})")
-                    st.write(f"📋 검색 완료 ({count_str}): {title_str}")
-                elif stage == "generate":
-                    status.update(label="✍️ 답변 작성 중...")
-                    st.write("🧠 답변을 작성하고 있어요...")
-                elif stage == "complete":
-                    status.update(label="✅ 답변 완료", state="complete")
+        # PR-Fun1.6: st.status 폐기 → st.empty placeholder + emoji progress
+        # 한 줄 패턴. 단계별 markdown 갱신 + 답변 그려진 후 placeholder.empty().
+        progress_placeholder = st.empty()
+        progress_placeholder.markdown(
+            "🧭 질문 분석  →  ⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
+            "⏳ 진행 중..."
+        )
 
-            stream_buffer = ""
-            for attempt in range(3):
-                try:
-                    if attempt > 0:
-                        sb = _supabase()
-                        # retry 시 부분 stream 표시 폐기 — 새 시도가 처음부터 점진 표시
-                        stream_buffer = ""
-                        answer_placeholder.empty()
-                    # 첫 시도만 callback 활성화 — retry 는 silent 로 단계 메시지
-                    # 중복 표시 방지. retry 경로는 그대로 두되 사용자에게는
-                    # 자연스럽게 한 번의 흐름으로 보이게 한다.
-                    cb = _on_progress if attempt == 0 else None
-                    # streaming 답변 — ask_stream 가 ("chunk", str) / ("done",
-                    # Answer) yield. critical / injection / stream 예외 시
-                    # 내부에서 ask() 동기 위임 → ("done", Answer) 단일 yield.
-                    for kind, val in ask_stream(
-                        sb,
-                        question=effective_q,
-                        category=cat,
-                        progress_callback=cb,
-                        prev_turn=prev_turn,
-                    ):
-                        if kind == "chunk":
-                            stream_buffer += val
-                            # 커서 ▎ 로 streaming 표시. answer_placeholder 가
-                            # status 위쪽에 자리잡아 사용자가 답변 점진 그려짐을 본다.
-                            answer_placeholder.markdown(stream_buffer + "▎")
-                        elif kind == "done":
-                            ans = val
-                    break
-                except Exception as e:
-                    last_err = e
-                    tb_str = traceback.format_exc()
-                    print(f"\n=== ASK ERROR (attempt {attempt}) ===\n{tb_str}", file=sys.stderr, flush=True)
-                    if "client has been closed" in str(e).lower() and attempt < 2:
-                        continue
-                    break
+        # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
+        # ("search_done") → ("generate") → ("complete") 순으로 호출.
+        # injection early-exit 분기에서는 callback 미호출(정상).
+        def _on_progress(stage: str, payload: dict) -> None:
+            if stage == "analyze":
+                progress_placeholder.markdown(
+                    "🧭 질문 분석  →  ⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
+                    "⏳ 질문 분석 중..."
+                )
+            elif stage == "search_start":
+                progress_placeholder.markdown(
+                    "✅ 질문 분석  →  📚 사규 검색  →  ⚪ 답변 작성\n\n"
+                    "⏳ 사규 검색 중..."
+                )
+            elif stage == "search_done":
+                total = payload.get("total", 0)
+                if total == 0:
+                    progress_placeholder.markdown(
+                        "✅ 질문 분석  →  ✅ 사규 검색  →  🧠 답변 작성\n\n"
+                        "⏳ 검색 결과 없음 — 답변에 한계가 있을 수 있어요"
+                    )
+                    return
+                # 중복 doc_title 제거 + 첫 3개 + 외 N건
+                seen: set[str] = set()
+                unique_titles: list[str] = []
+                for t in payload.get("doc_titles", []):
+                    if t and t not in seen:
+                        unique_titles.append(t)
+                        seen.add(t)
+                shown = unique_titles[:3]
+                more = len(unique_titles) - len(shown)
+                title_str = ", ".join(shown)
+                if more > 0:
+                    title_str += f" 외 {more}건"
+                progress_placeholder.markdown(
+                    "✅ 질문 분석  →  ✅ 사규 검색  →  🧠 답변 작성\n\n"
+                    f"⏳ 보통 20-30초 · {title_str}"
+                )
+            elif stage == "generate":
+                # search_done 에서 이미 답변 작성 단계 표시됨. 추가 변경 X.
+                pass
+            # "complete" 는 답변 final 단계에서 progress_placeholder.empty() 로 처리
 
-            # status 컨테이너 라벨 마무리 — 답변 본문은 status 밖에서 렌더링
-            if ans is None:
-                status.update(label="⚠️ 답변 생성 실패", state="error", expanded=True)
-            else:
-                status.update(label="🔍 처리 단계", state="complete", expanded=False)
+        stream_buffer = ""
+        for attempt in range(3):
+            try:
+                if attempt > 0:
+                    sb = _supabase()
+                    # retry 시 부분 stream 표시 폐기 — 새 시도가 처음부터 점진 표시
+                    stream_buffer = ""
+                    answer_placeholder.empty()
+                # 첫 시도만 callback 활성화 — retry 는 silent 로 단계 메시지
+                # 중복 표시 방지. retry 경로는 그대로 두되 사용자에게는
+                # 자연스럽게 한 번의 흐름으로 보이게 한다.
+                cb = _on_progress if attempt == 0 else None
+                # streaming 답변 — ask_stream 가 ("chunk", str) / ("done",
+                # Answer) yield. critical / injection / stream 예외 시
+                # 내부에서 ask() 동기 위임 → ("done", Answer) 단일 yield.
+                for kind, val in ask_stream(
+                    sb,
+                    question=effective_q,
+                    category=cat,
+                    progress_callback=cb,
+                    prev_turn=prev_turn,
+                ):
+                    if kind == "chunk":
+                        stream_buffer += val
+                        # 커서 ▎ 로 streaming 표시. answer_placeholder 가
+                        # progress 위쪽에 자리잡아 사용자가 답변 점진 그려짐을 본다.
+                        answer_placeholder.markdown(stream_buffer + "▎")
+                    elif kind == "done":
+                        ans = val
+                break
+            except Exception as e:
+                last_err = e
+                tb_str = traceback.format_exc()
+                print(f"\n=== ASK ERROR (attempt {attempt}) ===\n{tb_str}", file=sys.stderr, flush=True)
+                if "client has been closed" in str(e).lower() and attempt < 2:
+                    continue
+                break
+
+        # progress placeholder 정리 — 답변 본문 final 표시 _전_에 비움.
+        # 에러 분기는 아래 if ans is None 에서도 한 번 더 안전망.
+        progress_placeholder.empty()
 
         if ans is None:
             # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
