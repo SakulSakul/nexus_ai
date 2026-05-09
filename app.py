@@ -1065,52 +1065,57 @@ def _cached_daily_tip(_date_iso: str, doc_title: str) -> str:
 
 
 def _render_empty_state(sb) -> None:
-    """첫 진입 화면 — 동적 인사 + Daily Tip + 빠른 액션 카드.
+    """첫 진입 화면 — hero + personality 인사 + 답변 예시 expander.
 
-    카드 클릭 시 session_state['pending_q'] 적재 + rerun. main 의
-    chat_input 처리부가 pop 해서 _run_ask 호출.
+    PR-Fun1.4: 빠른 액션 카드·Daily Tip 제거. main() 의 hero section 도
+    본 함수 안으로 흡수해 history 있을 때 자동 사라지도록 (이전엔 hero +
+    personality 인사가 동시 노출되어 "두 번 렌더링" issue 였음).
+
+    유지된 fun: 시간대 personality LLM 인사 (`_cached_dynamic_greeting`).
+    제거: Daily Tip box / 빠른 액션 카드 4개.
+    `_cached_daily_tip` / `pick_random_doc_title` / `QUICK_ACTIONS` 등
+    core.personality 함수·변수는 보존 (미래 부활 여지).
     """
     from datetime import datetime as _dt
     now = _dt.now()
     greeting = _cached_dynamic_greeting(now.hour, now.weekday())
 
+    # Hero (empty state 일 때만) — H1 은 brand statement (안정), 동적
+    # personality 인사는 chat_message 안에. 두 번 렌더링 방지.
+    st.markdown(
+        """
+        <div class="nx-hero">
+          <p class="nx-hero-eyebrow">DF COMPASS · Compliance Intelligence</p>
+          <h1 class="nx-hero-title">신세계디에프 윤리·컴플라이언스 가이드</h1>
+          <p class="nx-hero-sub">
+            사규/윤리강령/사례집/징계규정을 통합 검색합니다. (출처 자동 표기)
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     with st.chat_message("assistant", avatar="🧭"):
         st.markdown(
-            f"**DF COMPASS** · 신세계디에프 윤리·컴플라이언스 가이드\n\n"
             f"{greeting}\n\n"
             "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
         )
-
-        # Daily Tip — 사규 random pick → LLM fun fact
-        from core.personality import pick_random_doc_title
-        doc_title = pick_random_doc_title(sb)
-        tip_text = ""
-        if doc_title:
-            tip_text = _cached_daily_tip(now.date().isoformat(), doc_title)
-        if doc_title and tip_text:
-            # PR-Fun1.1 작업 2: column 분리 제거. col2 가 너무 좁아 button
-            # 클릭 영역이 부족했던 issue 수정. 박스 + button 단일 row 로.
+        # PR-Fun1.4 작업 4: PR-3 의 답변 예시 expander 복구.
+        with st.expander("💡 답변이 어떻게 나오는지 미리 보기", expanded=False):
             st.markdown(
-                f"<div style='background:#f8fafc;border-left:3px solid #94a3b8;"
-                f"padding:8px 12px;margin:8px 0;border-radius:4px;"
-                f"font-size:13px;'>"
-                f"💡 <strong>오늘의 사규 한 입</strong> — {tip_text}<br>"
-                f"<span style='color:#64748b;font-size:11px;'>"
-                f"출처 후보: {doc_title}</span></div>",
-                unsafe_allow_html=True,
+                "**질문:** 법인카드를 개인 용도로 사용해도 되나요?\n\n"
+                "**답변:** 법인카드의 개인 용도 사용은 어떠한 경우라도 금지됩니다.\n\n"
+                "📋 **사규 기준**\n"
+                "법인카드는 업무상 사용을 원칙으로 하며, 개인적인 용도로 사용하는 것은 "
+                "금지됩니다. 또한 법인카드 사용 후 개인 포인트 카드에 포인트를 임의로 "
+                "적립하는 행위도 금지됩니다.\n\n"
+                "⚖️ **징계 기준**\n"
+                "회사 자산을 개인적인 목적으로 사용했을 경우 사안에 따라 다음과 같은 "
+                "징계 처분을 받을 수 있습니다.\n"
+                "- 단순/일회성인 경우: 서면경고, 견책, 감급\n"
+                "- 고의/반복적인 경우: 감급, 감봉\n\n"
+                "📎 **참고 사규:** (재무) 법인카드 관리 지침, (공통) 임직원 징계기준"
             )
-            if st.button(
-                "👉 이 사규 알아보기",
-                key="tip_explore",
-                use_container_width=False,
-            ):
-                st.session_state["pending_q"] = f"{doc_title} 에 대해 알려주세요"
-                st.rerun()
-
-        # PR-Fun1.3: 빠른 액션 카드 4개 제거 — product 가치 < 비용 (콘텐츠
-        # 큐레이션 부담 + UI 복잡도 + bug risk). empty state = 챗봇 인사 +
-        # Daily Tip + 답변 예시 expander 만 유지. core.personality.
-        # QUICK_ACTIONS 변수는 보존 (미래 부활 여지).
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
@@ -1997,14 +2002,19 @@ def _consent_gate(sb) -> bool:
     st.markdown(_CONSENT_BODY_MD)
     st.markdown("---")
 
-    with st.form("beta_consent_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            name = st.text_input("성명 *", value="")
-        with c2:
-            emp_no = st.text_input("사번 (선택)", value="")
-        agree = st.checkbox("위 내용을 모두 읽고 베타 참가에 동의합니다.")
-        submitted = st.form_submit_button("동의하고 시작", type="primary")
+    # PR-Fun1.4 작업 1: st.form / st.form_submit_button 폐기. form widget
+    # 의 streamlit quirk (rerun 사이 잔재) 가 동의 sub-section 잔재 issue
+    # 의 root cause. 단순 input + checkbox + button 패턴으로 전환.
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input("성명 *", value="", key="consent_name_input")
+    with c2:
+        emp_no = st.text_input("사번 (선택)", value="", key="consent_emp_no_input")
+    agree = st.checkbox(
+        "위 내용을 모두 읽고 베타 참가에 동의합니다.",
+        key="consent_agree_input",
+    )
+    submitted = st.button("동의하고 시작", type="primary", key="consent_submit_btn")
 
     if submitted:
         # 입력 검증 — stored XSS / SQL 페이로드 차단 + 형식 강제.
@@ -2097,25 +2107,10 @@ def main():
     # chat_input 자체가 안 그려졌다 (사용자 다음 질문 불가). 원래 흐름
     # (chat_input 또는 pending_q 둘 중 하나 채워지면 _run_ask) 복구.
 
-    # Hero section
-    st.markdown(
-        """
-        <div class="nx-hero">
-          <p class="nx-hero-eyebrow">DF COMPASS · Compliance Intelligence</p>
-          <h1 class="nx-hero-title">무엇을 도와드릴까요?</h1>
-          <p class="nx-hero-sub">
-            신세계디에프 임직원을 위한 윤리·컴플라이언스 가이드<br>
-            사규/윤리강령/사례집/징계규정을 통합 검색합니다. (출처 자동 표기)
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # PR-Fun1: empty-state — 동적 인사 + Daily Tip + 빠른 액션 카드.
-    # history 가 비어있을 때만 노출. 한 번이라도 질문하면 일반 채팅 흐름으로
-    # 전환되어 자연스럽게 사라짐. 페이지 새로고침 시 session_state["history"]
-    # 초기화되어 다시 노출 (의도된 동작 — 새 세션은 새 사용자 가능성).
+    # PR-Fun1.4: hero section 을 _render_empty_state 안으로 이동.
+    # history 비어있을 때만 hero + personality 인사 + 답변 예시 expander.
+    # 한 번이라도 질문하면 일반 채팅 흐름으로 전환되어 자연스럽게 사라짐.
+    # "무엇을 도와드릴까요?" + chat 인사가 동시 노출되던 두 번 렌더링 issue 해결.
     if not st.session_state.get("history"):
         _render_empty_state(sb)
 
