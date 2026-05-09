@@ -230,10 +230,13 @@ _CONFIDENCE_PREFIX = (
 
 
 def _classify_confidence(best_score: float, hit_count: int) -> str:
-    """contexts 의 best RRF score + hit count 로 신뢰도 분류.
+    """[DEPRECATED — PR-Q1.4 이후 사용 안 함]
 
-    hit_count == 0 → 'low' 즉시 (검색 hit 없음).
-    그 외엔 best_score 와 임계값 비교.
+    PR-C1 v1 의 단일 RRF threshold 분류기. PR-Q1.3 진단 결과 kw search
+    가 사실상 죽어 있어 (pg_bigm 미설치 + tsvector 한국어 미지원) 모든
+    query 의 best_score 가 1/61 ≈ 0.0164 로 고정 — 분류 효과 무. 본
+    함수는 호환성 유지 목적으로 코드만 보존하고 호출 측은 confidence.
+    calculate_confidence 로 전환됨. kw search 부활 시 재사용 여지.
     """
     if hit_count <= 0:
         return "low"
@@ -248,7 +251,11 @@ def _classify_confidence(best_score: float, hit_count: int) -> str:
 def _maybe_prefix_system_prompt(
     base_prompt: str, *, is_critical: bool, confidence: str,
 ) -> str:
-    """confidence 가 low/medium 이고 critical 아닐 때만 prefix 활성.
+    """confidence == 'low' AND critical 아닐 때만 prefix 활성 (PR-Q1.4).
+
+    medium 은 chip (🟡) 만 표시하고 본문 톤은 단호하게 유지 — 사용자가
+    "보조 참고" 신호로 자체 판단할 수 있게. low 일 때만 추정형 톤 +
+    인사팀·CSR팀 안내 prefix 가 LLM system_instruction 에 prepend.
 
     critical 트리거 시는 [Critical Mode 답변 가이드] 가 우선이므로
     톤 완화 prefix 를 활성하지 않는다 (회사 보호 차원의 단호한 신고
@@ -256,7 +263,7 @@ def _maybe_prefix_system_prompt(
     """
     if is_critical:
         return base_prompt
-    if confidence == "high":
+    if confidence != "low":
         return base_prompt
     return _CONFIDENCE_PREFIX + base_prompt
 
@@ -713,11 +720,12 @@ def ask(
         "total": len(contexts),
     })
 
-    # PR-C1: contexts best RRF score 계산 → 신뢰도 분류 → critical 아닐 때만
-    # SYSTEM_PROMPT 에 [신뢰도 가이드] 활성 prefix 주입.
+    # PR-Q1.4: 멀티 시그널 confidence (hit_count + doc_kind_diversity +
+    # category_match). best_score 는 디버깅·Answer 노출용으로만 산출.
+    from .confidence import calculate_confidence
     _scores = [float(c.get("score") or 0.0) for c in contexts]
     best_score = max(_scores) if _scores else 0.0
-    confidence = _classify_confidence(best_score, len(contexts))
+    confidence = calculate_confidence(masked, contexts)
     system_prompt_eff = _maybe_prefix_system_prompt(
         SYSTEM_PROMPT,
         is_critical=detection.triggered, confidence=confidence,
@@ -981,12 +989,13 @@ def ask_stream(
         "total": len(contexts),
     })
 
-    # PR-C1: best_score → confidence → SYSTEM_PROMPT prefix.
+    # PR-Q1.4: 멀티 시그널 confidence (ask 동일 흐름).
     # streaming 경로는 critical 트리거되면 위쪽에서 ask() 동기 위임으로
     # 빠지므로 여기 도달했다는 건 is_critical=False. 그래도 명시 인자로 전달.
+    from .confidence import calculate_confidence
     _scores = [float(c.get("score") or 0.0) for c in contexts]
     best_score = max(_scores) if _scores else 0.0
-    confidence = _classify_confidence(best_score, len(contexts))
+    confidence = calculate_confidence(masked, contexts)
     system_prompt_eff = _maybe_prefix_system_prompt(
         SYSTEM_PROMPT, is_critical=False, confidence=confidence,
     )
