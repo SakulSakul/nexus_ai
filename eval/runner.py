@@ -95,8 +95,17 @@ def _match_expected(hit_title: str, expected_substrings: list[str]) -> bool:
 
 
 def evaluate_one(sb: Any, fx: dict, *, top_k: int = 3) -> FixtureResult:
-    """단일 fixture 평가 — retrieval (hybrid_search) 만 호출. LLM X."""
-    from core.retriever import hybrid_search
+    """단일 fixture 평가 — retrieval (chatbot pipeline 재현) 만 호출. LLM X.
+
+    PR-Q1.4: hybrid_search 직접 호출 대신 retrieve_for_eval 사용 →
+    chatbot 의 카테고리 라우팅 / pool_size=10 / doc_kind balance 동일하게
+    재현. fixture 결과가 실제 사용자 응답 경로와 일치.
+
+    top_k 인자는 외부 시그니처 호환을 위해 유지하되 retrieve_for_eval 은
+    내부적으로 pool_size 를 자동 계산하므로 무시된다 (chatbot 동작 일관성
+    우선). CLI 의 --top-k 는 정보용.
+    """
+    from core.retriever import retrieve_for_eval
 
     fid = str(fx.get("id", ""))
     question = str(fx.get("question", "")).strip()
@@ -104,9 +113,7 @@ def evaluate_one(sb: Any, fx: dict, *, top_k: int = 3) -> FixtureResult:
     category = str(fx.get("category", "general"))
 
     try:
-        contexts = hybrid_search(
-            sb, question=question, categories=None, top_k=top_k,
-        )
+        contexts = retrieve_for_eval(sb, question, mask=True, with_critical=False)
     except Exception as e:
         return FixtureResult(
             id=fid, category=category, question=question,

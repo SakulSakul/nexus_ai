@@ -65,12 +65,13 @@ class Settings:
     chat_fallback_provider: str  # 'gemini' | 'claude' | '' (empty = no fallback)
     claude_model: str            # 기본 'claude-opus-4-7'
     claude_effort: str           # 'low' | 'medium' | 'high' | 'xhigh' | 'max' (max 는 Opus 전용)
-    # ── Confidence threshold (PR-C1) ───────────────────────────
-    # hybrid_search 의 RRF best_score (1/(60+r_vec) + 1/(60+r_kw))
-    # 절대값으로 high/medium/low 3단계 분류.
-    # 이론적 max ≈ 0.0328 (둘 다 1위), cosine 0-1 아님.
-    # 첫 추정값 — 라이브 분포 (eval/run.py best_score 출력) 보고 튜닝.
-    # low 는 best_score < confidence_medium 일 때 자동 (별도 환경변수 없음).
+    # ── Confidence threshold (PR-C1 v1, DEPRECATED PR-Q1.4) ────
+    # PR-C1 v1 의 단일 RRF threshold 분류. PR-Q1.3 진단으로 무용지물 확인 —
+    # kw search 가 사실상 죽어 있어 (pg_bigm 미설치 + tsvector 한국어
+    # 미지원) 모든 query 의 best_score 가 1/61 ≈ 0.0164 로 고정. 분류
+    # 효과 0. PR-Q1.4 부터 confidence.calculate_confidence (멀티 시그널)
+    # 로 전환됨. 본 두 필드는 호환성 유지·미래 kw search 부활 시 재사용
+    # 여지를 위해 코드 보존 — 현재 활용처 없음.
     confidence_high: float       # NEXUS_CONFIDENCE_HIGH   default 0.025
     confidence_medium: float     # NEXUS_CONFIDENCE_MEDIUM default 0.015
 
