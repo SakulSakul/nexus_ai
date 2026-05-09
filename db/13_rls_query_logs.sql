@@ -31,7 +31,7 @@ grant usage, select on sequence query_logs_id_seq to anon, authenticated;
 --    INSERT: anon 허용. 컬럼 화이트리스트는 PostgREST 측 column-level
 --            grant 로 강제 (아래 6번).
 --    UPDATE: anon 허용 — 단 feedback_type / feedback_reasons /
---            feedback_text / feedback_at 컬럼만. (피드백 UI 경로)
+--            feedback_comment / feedback_at 컬럼만. (피드백 UI 경로)
 --            id 일치 + INSERT 직후 본인 row 라는 신뢰 경계는 없으나
 --            query_logs.id 는 application 단에서만 노출되고 외부 추측이
 --            어렵다 (bigserial). 회사 이관 시 SSO + RLS owner 검증으로 강화.
@@ -62,7 +62,7 @@ grant insert (
 -- UPDATE 컬럼 화이트리스트 — 피드백 컬럼만 갱신 가능.
 revoke update on query_logs from anon, authenticated;
 grant update (
-  feedback, feedback_type, feedback_reasons, feedback_text, feedback_at
+  feedback, feedback_type, feedback_reasons, feedback_comment, feedback_at
 ) on query_logs to anon, authenticated;
 
 -- 7) PostgREST 스키마 캐시 reload — 정책·권한 변경 즉시 반영.
