@@ -25,6 +25,13 @@ from .retriever import hybrid_search
 # 검토 과정을 분리하는 anchor. 마커 없으면 process 는 빈 문자열로 간주
 # 하고 사용자 화면에서 expander 자체를 숨긴다 (마커 누락 fallback).
 SEARCH_PROCESS_MARKER = "[검색 과정]"
+# PR-Fun1 작업 3: 답변 본문 뒤에 LLM 이 출력하는 후속 질문 카드 마커.
+# 사용자 화면에 raw 노출되면 안 되므로 stream filter 와 본문 split 단계에서
+# 분리된다. 사규 본문에 우연히 등장할 가능성 0 (회사 사규에 영문 대문자
+# 마커 없음). Critical Mode 답변 가이드 7번에 의해 critical 답변에서는
+# LLM 이 본 블록 자체를 출력하지 않도록 지시되어 있다.
+SUGGESTIONS_MARKER = "[SUGGESTIONS]"
+SUGGESTIONS_END_MARKER = "[/SUGGESTIONS]"
 
 
 # ── 카테고리 자동 추론 ──────────────────────────────────────────
@@ -111,6 +118,50 @@ def _split_answer_and_process(raw: str) -> tuple[str, str]:
         return raw.strip(), ""
     head, tail = raw.split(SEARCH_PROCESS_MARKER, 1)
     return head.rstrip(), tail.strip()
+
+
+def _split_suggestions(answer: str) -> tuple[str, list[str]]:
+    """답변 본문에서 [SUGGESTIONS] 블록 분리 (PR-Fun1 작업 3).
+
+    - 마커 [SUGGESTIONS] ... [/SUGGESTIONS] 안의 "- " bullet 한 줄씩 추출.
+    - 본문에서는 블록 통째로 제거 후 trailing 공백 정리.
+    - 마커 없으면 (answer, []) 반환.
+    - 끝 마커 없이 시작 마커만 있으면 본문 끝까지가 블록 — robust 처리.
+    - critical 답변은 prompts.py 에 의해 본 블록 자체가 안 생성됨 — 다만
+      LLM 이 일관성 깨고 출력하더라도 본 함수가 본문에서 잘라내므로 사용자
+      화면에 raw 노출되는 사고는 차단 (이중 방어). UI 단의 ans.is_critical
+      분기는 카드 비활성으로 추가 방어.
+    """
+    if SUGGESTIONS_MARKER not in answer:
+        return answer, []
+    head, tail = answer.split(SUGGESTIONS_MARKER, 1)
+    if SUGGESTIONS_END_MARKER in tail:
+        block, _ = tail.split(SUGGESTIONS_END_MARKER, 1)
+    else:
+        block = tail
+    # bullet 추출 — "- ", "* ", "1. " 형식 모두 허용. 한 줄 내 trim.
+    items: list[str] = []
+    for line in block.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        # leading bullet 마커 제거
+        for prefix in ("- ", "* ", "• "):
+            if s.startswith(prefix):
+                s = s[len(prefix):].strip()
+                break
+        else:
+            # "1. ", "2. " 같은 numbered list
+            m = re.match(r"^\d+[\.\)]\s*(.+)$", s)
+            if m:
+                s = m.group(1).strip()
+            else:
+                # bullet 없는 평문 — fallback 으로 그대로 추가
+                pass
+        if s:
+            items.append(s)
+    # 최대 3개 cap (prompts.py 가 3개 명시 — LLM 변형 안전망)
+    return head.rstrip(), items[:3]
 
 
 # [검색 과정] 4단계(①②③④) 헤더 정형화 패턴.
@@ -212,6 +263,10 @@ class Answer:
     confidence: str = field(default="high")
     # contexts best RRF score (1/(60+r_vec) + 1/(60+r_kw)). 0.0~~0.0328.
     best_score: float = field(default=0.0)
+    # PR-Fun1 작업 3: LLM 이 답변 끝에 출력한 후속 질문 카드 (3개 cap).
+    # critical 답변에는 빈 list (prompts.py 가 생성 자체 차단). UI 가
+    # ans.is_critical 분기로 추가 방어.
+    suggestions: list[str] = field(default_factory=list)
 
 
 # ── PR-C1: Confidence-aware 단호도 ───────────────────────────
@@ -749,6 +804,12 @@ def ask(
     # 항상 활성 — instruction 동적 분기는 prompt 안정성을 깨뜨릴 수 있음.
     effective_process = process_text if s.show_thinking else ""
 
+    # PR-Fun1: [SUGGESTIONS] 블록 분리 — citation 정규화·enforce_structure
+    # 보다 먼저 잘라내야 본문 후처리가 카드용 메타에 영향 안 받는다.
+    # critical 답변은 prompts 에 의해 생성 차단이지만 LLM 일관성 깨짐 대비
+    # 본문에서도 잘라낸다 (이중 방어).
+    answer_text, suggestions = _split_suggestions(answer_text)
+
     answer_text = _ensure_citation(answer_text, contexts)
     # LLM 변형 출력 정규화 — [참조:] 블록 안의 doc_title 을 contexts 기준
     # 정확 형태로 교체. 임계값 미달 시 원본 유지(회귀 안전).
@@ -763,6 +824,8 @@ def ask(
             action_items=actions,
             hotlines=hotlines,
         )
+        # critical 답변엔 카드 노출 X (이중 방어 — UI 단도 같은 분기).
+        suggestions = []
     else:
         final = answer_text
 
@@ -814,6 +877,7 @@ def ask(
         query_log_id=query_log_id,
         confidence=confidence,
         best_score=best_score,
+        suggestions=suggestions,
     )
 
 
@@ -879,30 +943,37 @@ def _stream_filter_process_marker(stream: Iterator[str]) -> Iterator[tuple[str, 
 
     yield 종류:
       ("raw", str)    — 모든 청크 (후처리용 raw 누적). 항상 발생
-      ("chunk", str)  — 사용자 화면 표시용 본문 토큰 (SEARCH_PROCESS_MARKER
-                        이전만). marker 등장 후 chunk 더 이상 yield 안 함.
+      ("chunk", str)  — 사용자 화면 표시용 본문 토큰. 다음 마커 등장 후
+                        chunk yield 중단:
+                          - SEARCH_PROCESS_MARKER ([검색 과정])
+                          - SUGGESTIONS_MARKER    ([SUGGESTIONS])
+                        둘 중 어느 마커든 먼저 등장한 시점 이후는 본문에
+                        raw 노출되지 않도록 차단.
 
-    구현: marker 의 prefix 일부가 청크 끝에 들어올 가능성 → 안전하게
-    (marker 길이 - 1) 만큼 buffer 보류. 청크 합쳐서 marker 전체 발견 시
-    그 이전만 마지막 chunk 로 yield.
+    구현: 가장 긴 마커 길이 - 1 만큼 buffer 보류해 마커 prefix 가 청크
+    경계에서 잘리는 경우 안전 처리.
     """
     buf = ""
     seen_marker = False
-    marker_len = len(SEARCH_PROCESS_MARKER)
+    longest_marker = max(len(SEARCH_PROCESS_MARKER), len(SUGGESTIONS_MARKER))
     for chunk in stream:
         yield ("raw", chunk)
         if seen_marker:
             continue
         buf += chunk
-        idx = buf.find(SEARCH_PROCESS_MARKER)
-        if idx >= 0:
-            pre = buf[:idx]
+        # 두 마커 중 더 빠른 (작은 idx) 위치를 찾아 split.
+        idx_p = buf.find(SEARCH_PROCESS_MARKER)
+        idx_s = buf.find(SUGGESTIONS_MARKER)
+        candidates = [i for i in (idx_p, idx_s) if i >= 0]
+        if candidates:
+            cut = min(candidates)
+            pre = buf[:cut]
             if pre:
                 yield ("chunk", pre)
             seen_marker = True
             buf = ""
         else:
-            safe = len(buf) - (marker_len - 1)
+            safe = len(buf) - (longest_marker - 1)
             if safe > 0:
                 yield ("chunk", buf[:safe])
                 buf = buf[safe:]
@@ -1036,6 +1107,9 @@ def ask_stream(
     answer_text, process_text_raw = _split_answer_and_process(raw_full)
     process_text = _format_process_section(process_text_raw)
     effective_process = process_text if s.show_thinking else ""
+    # PR-Fun1: [SUGGESTIONS] 카드 분리. critical 흐름은 ask 동기로 위임된
+    # 상태라 여기 도달은 is_critical=False — UI 단도 동일 분기.
+    answer_text, suggestions = _split_suggestions(answer_text)
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
 
@@ -1082,6 +1156,7 @@ def ask_stream(
         query_log_id=query_log_id,
         confidence=confidence,
         best_score=best_score,
+        suggestions=suggestions,
     ))
 
 

@@ -842,6 +842,81 @@ def _render_confidence_chip(confidence: str) -> None:
     )
 
 
+def _render_category_chip(contexts: list[dict]) -> None:
+    """PR-Fun1 작업 4: 답변 본문 직전에 카테고리 chip 한 줄 노출.
+
+    contexts 가 비어있거나 카테고리 식별 불가면 표시 생략. 본문 헤더
+    (📋 사규 기준 / ⚖️ 징계 기준 / 📂 사건사례) 는 LLM 출력 그대로 두고
+    본 chip 만 카테고리별 색·아이콘으로 동적 변경 (가독성 유지).
+    """
+    if not contexts:
+        return
+    from core.personality import category_visual
+    icon, color, label = category_visual(contexts)
+    if not label:
+        return
+    st.markdown(
+        f"<div style='font-size:12px;color:{color};padding:2px 0 4px;"
+        f"font-family:-apple-system,Pretendard,sans-serif;'>"
+        f"{icon} <strong style='color:{color};'>{label}</strong> 카테고리"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_suggestion_cards(
+    suggestions: list[str], *, is_critical: bool, msg_idx: int,
+) -> None:
+    """PR-Fun1 작업 3: 답변 끝의 후속 질문 카드 3개.
+
+    critical 답변에서는 카드 자체를 비활성 (핵심 회귀 방어). LLM prompt
+    에서도 [Critical Mode 답변 가이드] 7번에 의해 [SUGGESTIONS] 블록이
+    생성되지 않으나, 이중 방어로 UI 단도 차단.
+
+    클릭 시 session_state['pending_q'] 로 query 적재 + rerun → main 의
+    chat_input 처리부가 pop 해서 _run_ask 호출.
+    """
+    if is_critical or not suggestions:
+        return
+    st.markdown(
+        "<div style='font-size:12px;color:#475569;padding:8px 0 4px;"
+        "font-family:-apple-system,Pretendard,sans-serif;'>"
+        "💡 <strong>이런 질문도 해볼 수 있어요</strong></div>",
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(min(3, len(suggestions)))
+    for i, q in enumerate(suggestions[:3]):
+        if cols[i].button(
+            q, key=f"sugg_{msg_idx}_{i}", use_container_width=True,
+        ):
+            st.session_state["pending_q"] = q
+            st.rerun()
+
+
+def _render_closing_remark(is_critical: bool, *, msg_idx: int | None = None) -> None:
+    """PR-Fun1 작업 5: 답변 후 random 격려 멘트 1줄.
+
+    msg_idx 가 있으면 session_state 에 pin 해서 같은 답변 replay 시 멘트
+    유지 (rerun 마다 random pick 으로 chip 멘트가 바뀌면 산만). 신규 답변
+    렌더 시 (msg_idx=None 또는 키 부재) 만 새로 뽑음.
+    """
+    from core.personality import closing_remark
+    key = f"closing_{msg_idx}" if msg_idx is not None else None
+    if key and key in st.session_state:
+        text = st.session_state[key]
+    else:
+        text = closing_remark(is_critical=is_critical)
+        if key:
+            st.session_state[key] = text
+    color = "#a93226" if is_critical else "#475569"
+    st.markdown(
+        f"<div style='font-size:12px;color:{color};padding:6px 0 8px;"
+        f"font-style:italic;font-family:-apple-system,Pretendard,sans-serif;'>"
+        f"{text}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_contexts(contexts: list[dict]) -> None:
     if not contexts:
         return
@@ -890,6 +965,158 @@ def _show_example_questions() -> str | None:
         if cols[i % 2].button(q, key=f"eq_{i}", use_container_width=True):
             return q
     return None
+
+
+# ── PR-Fun1: empty-state 동적 인사 + Daily Tip + 빠른 액션 카드 ──
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_dynamic_greeting(_hour_bucket: int, _weekday: int) -> str:
+    """1시간 1회 LLM 호출로 인사 생성. 실패 시 fallback hardcoded pool.
+
+    cache key 는 시간대(시) + 요일 — 같은 cache window 안에선 동일 인사
+    유지. 호출 시 settings().gemini_api_key 검증 + 60초 timeout. LLM
+    응답 80자 cap (UI 가독성).
+    """
+    from core.personality import (
+        build_greeting_user_prompt,
+        fallback_greeting,
+        GREETING_SYSTEM_PROMPT,
+    )
+    from core.config import settings as _settings
+    s = _settings()
+    if not s.gemini_api_key:
+        return fallback_greeting()
+    try:
+        from google import genai
+        from google.genai import types
+        cli = genai.Client(api_key=s.gemini_api_key)
+        cfg = types.GenerateContentConfig(
+            system_instruction=GREETING_SYSTEM_PROMPT,
+            temperature=0.7,  # 변주 위해 약간 ↑
+            top_p=0.95,
+        )
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
+        ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = ex.submit(
+                lambda: cli.models.generate_content(
+                    model=s.chat_model,
+                    contents=build_greeting_user_prompt(),
+                    config=cfg,
+                ),
+            )
+            res = fut.result(timeout=15)
+        except _Timeout:
+            return fallback_greeting()
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+        text = (getattr(res, "text", "") or "").strip()
+        # 따옴표·whitespace 정리
+        text = text.strip("\"'“”‘’\n\r\t ")
+        if not text or len(text) > 200:
+            return fallback_greeting()
+        return text
+    except Exception:
+        return fallback_greeting()
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_daily_tip(_date_iso: str, doc_title: str) -> str:
+    """1일 1회 LLM 호출로 사규 한 줄 fun fact 생성. 실패 시 빈 문자열.
+
+    빈 문자열이면 호출자가 Tip 섹션 자체를 숨김. cache key 는 날짜 +
+    doc_title — 같은 날 doc_title 이 같으면 동일 결과.
+    """
+    from core.personality import build_tip_user_prompt, TIP_SYSTEM_PROMPT
+    from core.config import settings as _settings
+    s = _settings()
+    if not s.gemini_api_key:
+        return ""
+    try:
+        from google import genai
+        from google.genai import types
+        cli = genai.Client(api_key=s.gemini_api_key)
+        cfg = types.GenerateContentConfig(
+            system_instruction=TIP_SYSTEM_PROMPT,
+            temperature=0.6,
+            top_p=0.95,
+        )
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
+        ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = ex.submit(
+                lambda: cli.models.generate_content(
+                    model=s.chat_model,
+                    contents=build_tip_user_prompt(doc_title),
+                    config=cfg,
+                ),
+            )
+            res = fut.result(timeout=15)
+        except _Timeout:
+            return ""
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+        text = (getattr(res, "text", "") or "").strip()
+        text = text.strip("\"'“”‘’\n\r\t ")
+        if not text or len(text) > 200:
+            return ""
+        return text
+    except Exception:
+        return ""
+
+
+def _render_empty_state(sb) -> None:
+    """첫 진입 화면 — 동적 인사 + Daily Tip + 빠른 액션 카드.
+
+    카드 클릭 시 session_state['pending_q'] 적재 + rerun. main 의
+    chat_input 처리부가 pop 해서 _run_ask 호출.
+    """
+    from datetime import datetime as _dt
+    now = _dt.now()
+    greeting = _cached_dynamic_greeting(now.hour, now.weekday())
+
+    with st.chat_message("assistant", avatar="🧭"):
+        st.markdown(
+            f"**DF COMPASS** · 신세계디에프 윤리·컴플라이언스 가이드\n\n"
+            f"{greeting}\n\n"
+            "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
+        )
+
+        # Daily Tip — 사규 random pick → LLM fun fact
+        from core.personality import pick_random_doc_title
+        doc_title = pick_random_doc_title(sb)
+        tip_text = ""
+        if doc_title:
+            tip_text = _cached_daily_tip(now.date().isoformat(), doc_title)
+        if doc_title and tip_text:
+            tip_col1, tip_col2 = st.columns([5, 1])
+            with tip_col1:
+                st.markdown(
+                    f"<div style='background:#f8fafc;border-left:3px solid #94a3b8;"
+                    f"padding:8px 12px;margin:8px 0;border-radius:4px;"
+                    f"font-size:13px;'>"
+                    f"💡 <strong>오늘의 사규 한 입</strong> — {tip_text}<br>"
+                    f"<span style='color:#64748b;font-size:11px;'>"
+                    f"출처 후보: {doc_title}</span></div>",
+                    unsafe_allow_html=True,
+                )
+            with tip_col2:
+                if st.button("👉 알아보기", key="tip_explore", use_container_width=True):
+                    st.session_state["pending_q"] = f"{doc_title} 에 대해 알려주세요"
+                    st.rerun()
+
+        st.markdown(
+            "<div style='font-size:12px;color:#64748b;margin:12px 0 6px 0;'>"
+            "빠른 시작 — 자주 묻는 카테고리</div>",
+            unsafe_allow_html=True,
+        )
+        from core.personality import QUICK_ACTIONS
+        cols = st.columns(len(QUICK_ACTIONS))
+        for i, (icon, label, query) in enumerate(QUICK_ACTIONS):
+            if cols[i].button(
+                f"{icon} {label}", key=f"qa_{i}", use_container_width=True,
+            ):
+                st.session_state["pending_q"] = query
+                st.rerun()
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
@@ -1514,10 +1741,10 @@ def _run_ask(
             # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
             # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
             answer_placeholder.markdown(ans.text)
+            # PR-Fun1 작업 4: 카테고리 chip — 답변 본문 직후, confidence chip 위.
+            # critical 답변에도 표시 (사용자 정보 제공).
+            _render_category_chip(ans.contexts)
             # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
-            # ans.confidence 는 'high' | 'medium' | 'low'. critical 모드에서는
-            # [Critical Mode 답변 가이드] 가 우선이라 톤 prefix 는 적용 안 됐지만
-            # chip 으로 사용자에 검색 신뢰도 정보는 제공.
             _render_confidence_chip(ans.confidence)
             # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
             # 지면서 setInterval 도 자동 cleanup. ans.elapsed (서버 측 perf
@@ -1529,6 +1756,17 @@ def _run_ask(
                 unsafe_allow_html=True,
             )
             _render_contexts(ans.contexts)
+            # PR-Fun1 작업 3: 후속 질문 카드 (critical 시 비활성).
+            _render_suggestion_cards(
+                getattr(ans, "suggestions", []) or [],
+                is_critical=ans.is_critical,
+                msg_idx=len(st.session_state["history"]),
+            )
+            # PR-Fun1 작업 5: 랜덤 격려 멘트 (critical 시 critical_pool).
+            _render_closing_remark(
+                ans.is_critical,
+                msg_idx=len(st.session_state["history"]),
+            )
             # 액션 버튼 (📞 인사팀 문의 / 🔄 다시 답변) — 답변 본문 직후, 피드백 위.
             # msg_idx 는 곧 push 될 assistant 엔트리의 인덱스 (= 현재 history 길이).
             # original_q: reroll 모드면 reroll_of 의 원 질문, 정상이면 직전 user 메시지(q).
@@ -1590,6 +1828,7 @@ def _run_ask(
             "query_log_id": ans.query_log_id,
             "original_q": _saved_orig_q,
             "confidence": getattr(ans, "confidence", "high"),
+            "suggestions": list(getattr(ans, "suggestions", []) or []),
         },
     ))
 
@@ -1809,33 +2048,12 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Empty-state greeting + 답변 예시 — 첫 진입 사용자 onboarding.
+    # PR-Fun1: empty-state — 동적 인사 + Daily Tip + 빠른 액션 카드.
     # history 가 비어있을 때만 노출. 한 번이라도 질문하면 일반 채팅 흐름으로
     # 전환되어 자연스럽게 사라짐. 페이지 새로고침 시 session_state["history"]
     # 초기화되어 다시 노출 (의도된 동작 — 새 세션은 새 사용자 가능성).
     if not st.session_state.get("history"):
-        with st.chat_message("assistant", avatar="🧭"):
-            st.markdown(
-                "안녕하세요, **DF COMPASS** 입니다.\n\n"
-                "신세계디에프의 사규·윤리강령·과거 사례를 학습한 윤리·컴플라이언스 가이드입니다. "
-                "일하다 마주치는 질문을 자유롭게 물어보세요.\n\n"
-                "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
-            )
-            with st.expander("💡 답변이 어떻게 나오는지 미리 보기", expanded=False):
-                st.markdown(
-                    "**질문:** 법인카드를 개인 용도로 사용해도 되나요?\n\n"
-                    "**답변:** 법인카드의 개인 용도 사용은 어떠한 경우라도 금지됩니다.\n\n"
-                    "📋 **사규 기준**\n"
-                    "법인카드는 업무상 사용을 원칙으로 하며, 개인적인 용도로 사용하는 것은 "
-                    "금지됩니다. 또한 법인카드 사용 후 개인 포인트 카드에 포인트를 임의로 "
-                    "적립하는 행위도 금지됩니다.\n\n"
-                    "⚖️ **징계 기준**\n"
-                    "회사 자산을 개인적인 목적으로 사용했을 경우 사안에 따라 다음과 같은 "
-                    "징계 처분을 받을 수 있습니다.\n"
-                    "- 단순/일회성인 경우: 서면경고, 견책, 감급\n"
-                    "- 고의/반복적인 경우: 감급, 감봉\n\n"
-                    "📎 **참고 사규:** (재무) 법인카드 관리 지침, (공통) 임직원 징계기준"
-                )
+        _render_empty_state(sb)
 
     # Chat history replay — 최근 30 messages 만 렌더 (rerun 비용 제어).
     # 50건 넘어가면 매 입력 후 응답 표시까지 lag 발생 → 윈도우 30 권장.
@@ -1856,12 +2074,25 @@ def main():
             if role == "assistant" and meta.get("critical"):
                 _render_critical_banner()
             st.markdown(content)
+            # PR-Fun1 작업 4: 카테고리 chip — replay 시 contexts 있으면 표시.
+            if role == "assistant" and meta.get("contexts"):
+                _render_category_chip(meta["contexts"])
             # PR-C1: history replay 에도 chip 노출. 기존 entry (confidence 키 없음)
             # 는 'high' default 로 회귀 안전.
             if role == "assistant" and meta.get("query_log_id") is not None:
                 _render_confidence_chip(meta.get("confidence", "high"))
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
+            # PR-Fun1 작업 3·5: suggestions 카드 + 격려 멘트 (replay).
+            if role == "assistant" and meta.get("query_log_id") is not None:
+                _render_suggestion_cards(
+                    list(meta.get("suggestions") or []),
+                    is_critical=bool(meta.get("critical")),
+                    msg_idx=idx,
+                )
+                _render_closing_remark(
+                    bool(meta.get("critical")), msg_idx=idx,
+                )
             # 액션 버튼 — 정상 답변(query_log_id 있음) 한정. 에러 답변은 다시
             # 답변 시 동일 에러 반복 가능성 + 인사팀 문의는 의미 없으므로 미노출.
             if (role == "assistant" and meta.get("query_log_id") is not None):
@@ -1880,10 +2111,10 @@ def main():
                     and meta.get("query_log_id") is not None):
                 _render_mode_buttons(idx)
 
-    # Example questions (empty state only)
-    clicked_q: str | None = None
-    if not st.session_state["history"]:
-        clicked_q = _show_example_questions()
+    # PR-Fun1: 빠른 액션 카드 / suggestions 카드 / Daily Tip 알아보기 클릭은
+    # session_state['pending_q'] 를 통해 query 전달. 여기서 pop 해서 일반
+    # chat_input 흐름과 동일하게 _run_ask 로 진입.
+    clicked_q: str | None = st.session_state.pop("pending_q", None)
 
     st.markdown(
         '<div style="text-align:center; color:#888; font-size:11px; '
