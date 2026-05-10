@@ -849,7 +849,11 @@ def ask(
 
     # PR-Quality-4: 사용자 질문 원문 quote 줄을 mechanical prepend.
     # LLM 외부에서 강제하여 paraphrase·변형 사고 원천 차단.
-    final = _prepend_question_quote(final, masked)
+    # PR-Quality-4 hotfix: PII filter 의 false-positive ("안전관리 책임자"
+    # 같은 일반 명사구가 [익명] 으로 변형) 가 quote 줄에 노출되는 사고 차단을
+    # 위해 raw question 사용. LLM 입력·DB 로깅은 masked 그대로 유지(이중 보안)
+    # 이며 quote 줄은 사용자 본인 화면에만 표시되므로 외부 노출 없음.
+    final = _prepend_question_quote(final, question)
 
     elapsed = time.perf_counter() - t0
 
@@ -1103,7 +1107,10 @@ def ask_stream(
     # PR-Quality-4: 사용자 질문 원문 quote 줄을 LLM 스트림 직전에 mechanical
     # 하게 먼저 yield. LLM 답변은 곧바로 ① 핵심 결론부터 시작하므로 본 줄과
     # 자연스럽게 이어진다 (system prompt [출력 구조] 가 이를 강제).
-    quote_prefix = f"질문하신 내용: '{masked.strip()}'\n\n" if masked and masked.strip() else ""
+    # PR-Quality-4 hotfix: PII filter false-positive 차단을 위해 raw question
+    # 사용 (LLM·DB 는 masked 유지, quote 줄만 사용자 본인 화면에 raw 표시).
+    _q = (question or "").strip()
+    quote_prefix = f"질문하신 내용: '{_q}'\n\n" if _q else ""
     if quote_prefix:
         yield ("chunk", quote_prefix)
 
@@ -1143,7 +1150,8 @@ def ask_stream(
     answer_text = _normalize_citation_block(answer_text, contexts)
     # PR-Quality-4: streaming 중 quote_prefix 를 이미 yield 했으므로 최종
     # Answer.text 에도 동일하게 prepend — 화면 placeholder 갱신 시 누락 방지.
-    answer_text = _prepend_question_quote(answer_text, masked)
+    # hotfix: raw question 사용 (위 quote_prefix 와 동일 기준).
+    answer_text = _prepend_question_quote(answer_text, question)
 
     elapsed = time.perf_counter() - t0
 
