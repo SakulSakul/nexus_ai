@@ -752,13 +752,31 @@ _KIND_BADGE_TEXT = {
 
 
 def _supabase():
-    """매 스크립트 실행마다 새 클라이언트 생성. 캐시·session_state 어디에도 보관하지 않음.
-    httpx 연결이 다른 사용자 세션에서 닫혀 공유 객체가 망가지는 문제를 원천 차단."""
+    """챗봇 응답 경로용 Supabase client.
+
+    매 스크립트 실행마다 새 클라이언트 생성. 캐시·session_state 어디에도
+    보관하지 않음. httpx 연결이 다른 사용자 세션에서 닫혀 공유 객체가
+    망가지는 문제를 원천 차단.
+
+    PR-Beta-Hotfix-3 임시 우회:
+      db/13~16 적용 + RLS DISABLE + table-level GRANT 시도 후에도 anon
+      INSERT 가 'permission denied for table query_logs' (42501) 로 실패.
+      Supabase 내부 layer issue 가 의심되며 베타 모집 차단 상태. 임시로
+      service_role 키 사용 — RLS/GRANT bypass 로 즉시 작동. anon root
+      cause 분석 + 정상 RLS 복귀는 별도 track.
+
+      Service role 키가 설정돼 있으면 그것을 사용, 없으면 anon 키 fallback
+      (기존 동작 호환). 베타 환경 가드: SUPABASE_SERVICE_ROLE_KEY 미설정
+      시에도 dev 가 깨지지 않도록 graceful fallback.
+    """
     from supabase import create_client
     s = settings()
-    if not s.supabase_url or not s.supabase_key:
+    if not s.supabase_url:
         return None
-    return create_client(s.supabase_url, s.supabase_key)
+    key = s.supabase_service_role_key or s.supabase_key
+    if not key:
+        return None
+    return create_client(s.supabase_url, key)
 
 
 def _supabase_admin():
