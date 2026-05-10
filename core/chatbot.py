@@ -186,14 +186,14 @@ def _format_process_section(process: str) -> str:
     return formatted.strip()
 
 
-# 권장 행동 섹션 헤더 (시스템 프롬프트가 강제하는 출력 구조 ④) 의 markdown
+# 권장 행동 섹션 헤더 (시스템 프롬프트가 강제하는 출력 구조 ③) 의 markdown
 # 패턴. 답변 내 일반 numbered list (예: 사규 인용 '1. 정의 2. 적용범위') 가
 # 권장 행동으로 잘못 추출되지 않도록 섹션 본문에서만 추출.
-# 종료는 다음 섹션(⑤/출처/역질문/[참조/---) 또는 문서 끝(\Z). re.M 의 $ 는
+# 종료는 다음 섹션(④/출처/역질문/[참조/---) 또는 문서 끝(\Z). re.M 의 $ 는
 # line-end 라 lookahead 가 0자 body 로 끝나는 결함 → \Z 로 대체.
 _RE_ACTION_SECTION = re.compile(
-    r"(?:^|\n)\s*(?:④|##?#?\s*권장\s*행동|\*\*?권장\s*행동\*\*?|3\.\s*즉시\s*실행)"
-    r"([\s\S]*?)(?=\n\s*(?:⑤|##?#?\s*출처|##?#?\s*역질문|\[참조|---)|\Z)",
+    r"(?:^|\n)\s*(?:③|##?#?\s*권장\s*행동|\*\*?권장\s*행동\*\*?|3\.\s*즉시\s*실행)"
+    r"([\s\S]*?)(?=\n\s*(?:④|##?#?\s*출처|##?#?\s*역질문|\[참조|---)|\Z)",
 )
 _RE_ACTION_BLOCK = re.compile(r"(?:^|\n)\s*\d+\.\s+(.+)")
 
@@ -523,6 +523,24 @@ def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, s
     raise RuntimeError("No chat provider configured")
 
 
+def _prepend_question_quote(answer: str, question: str) -> str:
+    """답변 본문 앞에 사용자 질문 원문 quote 줄을 mechanical 하게 붙인다.
+
+    PR-Quality-4: LLM 이 system prompt 의 quote 지시를 무시하고
+    "안전관리" → "[익명]" 같은 변형을 일으키는 결함 차단 — quote 를
+    LLM 외부 (Python 단) 에서 강제 prepend. system prompt 의 [출력 구조]
+    에서 ① 이해 확인 항목은 폐기됨.
+
+    question 은 마스킹 후 텍스트 사용 — answer 본문이 마스킹 기준이라
+    quote 줄도 동일 기준으로 일관되게 한다. PII 가 quote 줄에 raw 노출
+    되는 사고도 차단.
+    """
+    q = (question or "").strip()
+    if not q:
+        return answer
+    return f"질문하신 내용: '{q}'\n\n{answer.lstrip()}"
+
+
 def _ensure_citation(answer: str, contexts: list[dict]) -> str:
     if "[참조:" in answer:
         return answer
@@ -829,6 +847,10 @@ def ask(
     else:
         final = answer_text
 
+    # PR-Quality-4: 사용자 질문 원문 quote 줄을 mechanical prepend.
+    # LLM 외부에서 강제하여 paraphrase·변형 사고 원천 차단.
+    final = _prepend_question_quote(final, masked)
+
     elapsed = time.perf_counter() - t0
 
     # 질의 로그 (마스킹 후 본문만 저장, 원본은 즉시 폐기).
@@ -1078,6 +1100,13 @@ def ask_stream(
     used_model = s.chat_model
     used_fallback = False
 
+    # PR-Quality-4: 사용자 질문 원문 quote 줄을 LLM 스트림 직전에 mechanical
+    # 하게 먼저 yield. LLM 답변은 곧바로 ① 핵심 결론부터 시작하므로 본 줄과
+    # 자연스럽게 이어진다 (system prompt [출력 구조] 가 이를 강제).
+    quote_prefix = f"질문하신 내용: '{masked.strip()}'\n\n" if masked and masked.strip() else ""
+    if quote_prefix:
+        yield ("chunk", quote_prefix)
+
     raw_full = ""
     try:
         for kind, val in _stream_filter_process_marker(
@@ -1112,6 +1141,9 @@ def ask_stream(
     answer_text, suggestions = _split_suggestions(answer_text)
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
+    # PR-Quality-4: streaming 중 quote_prefix 를 이미 yield 했으므로 최종
+    # Answer.text 에도 동일하게 prepend — 화면 placeholder 갱신 시 누락 방지.
+    answer_text = _prepend_question_quote(answer_text, masked)
 
     elapsed = time.perf_counter() - t0
 
