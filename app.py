@@ -1247,6 +1247,75 @@ def _push_history(item) -> None:
         del h[: len(h) - _HISTORY_CAP]
 
 
+def _chunks_to_str_stream(stream_iter, out_holder: dict):
+    """ask_stream 의 ("chunk", str) | ("done", Answer) 튜플을 st.write_stream
+    호환 str-only generator 로 변환 (PR-Fun3a 페이즈 2).
+
+    ("done", Answer) 시점의 Answer 를 out_holder["ans"] 로 closure 보존 —
+    st.write_stream 호출자가 streaming 종료 후 ans 를 회수하도록 한다.
+    chunk 추출 외 가공 없음 (커서·prefix 없음 — write_stream 의 native
+    append 가 매끄러움 담당).
+
+    예외는 그대로 raise — 호출 측 retry/에러 분기 로직이 받음.
+    """
+    out_holder.setdefault("ans", None)
+    for kind, val in stream_iter:
+        if kind == "chunk":
+            yield val
+        elif kind == "done":
+            out_holder["ans"] = val
+
+
+def _inject_streaming_scroll_js_once() -> None:
+    """답변 streaming 시 자동 scroll 추적 JS 를 session 당 1회 주입
+    (PR-Fun3a 페이즈 2).
+
+    - MutationObserver 가 body subtree 의 child 추가를 감지 → near-bottom
+      이면 smooth scroll 로 끝까지 추적. 사용자가 위로 scroll 했으면 추적 X
+      (max - scrollY > 200px threshold).
+    - components.html iframe 안의 JS 가 parent window 에 접근 — Streamlit
+      same-origin iframe 이라 가능 (이미 timer iframe 에서 동일 패턴 검증).
+    - session_state guard 로 중복 주입 차단 — rerun 마다 observer 가 새로
+      생기지 않도록.
+    - height=0 으로 보이지 않게 — 단지 JS bootstrap 용 슬롯.
+    """
+    if st.session_state.get("_nx_scroll_js_injected"):
+        return
+    st.session_state["_nx_scroll_js_injected"] = True
+    components.html(
+        """
+<script>
+  (function() {
+    try {
+      var top = window.parent || window;
+      if (top._nx_scroll_observer) return;
+      var doc = top.document;
+      var THRESHOLD = 200;
+      var nearBottom = function() {
+        var max = doc.documentElement.scrollHeight - top.innerHeight;
+        return (max - top.scrollY) < THRESHOLD;
+      };
+      var sticky = true;
+      top.addEventListener('scroll', function() {
+        sticky = nearBottom();
+      }, { passive: true });
+      var observer = new MutationObserver(function() {
+        if (!sticky) return;
+        var max = doc.documentElement.scrollHeight - top.innerHeight;
+        top.scrollTo({ top: max, behavior: 'smooth' });
+      });
+      observer.observe(doc.body, { childList: true, subtree: true, characterData: true });
+      top._nx_scroll_observer = observer;
+    } catch (e) {
+      console.warn('[nx-scroll]', e);
+    }
+  })();
+</script>
+""",
+        height=0,
+    )
+
+
 def _render_beta_banner() -> None:
     s = settings()
     # 정확한 prod 화이트리스트 — 'prod-test' 같은 모호 값에 banner 가 숨지 않음.
@@ -1698,6 +1767,11 @@ def _run_ask(
     last_err: Exception | None = None
     tb_str = ""
     friendly_msg = ""
+    # PR-Fun3a 페이즈 2: streaming 시 자동 scroll 추적 JS 주입 (session 1회).
+    # MutationObserver 가 body subtree 변경 감지 → near-bottom 이면 끝까지
+    # smooth scroll. 사용자가 위로 scroll 한 상태면 추적 정지.
+    _inject_streaming_scroll_js_once()
+
     with st.chat_message("assistant"):
         # 답변 본문 placeholder — streaming 점진 표시 + 후처리 단일 update.
         # status 컨테이너보다 위쪽 영역에 자리 잡아 사용자는 처리 단계 메시지
@@ -1830,20 +1904,23 @@ def _run_ask(
                 # streaming 답변 — ask_stream 가 ("chunk", str) / ("done",
                 # Answer) yield. critical / injection / stream 예외 시
                 # 내부에서 ask() 동기 위임 → ("done", Answer) 단일 yield.
-                for kind, val in ask_stream(
+                # PR-Fun3a: write_stream 으로 갈아탐 — placeholder.markdown
+                # per chunk (DOM 전체 교체) → write_stream 의 native append
+                # streaming. claude.ai 스타일 token 매끄러움 확보. 튜플 yield
+                # 형태는 _chunks_to_str_stream wrapper 가 str 만 추출하면서
+                # ("done", Answer) 의 ans 를 closure dict 로 보존.
+                _stream_holder: dict = {"ans": None}
+                _stream_iter = ask_stream(
                     sb,
                     question=effective_q,
                     category=cat,
                     progress_callback=cb,
                     prev_turn=prev_turn,
-                ):
-                    if kind == "chunk":
-                        stream_buffer += val
-                        # 커서 ▎ 로 streaming 표시. answer_placeholder 가
-                        # progress 위쪽에 자리잡아 사용자가 답변 점진 그려짐을 본다.
-                        answer_placeholder.markdown(stream_buffer + "▎")
-                    elif kind == "done":
-                        ans = val
+                )
+                stream_buffer = answer_placeholder.write_stream(
+                    _chunks_to_str_stream(_stream_iter, _stream_holder)
+                ) or ""
+                ans = _stream_holder["ans"]
                 break
             except Exception as e:
                 last_err = e
@@ -1855,7 +1932,14 @@ def _run_ask(
 
         # progress placeholder + bar 정리 — 답변 본문 final 표시 _전_에 비움.
         # 에러 분기는 아래 if ans is None 에서도 한 번 더 안전망.
-        progress_placeholder.empty()
+        # PR-Fun3a 페이즈 2: empty() 직접 호출 시 container 가 즉시 사라져
+        # scroll jump 가 일어남 → 0-height div 로 교체해 layout 보존 (시각적
+        # 으로는 동일하게 사라짐). 에러 분기는 그대로 empty() 유지 (에러
+        # 메시지가 자리 차지).
+        progress_placeholder.markdown(
+            "<div style='height:0;overflow:hidden'></div>",
+            unsafe_allow_html=True,
+        )
         progress_bar.empty()
 
         if ans is None:
