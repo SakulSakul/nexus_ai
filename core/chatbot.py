@@ -246,6 +246,53 @@ def _looks_like_injection(text: str) -> bool:
     return any(p.search(text) for p in _INJECTION_PATTERNS)
 
 
+# ── PR-Beta-Hotfix-1: query_logs INSERT 진단 로깅 ───────────
+# 기존 try/except 가 `print(f"[query_logs INSERT failed] {_e}")` 로 짧게만
+# 출력해 Streamlit Cloud Logs 에서 진짜 원인 파악이 어려웠다. 본 헬퍼는:
+#   · 실패 시: exception type + PostgREST 상세 (message/code/details/hint/
+#     status_code) + payload 컬럼 list 까지 한 줄로 stderr 출력.
+#   · 성공 시: row id + 컬럼 수 stderr 출력 (volume 낮음, 정상 흐름 확인).
+#
+# prefix `[QUERY_LOGS INSERT FAIL]` / `[QUERY_LOGS INSERT OK]` 는 Streamlit
+# Cloud Logs 탭에서 grep 으로 즉시 추출 가능하도록 고정 토큰. 이 모듈에서만
+# 사용되는 진단 헬퍼라 underscore prefix 로 보호 (식별자 무수정 가드 준수).
+
+_QUERY_LOG_FAIL_PREFIX = "[QUERY_LOGS INSERT FAIL]"
+_QUERY_LOG_OK_PREFIX = "[QUERY_LOGS INSERT OK]"
+
+
+def _log_query_logs_insert_failure(payload_keys: list[str], err: Exception) -> None:
+    """query_logs INSERT 실패 시 max-verbose stderr 출력 (PR-Beta-Hotfix-1).
+
+    payload_keys: payload dict 의 key list. 컬럼 mismatch 진단용.
+    err: 발생한 예외. PostgREST APIError 의 경우 .message/.code/.details/
+         .hint/.status_code 속성을 추가 노출.
+    """
+    import sys
+    parts = [
+        f"{_QUERY_LOG_FAIL_PREFIX}",
+        f"type={type(err).__name__}",
+        f"msg={err}",
+    ]
+    for attr in ("message", "code", "details", "hint", "status_code"):
+        val = getattr(err, attr, None)
+        if val is not None and val != "":
+            parts.append(f"{attr}={val}")
+    parts.append(f"payload_columns={payload_keys}")
+    print("  ".join(parts), file=sys.stderr, flush=True)
+
+
+def _log_query_logs_insert_success(row_id: int | None, payload_keys: list[str]) -> None:
+    """query_logs INSERT 성공 시 row id + 컬럼 수 stderr 출력. 정상 흐름
+    가시화로 미래 silent fail 즉시 감지 (last_ts gap 으로 추론 안 해도 됨).
+    """
+    import sys
+    print(
+        f"{_QUERY_LOG_OK_PREFIX}  id={row_id}  cols={len(payload_keys)}",
+        file=sys.stderr, flush=True,
+    )
+
+
 @dataclass
 class Answer:
     text: str
@@ -716,24 +763,26 @@ def ask(
     # Prompt injection 1차 필터 — LLM 호출 전 차단으로 토큰 비용·로깅 노이즈 절감.
     # 매치되면 LLM 미호출 + critical 트리거 안 함 + 별도 로그만 남기고 거절.
     if _looks_like_injection(question):
+        _block_payload = {
+            "category":            category if category and category != "전체" else None,
+            "query_masked":        "[BLOCKED — prompt injection signature]",
+            "is_critical":         False,
+            "critical_kind":       None,
+            "hit_chunk_ids":       [],
+            "hit_categories":      [],
+            "env":                 s.env_tag,
+            "embed_model_version": s.embed_model,
+            "chat_provider":       "blocked",
+            "chat_model_version":  None,
+            "elapsed_ms":          0,
+            "used_fallback":       False,
+        }
         try:
-            supabase.table("query_logs").insert({
-                "category":            category if category and category != "전체" else None,
-                "query_masked":        "[BLOCKED — prompt injection signature]",
-                "is_critical":         False,
-                "critical_kind":       None,
-                "hit_chunk_ids":       [],
-                "hit_categories":      [],
-                "env":                 s.env_tag,
-                "embed_model_version": s.embed_model,
-                "chat_provider":       "blocked",
-                "chat_model_version":  None,
-                "elapsed_ms":          0,
-                "used_fallback":       False,
-            }).execute()
+            _ins = supabase.table("query_logs").insert(_block_payload).execute()
+            _row_id = _ins.data[0].get("id") if _ins.data else None
+            _log_query_logs_insert_success(_row_id, list(_block_payload.keys()))
         except Exception as _e:
-            import sys as _sys
-            print(f"[query_logs INSERT failed — blocked] {_e}", file=_sys.stderr, flush=True)
+            _log_query_logs_insert_failure(list(_block_payload.keys()), _e)
         return Answer(
             text=("해당 요청은 처리할 수 없습니다. 사규·윤리강령·사례집 관련 "
                   "질문을 해주세요.\n\n[참조: 검색 결과 없음]"),
@@ -869,27 +918,28 @@ def ask(
         _cats = _c.get("categories") or []
         if isinstance(_cats, list):
             hit_categories.extend([cat for cat in _cats if cat])
+    _ask_payload = {
+        "category":             category if category and category != "전체" else None,
+        "query_masked":         masked,
+        "is_critical":          detection.triggered,
+        "critical_kind":        detection.kind,
+        "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
+        "hit_categories":       hit_categories,
+        "env":                  s.env_tag,
+        "embed_model_version":  s.embed_model,
+        "chat_provider":        used_provider,
+        "chat_model_version":   used_model,
+        "elapsed_ms":           int(elapsed * 1000),
+        "used_fallback":        used_fallback,
+        # user_id_hash / access_level 은 회사 SSO 도입 후 채움.
+    }
     try:
-        ins = supabase.table("query_logs").insert({
-            "category":             category if category and category != "전체" else None,
-            "query_masked":         masked,
-            "is_critical":          detection.triggered,
-            "critical_kind":        detection.kind,
-            "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
-            "hit_categories":       hit_categories,
-            "env":                  s.env_tag,
-            "embed_model_version":  s.embed_model,
-            "chat_provider":        used_provider,
-            "chat_model_version":   used_model,
-            "elapsed_ms":           int(elapsed * 1000),
-            "used_fallback":        used_fallback,
-            # user_id_hash / access_level 은 회사 SSO 도입 후 채움.
-        }).execute()
+        ins = supabase.table("query_logs").insert(_ask_payload).execute()
         if ins.data:
             query_log_id = ins.data[0].get("id")
+        _log_query_logs_insert_success(query_log_id, list(_ask_payload.keys()))
     except Exception as _e:
-        import sys as _sys
-        print(f"[query_logs INSERT failed] {_e}", file=_sys.stderr, flush=True)
+        _log_query_logs_insert_failure(list(_ask_payload.keys()), _e)
 
     _emit("complete")
     return Answer(
@@ -1162,27 +1212,27 @@ def ask_stream(
         _cats = _c.get("categories") or []
         if isinstance(_cats, list):
             hit_categories.extend([cat for cat in _cats if cat])
+    _stream_payload = {
+        "category":             category if category and category != "전체" else None,
+        "query_masked":         masked,
+        "is_critical":          False,
+        "critical_kind":        None,
+        "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
+        "hit_categories":       hit_categories,
+        "env":                  s.env_tag,
+        "embed_model_version":  s.embed_model,
+        "chat_provider":        used_provider,
+        "chat_model_version":   used_model,
+        "elapsed_ms":           int(elapsed * 1000),
+        "used_fallback":        used_fallback,
+    }
     try:
-        ins = supabase.table("query_logs").insert({
-            "category":             category if category and category != "전체" else None,
-            "query_masked":         masked,
-            "is_critical":          False,
-            "critical_kind":        None,
-            "hit_chunk_ids":        [c.get("chunk_id") for c in contexts if c.get("chunk_id")],
-            "hit_categories":       hit_categories,
-            "env":                  s.env_tag,
-            "embed_model_version":  s.embed_model,
-            "chat_provider":        used_provider,
-            "chat_model_version":   used_model,
-            "elapsed_ms":           int(elapsed * 1000),
-            "used_fallback":        used_fallback,
-        }).execute()
+        ins = supabase.table("query_logs").insert(_stream_payload).execute()
         if ins.data:
             query_log_id = ins.data[0].get("id")
+        _log_query_logs_insert_success(query_log_id, list(_stream_payload.keys()))
     except Exception as _e:
-        import sys as _sys
-        print(f"[query_logs INSERT failed (stream)] {_e}",
-              file=_sys.stderr, flush=True)
+        _log_query_logs_insert_failure(list(_stream_payload.keys()), _e)
 
     _emit("complete")
     yield ("done", Answer(
