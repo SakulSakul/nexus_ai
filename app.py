@@ -751,6 +751,78 @@ _KIND_BADGE_TEXT = {
 }
 
 
+def _log_supabase_keys_debug(s) -> None:
+    """PR-Beta-Hotfix-4: env + Settings + chosen key 진단 stderr dump.
+
+    Streamlit Cloud Logs 에서 prefix `[NX_DEBUG]` grep 으로 즉시 추출.
+    출력 항목:
+      · 후보 env var 6종 (SUPABASE_KEY/_ANON_KEY/_SERVICE_ROLE_KEY +
+        NEXUS_ prefix 변종) 의 존재 여부 + len + prefix/suffix 8/4 chars.
+      · Settings.supabase_url / supabase_key / supabase_service_role_key
+        bool 값.
+      · _supabase() 가 실제 사용할 chosen key 의 prefix/suffix +
+        match_service_role / match_anon 비교.
+      · JWT payload 의 'role' claim — Supabase JWT 는 payload 에 role
+        ('anon' | 'service_role' | 'authenticated') 명시 → 진짜 role 즉시
+        확인. base64 decode 만 — 서명 검증 X (디버깅용).
+
+    보안: full key 절대 출력 X — prefix 8 + suffix 4 만 (12 chars / 200+).
+    """
+    import sys
+    import os as _os
+
+    print("[NX_DEBUG] env keys present:", flush=True, file=sys.stderr)
+    for env_name in (
+        "SUPABASE_KEY", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY",
+        "NEXUS_SUPABASE_KEY", "NEXUS_SUPABASE_ANON_KEY",
+        "NEXUS_SUPABASE_SERVICE_ROLE_KEY",
+    ):
+        val = _os.environ.get(env_name)
+        if val:
+            print(
+                f"  - {env_name}: ✓ len={len(val)} "
+                f"prefix={val[:8]}... suffix=...{val[-4:]}",
+                flush=True, file=sys.stderr,
+            )
+        else:
+            print(f"  - {env_name}: ✗ missing", flush=True, file=sys.stderr)
+
+    print("[NX_DEBUG] Settings:", flush=True, file=sys.stderr)
+    print(f"  - supabase_url set: {bool(s.supabase_url)}",
+          flush=True, file=sys.stderr)
+    print(f"  - supabase_key (anon) set: {bool(s.supabase_key)}",
+          flush=True, file=sys.stderr)
+    print(f"  - supabase_service_role_key set: {bool(s.supabase_service_role_key)}",
+          flush=True, file=sys.stderr)
+
+    chosen = s.supabase_service_role_key or s.supabase_key
+    if not chosen:
+        print("[NX_DEBUG] _supabase() chosen key: (none — both None)",
+              flush=True, file=sys.stderr)
+        return
+
+    is_service = chosen == s.supabase_service_role_key
+    is_anon = chosen == s.supabase_key
+    jwt_role = "?"
+    try:
+        import base64 as _b64, json as _json
+        parts = chosen.split(".")
+        if len(parts) >= 2:
+            pad = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload = _json.loads(_b64.urlsafe_b64decode(pad).decode("utf-8"))
+            jwt_role = payload.get("role", "?")
+    except Exception as e:
+        jwt_role = f"decode_err:{type(e).__name__}"
+
+    print(
+        f"[NX_DEBUG] _supabase() chosen key: "
+        f"prefix={chosen[:8]}... suffix=...{chosen[-4:]} len={len(chosen)} "
+        f"match_service_role={is_service} match_anon={is_anon} "
+        f"jwt_role={jwt_role}",
+        flush=True, file=sys.stderr,
+    )
+
+
 def _supabase():
     """챗봇 응답 경로용 Supabase client.
 
@@ -768,9 +840,20 @@ def _supabase():
       Service role 키가 설정돼 있으면 그것을 사용, 없으면 anon 키 fallback
       (기존 동작 호환). 베타 환경 가드: SUPABASE_SERVICE_ROLE_KEY 미설정
       시에도 dev 가 깨지지 않도록 graceful fallback.
+
+    PR-Beta-Hotfix-4: 첫 호출 시점에 env + Settings + chosen key 진단을
+    stderr 로 1회 dump. session_state guard 로 같은 session 내 spam 차단.
     """
     from supabase import create_client
     s = settings()
+    if not st.session_state.get("_nx_supabase_debug_logged"):
+        st.session_state["_nx_supabase_debug_logged"] = True
+        try:
+            _log_supabase_keys_debug(s)
+        except Exception as _e:
+            import sys as _sys
+            print(f"[NX_DEBUG] log_supabase_keys_debug failed: {_e}",
+                  flush=True, file=_sys.stderr)
     if not s.supabase_url:
         return None
     key = s.supabase_service_role_key or s.supabase_key
