@@ -1316,6 +1316,83 @@ def _inject_streaming_scroll_js_once() -> None:
     )
 
 
+def _inject_streaming_visual_polish_once() -> None:
+    """답변 streaming 영역 visual polish CSS 주입 (PR-Fun3b 페이즈 3).
+
+    `st.write_stream` (PR-Fun3a) 의 native append streaming 위에서 가독성·
+    한국어 line-break·font smoothing 만 보강. 진정한 token-append 렌더는
+    phase 4 (custom React component) 영역 — 본 함수는 architectural
+    refactor 없이 가능한 범위 limit.
+
+    적용 대상: chat_message 안의 Markdown 컨테이너 (사용자/어시스턴트 모두).
+    선택자 `[data-testid="stChatMessage"] [data-testid="stMarkdown"]` 은
+    Streamlit 1.36+ 의 안정 testid. 미래 버전에서 깨지면 fallback 으로
+    `.stMarkdown` class 도 함께 명시.
+
+    fade-in 애니메이션 적용 X — write_stream 의 chunk-마다 markdown 전체
+    re-render 와 결합 시 opacity 가 매 chunk 마다 0.5→1 pulsing 으로
+    시각적 거슬림. 향후 token-level append 로 전환 시 재고려.
+
+    session 당 1회 — _nx_visual_polish_injected guard.
+    """
+    if st.session_state.get("_nx_visual_polish_injected"):
+        return
+    st.session_state["_nx_visual_polish_injected"] = True
+    components.html(
+        """
+<style id="nx-visual-polish-injected">
+  /* Korean text rendering polish — line-height·letter-spacing·word-break */
+  [data-testid="stChatMessage"] [data-testid="stMarkdown"],
+  [data-testid="stChatMessage"] .stMarkdown {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  [data-testid="stChatMessage"] [data-testid="stMarkdown"] p,
+  [data-testid="stChatMessage"] [data-testid="stMarkdown"] li,
+  [data-testid="stChatMessage"] .stMarkdown p,
+  [data-testid="stChatMessage"] .stMarkdown li {
+    line-height: 1.75;
+    letter-spacing: -0.005em;
+    /* keep-all 은 한글 어절 단위 줄바꿈 — 영문/숫자 단어는 그대로 break */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  /* 인라인 코드·인용 padding 미세 조정 */
+  [data-testid="stChatMessage"] [data-testid="stMarkdown"] code {
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+  /* root scroll behavior 보강 — PR-Fun3a scroll JS 와 함께 동작 */
+  html { scroll-behavior: smooth; scroll-padding-bottom: 32px; }
+</style>
+<script>
+  // visual polish 는 CSS-only — JS bootstrap 불필요. 단지 inline 으로
+  // CSS 를 parent document 에 주입하기 위해 components.html 사용 (st.markdown
+  // 의 unsafe_allow_html 로는 같은 효과지만 components.html 패턴 통일).
+  (function() {
+    try {
+      var top = window.parent || window;
+      var doc = top.document;
+      // 이미 주입된 경우 skip (rerun 시 다중 주입 방어)
+      if (doc.getElementById('nx-visual-polish-mirror')) return;
+      // CSS 가 iframe 내부에만 있으면 parent 에 적용 안 됨 → mirror 로 parent 에도.
+      var src = document.getElementById('nx-visual-polish-injected');
+      if (!src) return;
+      var mirror = doc.createElement('style');
+      mirror.id = 'nx-visual-polish-mirror';
+      mirror.textContent = src.textContent;
+      doc.head.appendChild(mirror);
+    } catch (e) {
+      console.warn('[nx-visual-polish]', e);
+    }
+  })();
+</script>
+""",
+        height=0,
+    )
+
+
 def _render_beta_banner() -> None:
     s = settings()
     # 정확한 prod 화이트리스트 — 'prod-test' 같은 모호 값에 banner 가 숨지 않음.
@@ -1771,6 +1848,10 @@ def _run_ask(
     # MutationObserver 가 body subtree 변경 감지 → near-bottom 이면 끝까지
     # smooth scroll. 사용자가 위로 scroll 한 상태면 추적 정지.
     _inject_streaming_scroll_js_once()
+    # PR-Fun3b 페이즈 3: typography·smoothing visual polish CSS 주입 (1회).
+    # write_stream 위에서 한국어 가독성·font-smoothing·smooth scroll 보강.
+    # 진정한 token-append render 는 phase 4 (custom React component) 영역.
+    _inject_streaming_visual_polish_once()
 
     with st.chat_message("assistant"):
         # 답변 본문 placeholder — streaming 점진 표시 + 후처리 단일 update.
