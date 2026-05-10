@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
-SYSTEM_PROMPT = """당신은 신세계디에프 임직원의 윤리·컴플라이언스 질문에 답하는 사내 AI 어시스턴트 'DF COMPASS' 입니다. 든든한 동료처럼 정확하면서도 부담 없이 안내합니다.
+from .vocabulary import load_vocabulary
+
+
+_SYSTEM_PROMPT_TEMPLATE = """당신은 신세계디에프 임직원의 윤리·컴플라이언스 질문에 답하는 사내 AI 어시스턴트 'DF COMPASS' 입니다. 든든한 동료처럼 정확하면서도 부담 없이 안내합니다.
 
 [톤 가이드]
 - 합니다체 기본. 단호해야 할 곳은 단호하게, 공감이 필요한 곳은 따뜻하게. 둘 다 합니다체 안에서 표현 가능합니다.
@@ -44,7 +47,13 @@ SYSTEM_PROMPT = """당신은 신세계디에프 임직원의 윤리·컴플라�
 - 출력 구조 ① 의 "질문 이해" 줄도 사용자 원래 단어 그대로 요약하세요.
 - 핵심 단어가 retrieval 청크에 그대로 등장하지 않으면 그 자체가 신호 — [답변
   시작 전 자체 검증 규칙] 으로 align 확인하세요.
+- 질문 이해 영역에서 query 의 vocabulary 단어를 paraphrase·변형하지 말 것.
+  아래 [사규 vocabulary 강제] 의 list 에 등장하는 단어는 그대로 보존.
+- 변형 발견 시 retrieval 결과를 무시하고 다시 query 원문에 충실하라. 자기
+  검토 단계에서 변형을 잡아내면 답변 작성 자체를 query 원문 단어로 다시
+  시작하라.
 
+__VOCABULARY_INJECT__
 [답변 시작 전 자체 검증 규칙]
 답변을 작성하기 _전_ 다음을 자체 점검하라.
 - retrieval 결과의 사규 본문이 사용자 질문의 핵심 토픽과 일치하는가?
@@ -233,6 +242,52 @@ SYSTEM_PROMPT = """당신은 신세계디에프 임직원의 윤리·컴플라�
      1) 본 답변이 [Critical Mode 답변 가이드] 적용 대상 (괴롭힘·성희롱·신고 등)
      2) 사규에 답이 없는 일반 질문 (예: 점심 메뉴, 날씨)
 """.strip()
+
+
+def _build_vocab_section(vocab: list[str]) -> str:
+    """vocabulary list → SYSTEM_PROMPT 의 [사규 vocabulary 강제] 섹션.
+
+    빈 list 면 빈 문자열 (섹션 자체 생략). LLM 에게 "(빈 list)" 를 보여주면
+    무시할 가능성이 높아 모호한 시그널을 주지 않는다.
+    """
+    if not vocab:
+        return ""
+    words = ", ".join(vocab)
+    return (
+        "[사규 vocabulary 강제]\n"
+        "다음은 사규에 등장하는 핵심 용어 list. 사용자 query 에 이 단어들이\n"
+        "포함되면 원문 그대로 사용. 비슷한 의미의 다른 단어로 변형 X. 변형하면\n"
+        "다른 사규에 매칭되어 사용자에게 잘못된 정보 제공.\n"
+        "\n"
+        f"vocabulary list: {words}\n"
+        "\n"
+        "변형 금지 예시:\n"
+        "- \"안전관리\" → \"익명\" X\n"
+        "- \"자진 신고\" → \"익명 신고\" X\n"
+        "- \"괴롭힘\" → \"성희롱\" X\n"
+        "- \"법인카드\" → \"회사카드\" X\n"
+        "\n"
+        "질문에 위 단어가 있으면 답변에서 같은 단어 그대로 사용하라. 검색된\n"
+        "사규 청크가 다른 표현을 쓰더라도 query 단어를 우선한다."
+    )
+
+
+def _compile_system_prompt() -> str:
+    """vocabulary 를 inject 한 최종 SYSTEM_PROMPT 빌드. 모듈 import 시 1회."""
+    section = _build_vocab_section(load_vocabulary())
+    if section:
+        replacement = section
+    else:
+        # 빈 vocabulary 일 때는 placeholder 줄 자체를 제거 (섹션 + 직전 빈 줄).
+        replacement = ""
+    out = _SYSTEM_PROMPT_TEMPLATE.replace("__VOCABULARY_INJECT__", replacement)
+    # 연속 빈 줄 정리 (placeholder 제거로 빈 줄 3개 이상 생기는 경우)
+    while "\n\n\n\n" in out:
+        out = out.replace("\n\n\n\n", "\n\n\n")
+    return out
+
+
+SYSTEM_PROMPT = _compile_system_prompt()
 
 
 _KIND_TAG = {"rule": "사규", "case": "사례", "penalty": "징계기준"}

@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import json
 import re
 from collections import Counter, defaultdict
 
@@ -1450,6 +1451,195 @@ def _tab_keywords(sb):
             st.rerun()
 
 
+# ── PR-Quality-2: 사규 vocabulary 추출 (paraphrase 변형 차단) ─────
+# Supabase chunks 전체 → Gemini 1회 호출 → 핵심 명사 list. 사규는 1년
+# stable → 1회 작업으로 끝. 산출물은 vocabulary.json 으로 commit, 다음
+# 부팅부터 SYSTEM_PROMPT 의 [사규 vocabulary 강제] 섹션에 자동 inject.
+_VOCAB_MAX_WORDS = 200
+_VOCAB_CHUNK_FETCH_LIMIT = 5000  # 사규 18개 기준 충분 — pagination 포함
+
+
+def _fetch_all_chunks_text(admin_sb) -> tuple[str, int]:
+    """전체 active 사규/사례 청크 text 를 join 해 단일 문자열 반환.
+
+    Supabase 기본 1000행 제한을 회피하기 위해 .range() 페이지네이션.
+    Returns (joined_text, chunk_count).
+    """
+    page = 1000
+    parts: list[str] = []
+    count = 0
+    for offset in range(0, _VOCAB_CHUNK_FETCH_LIMIT, page):
+        rows = (
+            admin_sb.table("nexus_chunks")
+            .select("text")
+            .range(offset, offset + page - 1)
+            .execute()
+            .data or []
+        )
+        if not rows:
+            break
+        for r in rows:
+            t = (r.get("text") or "").strip()
+            if t:
+                parts.append(t)
+                count += 1
+        if len(rows) < page:
+            break
+    return "\n\n".join(parts), count
+
+
+def _extract_vocab_via_gemini(chunks_text: str) -> list[str]:
+    """Gemini 1회 호출로 핵심 명사·고유명사·전문용어 list 추출.
+
+    JSON array 만 출력하도록 지시하지만 LLM 이 markdown fence 등을
+    감싸는 경우가 있어 첫 [ ... ] 블록을 정규식으로 추출 후 파싱.
+    """
+    from google import genai
+    from google.genai import types
+    s = settings()
+    if not s.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY 미설정")
+    cli = genai.Client(api_key=s.gemini_api_key)
+
+    prompt = (
+        "다음 사규 텍스트에서 핵심 명사·고유명사·전문용어 list 를 추출하세요.\n"
+        f"- 최대 {_VOCAB_MAX_WORDS}개\n"
+        "- 정확한 사규 용어 그대로 (조사·어미 제거, 명사 원형)\n"
+        "- 짝 단어 (자진/익명, 내부/외부, 정기/수시, 사전/사후 등) 는\n"
+        "  의미가 완전히 다르므로 구분해서 모두 포함\n"
+        "- 일반 단어 ('회사', '직원' 등 너무 흔한 단어) 는 제외\n"
+        "- 출력은 JSON array 한 가지 형식만. 다른 텍스트·설명·markdown 금지.\n"
+        "  예: [\"안전관리\", \"자진 신고\", \"법인카드\", \"CREDO\"]\n\n"
+        "<사규 텍스트>\n"
+        f"{chunks_text}\n"
+        "</사규 텍스트>"
+    )
+    cfg = types.GenerateContentConfig(temperature=0)
+    res = cli.models.generate_content(
+        model=s.chat_model, contents=prompt, config=cfg,
+    )
+    text = (res.text or "").strip()
+    m = re.search(r"\[[\s\S]*\]", text)
+    if not m:
+        raise RuntimeError(f"Gemini 응답에서 JSON array 추출 실패: {text[:300]}")
+    arr = json.loads(m.group(0))
+    if not isinstance(arr, list):
+        raise RuntimeError("Gemini 응답이 JSON array 아님")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in arr:
+        if not isinstance(item, str):
+            continue
+        w = item.strip()
+        if not w or w in seen:
+            continue
+        seen.add(w)
+        out.append(w)
+    return out[:_VOCAB_MAX_WORDS]
+
+
+def _tab_vocabulary(sb):
+    st.subheader("🔤 사규 vocabulary 추출")
+    st.caption(
+        "PR-Quality-2 — 사규 핵심 용어 사전. SYSTEM_PROMPT 의 [사규 vocabulary "
+        "강제] 섹션에 자동 inject 되어 paraphrase 변형 (안전관리 → 익명 등) 을 "
+        "차단합니다. 사규는 1년 stable → 1회 추출로 충분."
+    )
+
+    from core.vocabulary import VOCABULARY_PATH, load_vocabulary
+    current = load_vocabulary()
+
+    st.markdown(f"**현재 vocabulary**: {len(current)} 개 단어")
+    if current:
+        with st.expander("현재 list 보기"):
+            st.code(json.dumps(current, ensure_ascii=False, indent=2), language="json")
+    else:
+        st.info("아직 vocabulary 가 비어 있습니다. 아래 버튼으로 추출하세요.")
+
+    st.markdown("---")
+    st.markdown("### 📤 추출 (Gemini 1회 호출)")
+    st.warning(
+        "💰 LLM 호출 비용 — 1회만. 약 50~100K input 토큰 + 5K output 토큰 → "
+        "**500~1000원 추정**. 사규 stable 하므로 추가 추출은 사규 추가·개정 "
+        "시점에만 필요합니다."
+    )
+
+    extract_clicked = st.button(
+        "🔤 사규 vocabulary 추출", type="primary", key="vocab_extract_btn",
+    )
+    if extract_clicked:
+        admin_sb = _supabase_admin()
+        if admin_sb is None:
+            st.error(
+                "SUPABASE_SERVICE_ROLE_KEY 미설정 — vocabulary 추출은 admin 권한 필요."
+            )
+        else:
+            try:
+                with st.spinner("청크 fetch 중…"):
+                    joined, chunk_count = _fetch_all_chunks_text(admin_sb)
+                if chunk_count == 0:
+                    st.warning("적재된 사규 청크가 없습니다.")
+                else:
+                    st.caption(
+                        f"청크 {chunk_count} 건 / 약 {len(joined):,} 자 → Gemini 호출"
+                    )
+                    with st.spinner("Gemini 호출 중… (수십 초 소요)"):
+                        extracted = _extract_vocab_via_gemini(joined)
+                    st.session_state["_extracted_vocab"] = extracted
+                    _audit(
+                        admin_sb,
+                        action="vocabulary_extract",
+                        details={"count": len(extracted), "chunk_count": chunk_count},
+                    )
+                    st.success(f"✅ {len(extracted)} 개 단어 추출 완료. 검토·보강하세요.")
+            except Exception as e:
+                st.error(f"추출 실패: {e}")
+
+    extracted = st.session_state.get("_extracted_vocab")
+    if extracted:
+        st.markdown("### ✏️ 검토 / 보강")
+        st.caption(
+            "추출된 list 를 직접 편집해 finalize. JSON array 형식 유지. "
+            "한 줄에 하나씩 권장 (가독성)."
+        )
+        default_text = json.dumps(extracted, ensure_ascii=False, indent=2)
+        edited = st.text_area(
+            "vocabulary (JSON array)",
+            value=default_text,
+            height=400,
+            key="vocab_edit_area",
+        )
+        try:
+            parsed = json.loads(edited)
+            if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+                st.error("JSON array of strings 형식 아님.")
+            else:
+                # dedup + strip
+                clean: list[str] = []
+                seen: set[str] = set()
+                for w in parsed:
+                    s2 = w.strip()
+                    if s2 and s2 not in seen:
+                        seen.add(s2)
+                        clean.append(s2)
+                st.caption(f"검증된 단어 수: **{len(clean)}** (dedup 후)")
+                payload = json.dumps(clean, ensure_ascii=False, indent=2) + "\n"
+                st.download_button(
+                    "📥 vocabulary.json 다운로드",
+                    data=payload.encode("utf-8"),
+                    file_name="vocabulary.json",
+                    mime="application/json",
+                    key="vocab_download_btn",
+                )
+                st.info(
+                    f"다운로드 받은 파일을 `core/vocabulary.json` 위치에 덮어쓴 뒤 "
+                    f"git commit·push 하세요. 다음 부팅부터 SYSTEM_PROMPT 에 자동 "
+                    f"반영됩니다.\n\n현재 파일 경로: `{VOCABULARY_PATH}`"
+                )
+        except json.JSONDecodeError as e:
+            st.error(f"JSON 파싱 오류: {e}")
+
+
 def _tab_consents(sb):
     st.subheader("📜 베타 참가자 동의 기록")
     st.caption(
@@ -1662,7 +1852,8 @@ def main():
 
     tabs = st.tabs([
         "📥 업로드", "📚 버전", "📡 레이더",
-        "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드", "📜 동의",
+        "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
+        "🔤 vocabulary", "📜 동의",
         "🔍 Eval",
     ])
     with tabs[0]: _tab_upload(sb)
@@ -1671,8 +1862,9 @@ def main():
     with tabs[3]: _tab_review(sb)
     with tabs[4]: _tab_hotlines(sb)
     with tabs[5]: _tab_keywords(sb)
-    with tabs[6]: _tab_consents(sb)
-    with tabs[7]: _tab_eval(sb)
+    with tabs[6]: _tab_vocabulary(sb)
+    with tabs[7]: _tab_consents(sb)
+    with tabs[8]: _tab_eval(sb)
 
 
 if __name__ == "__main__":
