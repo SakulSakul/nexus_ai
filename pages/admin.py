@@ -1831,6 +1831,90 @@ def _tab_eval(sb):
     )
 
 
+def _tab_pii(sb):
+    """PR-Q5: PII filter 빠른 검증 도구.
+
+    Streamlit cloud 재배포 없이 운영자가 query 변형을 즉시 확인할 수 있게
+    한다. mask_pii 가 의도치 않게 일반 명사구 ("안전관리 책임자" 등) 를 잡지
+    않는지, 진짜 PII (성씨+직책, 이메일, 전화번호 등) 는 정상 마스킹되는지
+    한 화면에서 비교.
+
+    sb 인자는 다른 탭과 시그니처 일관성 유지용 (DB 접근 없음).
+    """
+    import streamlit as st
+    from core.pii_filter import mask_pii
+
+    st.subheader("🔐 PII 필터 테스트")
+    st.caption(
+        "입력한 텍스트가 LLM·DB 에 저장되기 전 어떻게 마스킹되는지 확인합니다. "
+        "mask 결과가 사용자 의도와 다르다면 false-positive 사례로 별도 보고."
+    )
+
+    presets = {
+        "(직접 입력)": "",
+        "PR-Q5 검증 1": "매장 안전관리 책임자?",
+        "PR-Q5 검증 2": "자진 신고할 때?",
+        "PR-Q5 검증 3": "괴롭힘 신고 절차",
+        "PR-Q5 검증 4": "법인카드 사용 한도",
+        "성씨+직책": "박 부장님 문의 드립니다",
+        "풀네임+직책": "김민수 차장에게 보고",
+        "이름 동반 매니저": "김 매니저 부정 행위 제보",
+        "복성": "남궁민 팀장 회의",
+        "이메일/전화 PII": "hong@example.com / 010-1234-5678",
+        "사번": "사번 182491 직원",
+        "부서명+이름": "재무팀 김 부장 결재",
+    }
+    preset = st.selectbox(
+        "프리셋", list(presets.keys()), index=0, key="pii_test_preset",
+    )
+    default_text = presets[preset]
+    text = st.text_area(
+        "입력 텍스트",
+        value=default_text,
+        height=120,
+        key=f"pii_test_input_{preset}",
+        help="여러 줄 입력 가능. 빈 줄은 그대로 유지됩니다.",
+    )
+
+    extra_raw = st.text_input(
+        "추가 마스킹 단어 (쉼표 구분, 옵션)",
+        value="",
+        key="pii_test_extra",
+        help="예: '내부코드명, 프로젝트명'",
+    )
+
+    if st.button("마스킹 적용", type="primary", key="pii_test_run"):
+        if not (text or "").strip():
+            st.warning("입력 텍스트가 비어 있습니다.")
+        else:
+            extras = [t.strip() for t in (extra_raw or "").split(",") if t.strip()]
+            masked = mask_pii(text, extras)
+            col_in, col_out = st.columns(2)
+            with col_in:
+                st.caption("입력")
+                st.code(text, language=None)
+            with col_out:
+                st.caption("마스킹 결과")
+                st.code(masked, language=None)
+            if masked == text:
+                st.info("변경 없음 — 마스킹 대상 패턴이 검출되지 않았습니다.")
+            else:
+                st.success("마스킹 적용 완료.")
+
+    with st.expander("🔍 현재 마스킹 정책 요약", expanded=False):
+        st.markdown(
+            "- **이메일·주민번호·휴대폰·일반전화·신용카드·계좌번호·차량번호**: "
+            "표준 패턴으로 즉시 마스킹.\n"
+            "- **사번**: '사번 ABC123' 같이 키워드 동반 또는 standalone 6자리 숫자.\n"
+            "- **한국어 인명 + 직책**: 한국 표준 성씨 (단음절 ~60종 + 복성 7종) + "
+            "선택적 1~2 자 이름 + 직책 (`부장`, `대리`, `매니저` 등) 만 매칭. "
+            "일반 명사구 (`안전관리`, `책임자`, `수석` 등) 는 매칭 안 함.\n"
+            "- **부서명**: `XX팀 / XX실 / XX본부` 등 접미어 패턴.\n"
+            "- **직급(밴드)**: `밴드3`, `band 5`, `b1` 등.\n"
+            "- **추가 단어**: 호출자가 `extra_terms` 로 임의 어휘 마스킹 가능."
+        )
+
+
 def main():
     _require_auth()
 
@@ -1854,7 +1938,7 @@ def main():
         "📥 업로드", "📚 버전", "📡 레이더",
         "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
         "🔤 vocabulary", "📜 동의",
-        "🔍 Eval",
+        "🔍 Eval", "🔐 PII 테스트",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -1865,6 +1949,7 @@ def main():
     with tabs[6]: _tab_vocabulary(sb)
     with tabs[7]: _tab_consents(sb)
     with tabs[8]: _tab_eval(sb)
+    with tabs[9]: _tab_pii(sb)
 
 
 if __name__ == "__main__":
