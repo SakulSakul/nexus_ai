@@ -1530,15 +1530,23 @@ def _feedback_update(sb, payload: dict, *,
     매칭이 다중 row 잡을 위험: query_masked 가 동일한 질문의 짧은 시간 내
     중복 INSERT 거의 X (사용자 1명 기준). 5분 윈도우로 충분 — race 위험은
     베타 단계 acceptable.
+
+    PR-Beta-Hotfix-Feedback: stderr 진단 로깅 강화. prefix
+    `[QUERY_LOGS FB OK]` / `[QUERY_LOGS FB FAIL]` 로 Streamlit Cloud Logs
+    에서 grep 추출. 실 update row 가 0 일 가능성도 노출 (RLS RETURNING
+    blocked 상태에서는 data 가 빈 list 라 0 vs 1 구분 불가하지만 path
+    선택 (id|masked) 와 payload key list 만이라도 가시화).
     """
     import sys
+    path = "id" if query_log_id else ("masked" if masked_question else "none")
+    payload_keys = list(payload.keys())
     try:
         if query_log_id:
-            sb.table("query_logs").update(payload).eq("id", query_log_id).execute()
+            res = sb.table("query_logs").update(payload).eq("id", query_log_id).execute()
         elif masked_question:
             from datetime import datetime as _dt, timedelta as _td, timezone as _tz
             recent = (_dt.now(_tz.utc) - _td(minutes=5)).isoformat()
-            (
+            res = (
                 sb.table("query_logs")
                 .update(payload)
                 .eq("query_masked", masked_question)
@@ -1546,14 +1554,35 @@ def _feedback_update(sb, payload: dict, *,
                 .execute()
             )
         else:
+            print(
+                f"[QUERY_LOGS FB FAIL]  reason=no_identifier  payload_keys={payload_keys}",
+                file=sys.stderr, flush=True,
+            )
             return False
-        return True
-    except Exception as e:
+        # data 길이는 RLS RETURNING 차단 환경에서 0 으로 나올 수 있음 — 진단용 참고만.
+        rows = len(getattr(res, "data", None) or [])
         print(
-            f"[fb update failed] query_log_id={query_log_id} "
-            f"masked={(masked_question or '')[:40]} err={e}",
+            f"[QUERY_LOGS FB OK]  path={path}  query_log_id={query_log_id}  "
+            f"masked_head={(masked_question or '')[:30]!r}  "
+            f"payload_keys={payload_keys}  returned_rows={rows}",
             file=sys.stderr, flush=True,
         )
+        return True
+    except Exception as e:
+        msg_parts = [
+            f"[QUERY_LOGS FB FAIL]",
+            f"path={path}",
+            f"type={type(e).__name__}",
+            f"msg={e}",
+        ]
+        for attr in ("message", "code", "details", "hint", "status_code"):
+            val = getattr(e, attr, None)
+            if val is not None and val != "":
+                msg_parts.append(f"{attr}={val}")
+        msg_parts.append(f"query_log_id={query_log_id}")
+        msg_parts.append(f"masked_head={(masked_question or '')[:30]!r}")
+        msg_parts.append(f"payload_keys={payload_keys}")
+        print("  ".join(msg_parts), file=sys.stderr, flush=True)
         return False
 
 
@@ -1648,20 +1677,34 @@ def _render_feedback(
         neg_clicked = col_neg.button(
             "👎 아쉬워요", key=f"fb_neg_{msg_idx}", use_container_width=True,
         )
+        # PR-Beta-Hotfix-Feedback: UI 상태는 DB update 결과와 무관하게 항상
+        # 진행. 이전 패턴 (DB 성공 시에만 clicked 설정) 은 update 가 silent
+        # 실패할 때 click 이 작동 X 처럼 보이는 사고. update 실패 시 toast
+        # 로 사용자에게 노출 + stderr 로 운영자 진단.
         if pos_clicked:
-            if _record_feedback_click(
+            ok = _record_feedback_click(
                 sb, query_log_id, positive=True,
                 masked_question=masked_question,
-            ):
-                clicked[msg_idx] = "positive"
-                st.rerun()
+            )
+            clicked[msg_idx] = "positive"
+            if not ok:
+                st.toast(
+                    "피드백 저장 실패 — 다시 시도해주세요",
+                    icon="⚠️",
+                )
+            st.rerun()
         if neg_clicked:
-            if _record_feedback_click(
+            ok = _record_feedback_click(
                 sb, query_log_id, positive=False,
                 masked_question=masked_question,
-            ):
-                clicked[msg_idx] = "negative"
-                st.rerun()
+            )
+            clicked[msg_idx] = "negative"
+            if not ok:
+                st.toast(
+                    "피드백 저장 실패 — 다시 시도해주세요",
+                    icon="⚠️",
+                )
+            st.rerun()
         return
 
     # (B) 클릭 후 — 두 버튼 자리는 markdown placeholder (선택된 쪽만 강조)
@@ -1716,13 +1759,20 @@ def _render_feedback(
         "건너뛰기", key=f"fb_skip_{msg_idx}", use_container_width=True,
     )
     if submit_clicked:
-        if _record_feedback_submit(
+        # PR-Beta-Hotfix-Feedback: click 헬퍼와 동일하게 UI 진행 우선.
+        # update 실패해도 submitted 처리 — 사용자에게 (C) caption 표시.
+        ok = _record_feedback_submit(
             sb, query_log_id,
             reasons=reasons or [], comment=comment,
             masked_question=masked_question,
-        ):
-            submitted.add(msg_idx)
-            st.rerun()
+        )
+        submitted.add(msg_idx)
+        if not ok:
+            st.toast(
+                "피드백 저장 실패 — 운영자에게 보고해주세요",
+                icon="⚠️",
+            )
+        st.rerun()
     if skip_clicked:
         # 건너뛰기 — DB 추가 쓰기 없음 (이미 클릭 시 type/at 기록됨)
         submitted.add(msg_idx)
