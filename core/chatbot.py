@@ -259,14 +259,62 @@ def _looks_like_injection(text: str) -> bool:
 
 _QUERY_LOG_FAIL_PREFIX = "[QUERY_LOGS INSERT FAIL]"
 _QUERY_LOG_OK_PREFIX = "[QUERY_LOGS INSERT OK]"
+_QUERY_LOG_ROLE_DIAG_PREFIX = "[QUERY_LOGS ROLE_DIAG]"
+
+# PR-Beta-Hotfix-2: role 진단 1회 caching. 같은 process 내 첫 INSERT
+# 실패 시점에만 nexus_diagnose_role RPC 호출 → stderr dump. 이후 호출은
+# skip (volume 보호 + Streamlit Cloud Logs 가독성). 프로세스 재시작 시
+# (Streamlit Reboot 등) 다시 활성.
+_ROLE_DIAGNOSTIC_LOGGED = False
 
 
-def _log_query_logs_insert_failure(payload_keys: list[str], err: Exception) -> None:
+def _log_role_diagnostic_once(supabase: Any) -> None:
+    """첫 호출 시점에 nexus_diagnose_role RPC 호출 → 현재 connection 의
+    role 정보를 stderr 출력 (PR-Beta-Hotfix-2).
+
+    반환 컬럼: curr_user / curr_role / sess_user / curr_schema / curr_database.
+    INSERT 가 'permission denied for table' (42501) 로 실패할 때 실제로
+    PostgREST 가 어떤 role 로 connect 했는지 즉시 확인 가능.
+
+    - 함수 미존재 (db/16 미적용) 시: RPC 호출이 실패 → 별도 prefix 로 기록.
+    - 1회만 실행 — module-level flag 로 dedup. 같은 프로세스 내 반복 INSERT
+      실패가 나도 진단은 한 번만 (volume 폭증 차단).
+    """
+    global _ROLE_DIAGNOSTIC_LOGGED
+    if _ROLE_DIAGNOSTIC_LOGGED:
+        return
+    _ROLE_DIAGNOSTIC_LOGGED = True
+    import sys
+    if supabase is None:
+        print(f"{_QUERY_LOG_ROLE_DIAG_PREFIX} skipped (supabase=None)",
+              file=sys.stderr, flush=True)
+        return
+    try:
+        res = supabase.rpc("nexus_diagnose_role", {}).execute()
+        info = res.data if res and res.data else "(no data)"
+        print(f"{_QUERY_LOG_ROLE_DIAG_PREFIX} {info}",
+              file=sys.stderr, flush=True)
+    except Exception as _e:
+        print(
+            f"{_QUERY_LOG_ROLE_DIAG_PREFIX} FAIL  type={type(_e).__name__}  "
+            f"msg={_e}  hint=db/16 마이그레이션 미적용 가능 — "
+            f"nexus_diagnose_role 함수 부재",
+            file=sys.stderr, flush=True,
+        )
+
+
+def _log_query_logs_insert_failure(
+    payload_keys: list[str],
+    err: Exception,
+    supabase: Any | None = None,
+) -> None:
     """query_logs INSERT 실패 시 max-verbose stderr 출력 (PR-Beta-Hotfix-1).
 
     payload_keys: payload dict 의 key list. 컬럼 mismatch 진단용.
     err: 발생한 예외. PostgREST APIError 의 경우 .message/.code/.details/
          .hint/.status_code 속성을 추가 노출.
+    supabase: PR-Beta-Hotfix-2 — first-failure role diagnostic 호출용.
+              생략 시 role diag skip (회귀 안전).
     """
     import sys
     parts = [
@@ -280,6 +328,8 @@ def _log_query_logs_insert_failure(payload_keys: list[str], err: Exception) -> N
             parts.append(f"{attr}={val}")
     parts.append(f"payload_columns={payload_keys}")
     print("  ".join(parts), file=sys.stderr, flush=True)
+    # 첫 실패 시점에 role 진단 1회 dump — 같은 process 내 dedup.
+    _log_role_diagnostic_once(supabase)
 
 
 def _log_query_logs_insert_success(row_id: int | None, payload_keys: list[str]) -> None:
@@ -782,7 +832,9 @@ def ask(
             _row_id = _ins.data[0].get("id") if _ins.data else None
             _log_query_logs_insert_success(_row_id, list(_block_payload.keys()))
         except Exception as _e:
-            _log_query_logs_insert_failure(list(_block_payload.keys()), _e)
+            _log_query_logs_insert_failure(
+                list(_block_payload.keys()), _e, supabase=supabase,
+            )
         return Answer(
             text=("해당 요청은 처리할 수 없습니다. 사규·윤리강령·사례집 관련 "
                   "질문을 해주세요.\n\n[참조: 검색 결과 없음]"),
@@ -939,7 +991,9 @@ def ask(
             query_log_id = ins.data[0].get("id")
         _log_query_logs_insert_success(query_log_id, list(_ask_payload.keys()))
     except Exception as _e:
-        _log_query_logs_insert_failure(list(_ask_payload.keys()), _e)
+        _log_query_logs_insert_failure(
+            list(_ask_payload.keys()), _e, supabase=supabase,
+        )
 
     _emit("complete")
     return Answer(
@@ -1232,7 +1286,9 @@ def ask_stream(
             query_log_id = ins.data[0].get("id")
         _log_query_logs_insert_success(query_log_id, list(_stream_payload.keys()))
     except Exception as _e:
-        _log_query_logs_insert_failure(list(_stream_payload.keys()), _e)
+        _log_query_logs_insert_failure(
+            list(_stream_payload.keys()), _e, supabase=supabase,
+        )
 
     _emit("complete")
     yield ("done", Answer(
