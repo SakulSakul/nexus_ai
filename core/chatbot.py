@@ -332,15 +332,26 @@ def _log_query_logs_insert_failure(
     _log_role_diagnostic_once(supabase)
 
 
-def _log_query_logs_insert_success(row_id: int | None, payload_keys: list[str]) -> None:
+def _log_query_logs_insert_success(
+    row_id: int | None,
+    payload_keys: list[str],
+    supabase: Any | None = None,
+) -> None:
     """query_logs INSERT 성공 시 row id + 컬럼 수 stderr 출력. 정상 흐름
     가시화로 미래 silent fail 즉시 감지 (last_ts gap 으로 추론 안 해도 됨).
+
+    PR-Beta-Hotfix-4: supabase optional 인자 + 첫 호출 시 role 진단 1회.
+    실패 path 와 동일하게 [QUERY_LOGS ROLE_DIAG] 노출 → 성공 시에도 어떤
+    role 로 INSERT 됐는지 즉시 확인 가능.
     """
     import sys
     print(
         f"{_QUERY_LOG_OK_PREFIX}  id={row_id}  cols={len(payload_keys)}",
         file=sys.stderr, flush=True,
     )
+    # 같은 process 내 1회만 dump — 이미 logged 면 skip (failure path 와
+    # 동일 _ROLE_DIAGNOSTIC_LOGGED guard 공유).
+    _log_role_diagnostic_once(supabase)
 
 
 @dataclass
@@ -830,7 +841,9 @@ def ask(
         try:
             _ins = supabase.table("query_logs").insert(_block_payload).execute()
             _row_id = _ins.data[0].get("id") if _ins.data else None
-            _log_query_logs_insert_success(_row_id, list(_block_payload.keys()))
+            _log_query_logs_insert_success(
+                _row_id, list(_block_payload.keys()), supabase=supabase,
+            )
         except Exception as _e:
             _log_query_logs_insert_failure(
                 list(_block_payload.keys()), _e, supabase=supabase,
@@ -989,7 +1002,9 @@ def ask(
         ins = supabase.table("query_logs").insert(_ask_payload).execute()
         if ins.data:
             query_log_id = ins.data[0].get("id")
-        _log_query_logs_insert_success(query_log_id, list(_ask_payload.keys()))
+        _log_query_logs_insert_success(
+            query_log_id, list(_ask_payload.keys()), supabase=supabase,
+        )
     except Exception as _e:
         _log_query_logs_insert_failure(
             list(_ask_payload.keys()), _e, supabase=supabase,
@@ -1284,7 +1299,9 @@ def ask_stream(
         ins = supabase.table("query_logs").insert(_stream_payload).execute()
         if ins.data:
             query_log_id = ins.data[0].get("id")
-        _log_query_logs_insert_success(query_log_id, list(_stream_payload.keys()))
+        _log_query_logs_insert_success(
+            query_log_id, list(_stream_payload.keys()), supabase=supabase,
+        )
     except Exception as _e:
         _log_query_logs_insert_failure(
             list(_stream_payload.keys()), _e, supabase=supabase,
