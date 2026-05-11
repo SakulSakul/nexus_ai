@@ -386,6 +386,28 @@ def _nexus_expand_with_incident_taxonomy(tokens: list) -> list:
     return extra
 
 
+def nexus_classify_to_incident_nodes(text: str) -> list[str]:
+    """사용자 입력 text 에서 incident 노드 추출.
+
+    `_NEXUS_NL_TO_INCIDENT_NODES` 를 사용해 트리거 토큰이 등장하면 해당
+    노드들을 수집. retrieval boost rerank 에서
+    `document.meta.incident_nodes` 와 교집합 계산용.
+
+    Returns: 정렬된 노드 리스트 (예: ['고객상해', '매장사고']).
+    """
+    if not text:
+        return []
+    nodes: set[str] = set()
+    for trigger, node_list in _NEXUS_NL_TO_INCIDENT_NODES.items():
+        if trigger in text:
+            for level1, level2 in node_list:
+                if level1:
+                    nodes.add(level1)
+                if level2:
+                    nodes.add(level2)
+    return sorted(nodes)
+
+
 def nexus_build_keyword_tsquery(text: str, original: str | None = None) -> str:
     """자연어/재작성 쿼리를 prefix tsquery 문자열로 변환.
 

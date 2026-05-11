@@ -32,6 +32,10 @@ def _normalize_v2_row(row: dict) -> dict:
     confidence.calculate_confidence 가 같은 키 (chunk_id, doc_title,
     doc_kind, article_no, case_no, text, score, owning_department,
     categories) 를 그대로 사용할 수 있게 한다.
+
+    incident_boost_applied / matched_incident_nodes 는 retriever 의 rerank
+    단계에서 채워지는 디버깅 메타 — 정상 합성 경로는 무시, admin 디버그
+    패널은 본 키들을 그대로 읽어 표시.
     """
     return {
         "chunk_id": row.get("id"),
@@ -44,6 +48,8 @@ def _normalize_v2_row(row: dict) -> dict:
         "score": row.get("rrf_score"),
         "owning_department": None,
         "categories": row.get("categories") or [],
+        "incident_boost_applied": bool(row.get("incident_boost_applied")),
+        "matched_incident_nodes": row.get("matched_incident_nodes") or [],
     }
 
 
@@ -59,7 +65,9 @@ def hybrid_search(
     if USE_HYBRID_SEARCH:
         # Tier 1 — 사규 용어 확장. 실패 시 원문 반환 (raise 안 함).
         from .nexus_query_rewriter import (
-            rewrite_query_for_retrieval, nexus_build_keyword_tsquery,
+            rewrite_query_for_retrieval,
+            nexus_build_keyword_tsquery,
+            nexus_classify_to_incident_nodes,
         )
         retrieval_query_text = rewrite_query_for_retrieval(question)
         retrieval_embedding = embed_one(
@@ -70,16 +78,66 @@ def hybrid_search(
         # 정식 tsquery 표현식("토큰:* | 토큰:*") 을 넘긴다.
         ts_query = nexus_build_keyword_tsquery(retrieval_query_text, original=question)
         match_count = top_k or s.top_k
+        # Incident-aware rerank: 사용자 질문 + rewritten 양쪽에서 incident
+        # 노드 분류 후 RPC top-15 로 풀을 확대해 receive → meta.incident_nodes
+        # 매칭 시 rrf_score +INCIDENT_BOOST 가산 → 재정렬 후 match_count 컷.
+        rpc_match_count = max(match_count, 15)
         payload = {
             "query_embedding": retrieval_embedding,
             "query_text": ts_query,
-            "match_count": match_count,
+            "match_count": rpc_match_count,
             "rrf_k": 60,
-            "pool_size": max(30, match_count * 6),
+            "pool_size": max(30, rpc_match_count * 6),
         }
         res = supabase.rpc("nexus_hybrid_search_v2", payload).execute()
-        rows = res.data or []
-        return [_normalize_v2_row(r) for r in rows]
+        raw_chunks = res.data or []
+
+        # 1) 사용자 입력 incident 분류 — 원본 + rewritten 합쳐 노드 추출.
+        user_incident_nodes = set(
+            nexus_classify_to_incident_nodes(question or "")
+        ) | set(
+            nexus_classify_to_incident_nodes(retrieval_query_text or "")
+        )
+
+        # 2) doc meta 일괄 조회 (RPC 결과에 meta 미포함 — 컬럼 미반환).
+        doc_meta_map: dict = {}
+        if raw_chunks and user_incident_nodes:
+            doc_ids = list({
+                c.get("document_id") for c in raw_chunks if c.get("document_id")
+            })
+            if doc_ids:
+                try:
+                    docs_resp = (
+                        supabase.table("nexus_documents")
+                        .select("id, meta")
+                        .in_("id", doc_ids)
+                        .execute()
+                    )
+                    doc_meta_map = {
+                        d["id"]: (d.get("meta") or {})
+                        for d in (docs_resp.data or [])
+                    }
+                except Exception:
+                    doc_meta_map = {}
+
+        # 3) Incident-aware boost.
+        INCIDENT_BOOST = 0.15
+        for chunk in raw_chunks:
+            meta = doc_meta_map.get(chunk.get("document_id"), {}) or {}
+            doc_incident_nodes = set(meta.get("incident_nodes") or [])
+            matched = doc_incident_nodes & user_incident_nodes
+            if matched:
+                chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + INCIDENT_BOOST
+                chunk["incident_boost_applied"] = True
+                chunk["matched_incident_nodes"] = sorted(matched)
+            else:
+                chunk["incident_boost_applied"] = False
+                chunk["matched_incident_nodes"] = []
+
+        # 4) boost 후 재정렬, match_count 컷.
+        raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
+        final_rows = raw_chunks[:match_count]
+        return [_normalize_v2_row(r) for r in final_rows]
 
     # ── 기존 경로 (rollback safety net) ──────────────────────────
     emb = embed_one(question, task_type="RETRIEVAL_QUERY")
