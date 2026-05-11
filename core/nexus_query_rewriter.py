@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import re
 import sys
+import time
 
 from .config import get_secret, settings
 
@@ -69,7 +70,8 @@ def _call_gemini_for_rewrite(user_question: str) -> str:
     - google-genai Client + GenerateContentConfig
     - response 추출: res.candidates[0].content.parts 전체 text 이어붙임,
       fallback 으로 res.text. 어떤 경우에도 slicing 으로 1글자/1단어 자르지 않음.
-    실패 시 빈 문자열 반환. (postprocess 가 원문 폴백 처리)
+    - 503 UNAVAILABLE / 빈 응답 시 1회 retry (1초 sleep). 그래도 실패면
+      빈 문자열 반환 (postprocess 가 원문 폴백 처리).
     """
     try:
         from google import genai
@@ -83,55 +85,79 @@ def _call_gemini_for_rewrite(user_question: str) -> str:
 
     user_text = _USER_TEMPLATE.format(user_question=user_question)
 
-    try:
-        cli = genai.Client(api_key=s.gemini_api_key)
-        cfg = types.GenerateContentConfig(
-            system_instruction=_SYSTEM_TEXT,
-            temperature=_REWRITE_TEMPERATURE,
-            max_output_tokens=_MAX_OUTPUT_TOKENS,
-            top_p=0.1,  # 답변용과 동일 — 결정성 향상
-        )
-        res = cli.models.generate_content(
-            model=_REWRITE_MODEL,
-            contents=user_text,
-            config=cfg,
-        )
-    except Exception as e:
-        print(
-            f"[nexus_query_rewriter] gemini call failed: "
-            f"{type(e).__name__}: {e}",
-            file=sys.stderr, flush=True,
-        )
-        return ""
-
-    # finish_reason 진단 로그 — SAFETY / MAX_TOKENS / RECITATION / OTHER 추적.
-    finish_reason = None
-    try:
-        finish_reason = getattr(res.candidates[0], "finish_reason", None)
-    except Exception:
-        pass
-    if finish_reason is not None and str(finish_reason).upper() not in (
-        "STOP", "FINISHREASON.STOP", "1"
-    ):
-        print(
-            f"[nexus_query_rewriter] non-STOP finish_reason={finish_reason}",
-            file=sys.stderr, flush=True,
-        )
-
-    # 응답 추출 — _gen_gemini 와 동일. 슬라이싱·split 으로 1글자/1단어 자르지 않는다.
-    text_parts: list[str] = []
-    try:
-        for part in res.candidates[0].content.parts:
-            if getattr(part, "thought", False):
+    last_text = ""
+    for attempt in (1, 2):
+        try:
+            cli = genai.Client(api_key=s.gemini_api_key)
+            cfg = types.GenerateContentConfig(
+                system_instruction=_SYSTEM_TEXT,
+                temperature=_REWRITE_TEMPERATURE,
+                max_output_tokens=_MAX_OUTPUT_TOKENS,
+                top_p=0.1,  # 답변용과 동일 — 결정성 향상
+            )
+            res = cli.models.generate_content(
+                model=_REWRITE_MODEL,
+                contents=user_text,
+                config=cfg,
+            )
+        except Exception as e:
+            err_str = str(e)
+            is_503 = "503" in err_str or "UNAVAILABLE" in err_str.upper()
+            if is_503 and attempt == 1:
+                print(
+                    "[nexus_query_rewriter] 503 on attempt 1, retrying after 1s",
+                    file=sys.stderr, flush=True,
+                )
+                time.sleep(1.0)
                 continue
-            text_parts.append(getattr(part, "text", "") or "")
-    except Exception:
-        text_parts = [getattr(res, "text", "") or ""]
+            print(
+                f"[nexus_query_rewriter] gemini call failed: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr, flush=True,
+            )
+            return ""
 
-    text = "".join(text_parts).strip()
-    if not text:
-        text = (getattr(res, "text", "") or "").strip()
-    return text
+        # finish_reason 진단 로그 — SAFETY / MAX_TOKENS / RECITATION / OTHER 추적.
+        finish_reason = None
+        try:
+            finish_reason = getattr(res.candidates[0], "finish_reason", None)
+        except Exception:
+            pass
+        if finish_reason is not None and str(finish_reason).upper() not in (
+            "STOP", "FINISHREASON.STOP", "1"
+        ):
+            print(
+                f"[nexus_query_rewriter] non-STOP finish_reason={finish_reason}",
+                file=sys.stderr, flush=True,
+            )
+
+        # 응답 추출 — _gen_gemini 와 동일. 슬라이싱·split 으로 1글자/1단어 자르지 않는다.
+        text_parts: list[str] = []
+        try:
+            for part in res.candidates[0].content.parts:
+                if getattr(part, "thought", False):
+                    continue
+                text_parts.append(getattr(part, "text", "") or "")
+        except Exception:
+            text_parts = [getattr(res, "text", "") or ""]
+
+        text = "".join(text_parts).strip()
+        if not text:
+            text = (getattr(res, "text", "") or "").strip()
+
+        if not text and attempt == 1:
+            # 빈 응답 → 1회 retry
+            print(
+                "[nexus_query_rewriter] empty response on attempt 1, retrying",
+                file=sys.stderr, flush=True,
+            )
+            time.sleep(1.0)
+            last_text = ""
+            continue
+
+        return text
+
+    return last_text
 
 
 def _postprocess_rewritten(raw: str, fallback: str) -> str:
