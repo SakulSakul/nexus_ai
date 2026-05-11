@@ -182,17 +182,43 @@ _REQUIRED_4SECTION_MARKERS: dict = {
     ),
 }
 
+# Phase 1 (PR #94) — 일반 사건사고 보고 절차 섹션의 필수 조항 마커.
+# 모두 본문에 등장해야 complete 로 판정. 하나라도 누락이면 STRUCTURED_INJECT 트리거.
+# (현재 라이브 chat 흐름이 일부 조항을 자율 prune 하는 케이스 차단)
+_GENERAL_PROCEDURE_REQUIRED_MARKERS: tuple = (
+    r"4\.1\.1",
+    r"4\.1\.2",
+    r"4\.1\.3",
+    r"4\.1\.4",
+    r"4\.2\.1",
+    r"4\.2\.2",
+    r"4\.2\.3",
+)
+
 
 def _is_section_incomplete(section_text: str) -> tuple:
     """사규 기준 섹션이 4 sub-section 모두 갖췄는지 검사.
 
     각 sub-section 의 keyword set 중 최소 1개라도 매칭되면 그 sub-section
-    있음으로 판정. Returns (is_incomplete, missing_sections).
+    있음으로 판정. PR #94 (Phase 1): general_procedure 는 추가로 7개 필수
+    조항 마커 (4.1.1~4.2.3) 모두 본문 등장 요구. Returns
+    (is_incomplete, missing_sections).
     """
     missing: list = []
     for section_key, keywords in _REQUIRED_4SECTION_MARKERS.items():
         if not any(kw in section_text for kw in keywords):
             missing.append(section_key)
+            continue
+        # general_procedure 는 keyword 통과해도 필수 조항 마커 7개 모두 확인.
+        if section_key == "general_procedure":
+            missing_clauses = [
+                m for m in _GENERAL_PROCEDURE_REQUIRED_MARKERS
+                if not re.search(m, section_text)
+            ]
+            if missing_clauses:
+                missing.append(
+                    f"general_procedure_clauses(missing={missing_clauses})"
+                )
     return (len(missing) > 0, missing)
 
 
@@ -288,6 +314,8 @@ def _extract_severity_criteria(severe_chunks: list) -> Optional[str]:
 # Section 3 — 일반 사건사고 절차 추출
 # ──────────────────────────────────────────────────────────
 _GENERAL_PROCEDURE_PATTERNS: tuple = (
+    (r"4\.1\.1[^\n]*경중[^\n]*",
+     "일반 사건사고는 경중 무관 모두 보고 (4.1.1조)"),
     (r"4\.1\.2[^\n]*최초\s*인지자[^\n]*즉시\s*보고[^\n]*",
      "최초 인지자 즉시 보고 (4.1.2조)"),
     (r"4\.1\.3[^\n]*24시간[^\n]*유선[^\n]*SRMS[^\n]*",
@@ -295,7 +323,7 @@ _GENERAL_PROCEDURE_PATTERNS: tuple = (
     (r"4\.1\.4[^\n]*24시간[^\n]*정식\s*서면[^\n]*",
      "24시간 이내 정식 서면 보고 (4.1.4조)"),
     (r"4\.2\.1[^\n]*점장[^\n]*",
-     "최초 인지자 → 점장(점포) / 해당팀장(본사) 즉시 보고 (4.2.1조)"),
+     "최초 인지자 → 리스크관리부서장(CSR팀장) + 점장(점포)/해당팀장(본사) 즉시 보고 (4.2.1조)"),
     (r"4\.2\.2[^\n]*CSR팀[^\n]*",
      "점장/팀장 → 본사 지원부서 팀장(CSR팀·인사팀·총무팀·경영관리팀) 병렬 + 담당임원 (4.2.2조)"),
     (r"4\.2\.3[^\n]*대표이사[^\n]*",
