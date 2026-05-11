@@ -901,6 +901,27 @@ def ask(
         supabase, question=masked, categories=cats, top_k=pool_size,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
+    # Phase 1.5 (PR #95): universal SOP 청크는 doc_kind ratio cap 우회 보존.
+    # _balance_by_doc_kind 의 rule=3 cap 때문에 (공통) 일반/중대 사건사고 보고지침
+    # 이 다른 rule 도큐먼트와 경쟁하다 잘리던 회귀 차단. Gemini synthesis 가
+    # 일관된 청크 set 을 받도록 보장 → Answer.contexts 결정성 확보.
+    _balanced_ids = {c.get("chunk_id") for c in contexts if c.get("chunk_id")}
+    _sop_preserved = 0
+    for c in contexts_raw:
+        if not c.get("is_universal_sop"):
+            continue
+        cid = c.get("chunk_id")
+        if cid and cid not in _balanced_ids:
+            contexts.append(c)
+            _balanced_ids.add(cid)
+            _sop_preserved += 1
+    if _sop_preserved:
+        import sys as _sys
+        print(
+            f"[chatbot:ask] universal_sop_preserved={_sop_preserved} "
+            f"contexts_after_balance={len(contexts)}",
+            file=_sys.stderr, flush=True,
+        )
     _emit("search_done", {
         "doc_titles": [c.get("doc_title", "") for c in contexts if c.get("doc_title")],
         "doc_kind_counts": dict(Counter(c.get("doc_kind") for c in contexts)),
@@ -1230,6 +1251,24 @@ def ask_stream(
         supabase, question=masked, categories=cats, top_k=pool_size,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
+    # Phase 1.5 (PR #95): universal SOP 청크 ratio cap 우회 보존 — ask() 동일.
+    _balanced_ids = {c.get("chunk_id") for c in contexts if c.get("chunk_id")}
+    _sop_preserved = 0
+    for c in contexts_raw:
+        if not c.get("is_universal_sop"):
+            continue
+        cid = c.get("chunk_id")
+        if cid and cid not in _balanced_ids:
+            contexts.append(c)
+            _balanced_ids.add(cid)
+            _sop_preserved += 1
+    if _sop_preserved:
+        import sys as _sys
+        print(
+            f"[chatbot:ask_stream] universal_sop_preserved={_sop_preserved} "
+            f"contexts_after_balance={len(contexts)}",
+            file=_sys.stderr, flush=True,
+        )
     _emit("search_done", {
         "doc_titles": [c.get("doc_title", "") for c in contexts if c.get("doc_title")],
         "doc_kind_counts": dict(Counter(c.get("doc_kind") for c in contexts)),
