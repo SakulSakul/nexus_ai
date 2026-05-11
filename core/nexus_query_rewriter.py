@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import functools
 import re
+import sys
 
 from .config import get_secret, settings
 
@@ -28,7 +29,9 @@ _REWRITE_TEMPERATURE = 0.2
 _MAX_LEN = 60
 
 
-_PROMPT_TEMPLATE = """당신은 사규 검색을 돕는 쿼리 재작성 보조입니다.
+# 답변용 _gen_gemini 와 동일 구조: system / user 채널 분리.
+# 지시문 + few-shot 은 system_instruction 으로, 실제 질문만 contents 로.
+_SYSTEM_TEXT = """당신은 사규 검색을 돕는 쿼리 재작성 보조입니다.
 사용자의 자연어 질문을 사규 문서에서 사용될 법한 정식 용어·동의어로 확장하세요.
 
 원칙:
@@ -46,9 +49,9 @@ _PROMPT_TEMPLATE = """당신은 사규 검색을 돕는 쿼리 재작성 보조�
 답: 이해관계자 금품 수수 명절 선물 클린뱅크 윤리 신고
 
 질문: 사내 자료를 외부 메일로 보낼 때 주의할 점이 있나요?
-답: 회사 정보 자료 외부 반출 메일 송신 정보보안 통제 절차
+답: 회사 정보 자료 외부 반출 메일 송신 정보보안 통제 절차"""
 
-질문: {user_question}
+_USER_TEMPLATE = """질문: {user_question}
 답:"""
 
 
@@ -78,21 +81,42 @@ def _call_gemini_for_rewrite(user_question: str) -> str:
     if not s.gemini_api_key:
         return ""
 
-    prompt = _PROMPT_TEMPLATE.format(user_question=user_question)
+    user_text = _USER_TEMPLATE.format(user_question=user_question)
 
     try:
         cli = genai.Client(api_key=s.gemini_api_key)
         cfg = types.GenerateContentConfig(
+            system_instruction=_SYSTEM_TEXT,
             temperature=_REWRITE_TEMPERATURE,
             max_output_tokens=_MAX_OUTPUT_TOKENS,
+            top_p=0.1,  # 답변용과 동일 — 결정성 향상
         )
         res = cli.models.generate_content(
             model=_REWRITE_MODEL,
-            contents=prompt,
+            contents=user_text,
             config=cfg,
         )
-    except Exception:
+    except Exception as e:
+        print(
+            f"[nexus_query_rewriter] gemini call failed: "
+            f"{type(e).__name__}: {e}",
+            file=sys.stderr, flush=True,
+        )
         return ""
+
+    # finish_reason 진단 로그 — SAFETY / MAX_TOKENS / RECITATION / OTHER 추적.
+    finish_reason = None
+    try:
+        finish_reason = getattr(res.candidates[0], "finish_reason", None)
+    except Exception:
+        pass
+    if finish_reason is not None and str(finish_reason).upper() not in (
+        "STOP", "FINISHREASON.STOP", "1"
+    ):
+        print(
+            f"[nexus_query_rewriter] non-STOP finish_reason={finish_reason}",
+            file=sys.stderr, flush=True,
+        )
 
     # 응답 추출 — _gen_gemini 와 동일. 슬라이싱·split 으로 1글자/1단어 자르지 않는다.
     text_parts: list[str] = []
