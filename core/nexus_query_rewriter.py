@@ -7,7 +7,9 @@
 설계 원칙:
 - Gemini 호출은 core/chatbot.py:_gen_gemini 와 동일 패턴 (google-genai
   Client + types.GenerateContentConfig + res.candidates[0].content.parts).
-- 가벼운 모델(gemini-2.5-flash 권장)·max_output_tokens 128.
+- 가벼운 non-thinking 모델 (gemini-2.0-flash) · max_output_tokens 128.
+  2.5-flash 는 thinking 토큰이 출력 예산을 잠식해 응답이 잘림 — 단순
+  키워드 확장에는 thinking 불필요하므로 2.0-flash 로 고정.
 - 실패는 절대 raise 하지 않는다. 호출자는 항상 결과 텍스트를 받는다.
 - 동일 질문 반복(eval/디버그)에 대비해 lru_cache 적용.
 """
@@ -20,7 +22,7 @@ import re
 from .config import get_secret, settings
 
 
-_REWRITE_MODEL = get_secret("NEXUS_QUERY_REWRITE_MODEL", "gemini-2.5-flash")
+_REWRITE_MODEL = get_secret("NEXUS_QUERY_REWRITE_MODEL", "gemini-2.0-flash")
 _MAX_OUTPUT_TOKENS = 128
 _REWRITE_TEMPERATURE = 0.2
 _MAX_LEN = 60
