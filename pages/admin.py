@@ -2036,6 +2036,14 @@ def _tab_search_compare(sb):
         st.markdown(
             f"**User incident nodes**: `{_classified or '(없음)'}`"
         )
+        # Track C — top-5 안의 intent force-include 청크 수 / 매칭 doc 수 요약.
+        _intent_force_chunks = [r for r in (new_rows or []) if r.get("force_included_by_intent")]
+        _intent_force_docs = {r.get("document_id") for r in _intent_force_chunks if r.get("document_id")}
+        st.markdown(
+            f"**Intent-matched docs force-included**: "
+            f"`{len(_intent_force_chunks)}` chunks · "
+            f"`{len(_intent_force_docs)}` docs (top-5 기준)"
+        )
         if new_err:
             st.error(f"실패: {new_err}")
         elif not new_rows:
@@ -2067,6 +2075,10 @@ def _tab_search_compare(sb):
                     if r.get("force_included"):
                         st.caption(
                             f"🔒 Force-included +{_retriever.EMERGENCY_FORCE_INCLUDE_BOOST:.2f} (chunk-level incident node 매칭)"
+                        )
+                    if r.get("force_included_by_intent"):
+                        st.caption(
+                            f"🔒 Intent force-include +{_retriever.FORCE_INCLUDE_DOC_BOOST:.2f} (intent-matched doc)"
                         )
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
