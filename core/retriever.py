@@ -45,6 +45,11 @@ EMERGENCY_CHUNK_BOOST: float = 0.10
 # top-5 진입 보장 위해 별도의 큰 가산.
 EMERGENCY_FORCE_INCLUDE_BOOST: float = 0.40
 
+# Intent-matched docs force-include — user_incident_nodes 와 meta.incident_nodes
+# 가 교집합 있는 모든 active docs 의 모든 청크를 retrieval pool 에 강제 포함.
+# 4개 동등 phrasing 이 동일 doc set 을 보장 (결정론적 retrieval).
+FORCE_INCLUDE_DOC_BOOST: float = 0.20
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -73,6 +78,7 @@ def _normalize_v2_row(row: dict) -> dict:
         "emergency_chunk_boost_applied": bool(row.get("emergency_chunk_boost_applied")),
         "matched_emergency_keywords": row.get("matched_emergency_keywords") or [],
         "force_included": bool(row.get("force_included")),
+        "force_included_by_intent": bool(row.get("force_included_by_intent")),
         "chunk_incident_boost_applied": bool(row.get("chunk_incident_boost_applied")),
         "matched_chunk_incident_nodes": row.get("matched_chunk_incident_nodes") or [],
     }
@@ -123,6 +129,54 @@ def hybrid_search(
         ) | set(
             nexus_classify_to_incident_nodes(retrieval_query_text or "")
         )
+
+        # 1.4) Track C — Intent-matched docs guaranteed inclusion.
+        # user_incident_nodes 와 meta.incident_nodes 교집합 있는 모든 active
+        # docs 의 청크를 retrieval pool 에 강제 포함. 4개 동등 phrasing 이
+        # 같은 doc set 을 받도록 결정론적 retrieval 보장.
+        intent_matched_doc_ids: list = []
+        if user_incident_nodes:
+            try:
+                docs_full_resp = (
+                    supabase.table("nexus_documents")
+                    .select("id, title, doc_kind, meta")
+                    .eq("status", "active")
+                    .execute()
+                )
+                docs_full_rows = docs_full_resp.data or []
+                _intent_doc_info: dict = {}
+                for d in docs_full_rows:
+                    doc_nodes = set((d.get("meta") or {}).get("incident_nodes") or [])
+                    if doc_nodes & user_incident_nodes:
+                        intent_matched_doc_ids.append(d["id"])
+                        _intent_doc_info[d["id"]] = d
+                if intent_matched_doc_ids:
+                    chunks_resp = (
+                        supabase.table("nexus_chunks")
+                        .select("id, document_id, chunk_idx, article_no, text, categories, chunk_incident_nodes")
+                        .in_("document_id", intent_matched_doc_ids)
+                        .execute()
+                    )
+                    existing_ids = {c.get("id") for c in raw_chunks if c.get("id")}
+                    for fc in (chunks_resp.data or []):
+                        if fc.get("id") in existing_ids:
+                            continue
+                        d = _intent_doc_info.get(fc.get("document_id"), {}) or {}
+                        raw_chunks.append({
+                            "id": fc.get("id"),
+                            "document_id": fc.get("document_id"),
+                            "doc_title": d.get("title"),
+                            "doc_kind": d.get("doc_kind"),
+                            "article_no": fc.get("article_no"),
+                            "text": fc.get("text") or "",
+                            "categories": fc.get("categories") or [],
+                            "chunk_incident_nodes": fc.get("chunk_incident_nodes") or [],
+                            "rrf_score": 0.0,
+                            "force_included_by_intent": True,
+                        })
+            except Exception:
+                # force-include 실패는 검색 흐름을 막지 않는다.
+                pass
 
         # 1.5) Force-include — '응급대응' 의도일 때 chunk_incident_nodes 에
         # '응급대응' 태그된 청크를 vector/keyword pool 미포함이어도 강제 합류.
@@ -234,6 +288,9 @@ def hybrid_search(
             # Force-included 청크는 base rrf_score=0 이므로 top-5 진입 보장 위해 큰 가산.
             if chunk.get("force_included"):
                 chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + EMERGENCY_FORCE_INCLUDE_BOOST
+            # Intent force-include 청크에도 별도 가산 (top-15 안에 진입 가능하도록).
+            if chunk.get("force_included_by_intent"):
+                chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + FORCE_INCLUDE_DOC_BOOST
 
         # 4) boost 후 재정렬 + doc-level diversity cap (동일 doc 최대 N개).
         raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
