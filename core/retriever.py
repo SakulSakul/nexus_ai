@@ -97,6 +97,11 @@ UNIVERSAL_INCIDENT_SOP_TITLES: set = {
     "(공통) 중대 사건사고 보고지침",
 }
 
+# Universal SOP 도큐먼트는 chunk 0 + 1 양쪽 모두 top-K 강제 포함
+# (MAX_CHUNKS_PER_DOC cap 우회). 분류+판정 / 시한+절차 가 각각 분리된 청크라
+# 1개만으로는 답변의 4단계 구조 미완성. phrasing 별 chunk 선택 변동 차단.
+UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES: set = {0, 1}
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -132,7 +137,50 @@ def _normalize_v2_row(row: dict) -> dict:
         "matched_chunk_incident_nodes": row.get("matched_chunk_incident_nodes") or [],
         "procedure_keyword_count": int(row.get("procedure_keyword_count") or 0),
         "matched_procedure_keywords": row.get("matched_procedure_keywords") or [],
+        "enrichment": row.get("enrichment") or "",
     }
+
+
+def _ensure_universal_sop_completeness(
+    top_k_chunks: list,
+    all_force_chunks: list,
+) -> list:
+    """Universal SOP 도큐먼트의 chunk 0 + chunk 1 모두 final 결과에 포함되도록 보강.
+
+    이미 들어가 있으면 무시. 신규로 추가되는 chunk 는 enrichment 플래그 부착.
+    근거: 일반/중대 사건사고 보고지침 chunk 0 = 분류+판정, chunk 1 = 시한+절차.
+    답변의 4단계 구조에 둘 다 필요. phrasing 별 chunk 선택 변동 차단.
+    """
+    out = list(top_k_chunks)
+    existing_keys = {
+        (c.get("document_id"), c.get("chunk_idx"))
+        for c in out
+    }
+    added_count = 0
+    for chunk in (all_force_chunks or []):
+        doc_title = chunk.get("doc_title") or ""
+        chunk_idx = chunk.get("chunk_idx")
+        if doc_title not in UNIVERSAL_INCIDENT_SOP_TITLES:
+            continue
+        if chunk_idx not in UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES:
+            continue
+        key = (chunk.get("document_id"), chunk_idx)
+        if key in existing_keys:
+            continue
+        enriched = dict(chunk)
+        enriched["enrichment"] = "universal_sop_completeness"
+        enriched["is_universal_sop"] = True
+        out.append(enriched)
+        existing_keys.add(key)
+        added_count += 1
+    if added_count > 0:
+        print(
+            f"[retriever:universal_sop:enrichment] "
+            f"added={added_count} chunks (chunk 0/1 of universal SOP docs) "
+            f"final_chunks={len(out)}",
+            file=sys.stderr, flush=True,
+        )
+    return out
 
 
 def hybrid_search(
@@ -591,6 +639,11 @@ def hybrid_search(
                 file=sys.stderr, flush=True,
             )
 
+        # PR #88 — Universal SOP completeness: chunk 0+1 둘 다 강제 합류
+        # (cap 우회). all_force_chunks = raw_chunks (force-included 청크 전체 풀).
+        final_rows = _ensure_universal_sop_completeness(
+            final_rows, raw_chunks,
+        )
         return [_normalize_v2_row(r) for r in final_rows]
 
     # ── 기존 경로 (rollback safety net) ──────────────────────────
