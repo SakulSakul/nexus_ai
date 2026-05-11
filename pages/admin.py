@@ -2060,50 +2060,77 @@ def _tab_search_compare(sb):
                       placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
     run = st.button("▶ 비교 실행", key="search_compare_run", type="primary")
 
-    if not (run and q.strip()):
+    # 질문 변경 시 이전 결과 자동 reset (옛 결과 노출 방지).
+    _last_q = st.session_state.get("cmp_last_question", "")
+    if q and q != _last_q:
+        st.session_state.pop("cmp_results", None)
+        st.session_state.pop("cmp_synth_result", None)
+        st.session_state["cmp_last_question"] = q
+
+    # 비교 실행 → 결과를 session_state 에 저장.
+    if run and q.strip():
+        if sb is None:
+            st.error("Supabase 미설정 — 검색 호출 불가.")
+            return
+
+        K = 5
+        saved_flag = _retriever.USE_HYBRID_SEARCH
+
+        # ── Old (기존 RPC, 쿼리 원문 그대로) ───────────────────
+        old_err = None
+        old_rows: list[dict] = []
+        old_ms = 0.0
+        try:
+            _retriever.USE_HYBRID_SEARCH = False
+            t0 = _time.perf_counter()
+            old_rows = _retriever.hybrid_search(
+                sb, question=q, categories=None, top_k=K,
+            )
+            old_ms = (_time.perf_counter() - t0) * 1000.0
+        except Exception as e:
+            old_err = str(e)
+        finally:
+            _retriever.USE_HYBRID_SEARCH = saved_flag
+
+        # ── New (query rewrite + 신규 RPC) ─────────────────────
+        new_err = None
+        new_rows: list[dict] = []
+        new_ms = 0.0
+        rewritten = ""
+        raw_response = ""
+        try:
+            rewritten, raw_response = rewrite_query_for_retrieval(q, return_debug=True)
+            _retriever.USE_HYBRID_SEARCH = True
+            t0 = _time.perf_counter()
+            new_rows = _retriever.hybrid_search(
+                sb, question=q, categories=None, top_k=K,
+            )
+            new_ms = (_time.perf_counter() - t0) * 1000.0
+        except Exception as e:
+            new_err = str(e)
+        finally:
+            _retriever.USE_HYBRID_SEARCH = saved_flag
+
+        st.session_state["cmp_results"] = {
+            "question": q,
+            "K": K,
+            "old_rows": old_rows, "old_ms": old_ms, "old_err": old_err,
+            "new_rows": new_rows, "new_ms": new_ms, "new_err": new_err,
+            "rewritten": rewritten, "raw_response": raw_response,
+        }
+        # 비교 새로 실행 시 이전 synth 결과 무효화.
+        st.session_state.pop("cmp_synth_result", None)
+
+    # 렌더링은 session_state 기반 (Streamlit rerun 안전).
+    cmp = st.session_state.get("cmp_results")
+    if not cmp:
         return
 
-    if sb is None:
-        st.error("Supabase 미설정 — 검색 호출 불가.")
-        return
-
-    K = 5
-    saved_flag = _retriever.USE_HYBRID_SEARCH
-
-    # ── Old (기존 RPC, 쿼리 원문 그대로) ───────────────────
-    old_err = None
-    old_rows: list[dict] = []
-    old_ms = 0.0
-    try:
-        _retriever.USE_HYBRID_SEARCH = False
-        t0 = _time.perf_counter()
-        old_rows = _retriever.hybrid_search(
-            sb, question=q, categories=None, top_k=K,
-        )
-        old_ms = (_time.perf_counter() - t0) * 1000.0
-    except Exception as e:
-        old_err = str(e)
-    finally:
-        _retriever.USE_HYBRID_SEARCH = saved_flag
-
-    # ── New (query rewrite + 신규 RPC) ─────────────────────
-    new_err = None
-    new_rows: list[dict] = []
-    new_ms = 0.0
-    rewritten = ""
-    raw_response = ""
-    try:
-        rewritten, raw_response = rewrite_query_for_retrieval(q, return_debug=True)
-        _retriever.USE_HYBRID_SEARCH = True
-        t0 = _time.perf_counter()
-        new_rows = _retriever.hybrid_search(
-            sb, question=q, categories=None, top_k=K,
-        )
-        new_ms = (_time.perf_counter() - t0) * 1000.0
-    except Exception as e:
-        new_err = str(e)
-    finally:
-        _retriever.USE_HYBRID_SEARCH = saved_flag
+    q = cmp["question"]
+    K = cmp["K"]
+    old_rows = cmp["old_rows"]; old_ms = cmp["old_ms"]; old_err = cmp["old_err"]
+    new_rows = cmp["new_rows"]; new_ms = cmp["new_ms"]; new_err = cmp["new_err"]
+    rewritten = cmp["rewritten"]; raw_response = cmp["raw_response"]
 
     col_old, col_new = st.columns(2)
 
@@ -2171,10 +2198,6 @@ def _tab_search_compare(sb):
                 f"source `{_src}`"
             )
 
-        # 매칭 doc 중 top-5 진입 실패 감지 (있으면 코드 버그).
-        # new_rows 에 force_included_by_intent 가 있는 청크만 보이므로,
-        # raw_chunks 전체 매칭 doc 정보는 stderr 로그로만 추적 가능.
-        # 여기서는 top-5 doc set 표시로 대체.
         _displayed_doc_dist: dict = {}
         for r in (new_rows or [])[:K]:
             title = r.get("doc_title") or "?"
@@ -2234,7 +2257,7 @@ def _tab_search_compare(sb):
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
 
-    # ── Synthesis 검증 (Layer 4) — 구조화 4단계 검증 + 보정 ──────
+    # ── Synthesis 검증 (Layer 4) — session_state 기반 ──────
     with st.expander("🔍 Synthesis 검증 (LLM 답변 + 구조화 자동 보정)"):
         if st.button("🤖 답변 생성 + 구조화 검증", key="synth_verify_btn"):
             try:
@@ -2246,7 +2269,6 @@ def _tab_search_compare(sb):
                     _build_structured_regulation_section,
                     _universal_sop_chunks,
                 )
-                from core.nexus_query_rewriter import nexus_classify_to_incident_nodes
 
                 user_prompt = build_user_prompt(q, list(new_rows or []))
                 raw_text, _, _model = _gen_gemini(
@@ -2257,88 +2279,96 @@ def _tab_search_compare(sb):
                 repaired, repairs = validate_and_repair_answer(
                     raw_text, chunks=new_rows, user_incident_nodes=_user_nodes,
                 )
-                st.success(f"✅ 답변 생성 완료 (model=`{_model}`)")
-                if repairs:
-                    st.warning(f"🛠 자동 보정 적용: {len(repairs)}건")
-                    for r in repairs:
-                        st.text(f"  • {r}")
-                else:
-                    st.info("자동 보정 없음 — LLM 답변이 규칙을 통과.")
-
-                st.markdown("**답변 본문 (보정 후):**")
-                st.markdown(repaired)
-
-                # Universal SOP 청크 분포.
-                sop_map = _universal_sop_chunks(new_rows or [])
-                col_a, col_b = st.columns(2)
-                col_a.metric(
-                    "일반 사건사고 청크",
-                    len(sop_map["(공통) 일반 사건사고 보고지침"]),
-                )
-                col_b.metric(
-                    "중대 사건사고 청크",
-                    len(sop_map["(공통) 중대 사건사고 보고지침"]),
-                )
-
-                # 구조화 추출 미리보기.
-                structured = _build_structured_regulation_section(
-                    new_rows or [], user_incident_nodes=_user_nodes,
-                )
-                if structured:
-                    st.markdown("**구조화 추출 결과 (validator 가 주입 시도하는 내용):**")
-                    st.code(structured, language=None)
-                else:
-                    st.warning("⚠️ 구조화 추출 실패 — universal SOP 청크 부족 또는 매칭 0건")
-
-                # 4단계 섹션 포함 여부.
-                checks = (
-                    ("▼ 사건 분류", "분류"),
-                    ("▼ 일반 vs 중대", "판정 기준"),
-                    ("▼ 일반 사건사고 보고 절차", "일반 절차"),
-                    ("▼ 중대 사건사고 보고 절차", "중대 절차"),
-                )
-                st.markdown("**4단계 구조 포함 여부 (보정 후 답변 기준):**")
-                for marker, label in checks:
-                    if marker in repaired:
-                        st.text(f"  ✅ {label} 포함")
-                    else:
-                        st.text(f"  ❌ {label} 누락")
-
-                # Force-included docs 인용률.
-                st.markdown(f"**Force-included docs**: `{_force_titles or '(없음)'}`")
-                cited_count = sum(1 for t in _force_titles if t in repaired)
-                if _force_titles:
-                    if cited_count == len(_force_titles):
-                        st.success(
-                            f"✅ 모든 force-included doc 인용됨 "
-                            f"({cited_count}/{len(_force_titles)})"
-                        )
-                    elif cited_count > 0:
-                        st.warning(
-                            f"⚠️ 부분 인용 ({cited_count}/{len(_force_titles)})"
-                        )
-                    else:
-                        st.error(
-                            "❌ Force-included doc 0개 인용"
-                        )
-
-                # FORBIDDEN PATTERNS.
-                forbidden_found: list = []
-                for pat in (
-                    "[참조: 검색 결과 없음]",
-                    "관련 사규에서 확인되지 않습니다",
-                    "해당 유형 문서가 검색되지 않았습니다",
-                ):
-                    if pat in repaired:
-                        forbidden_found.append(pat)
-                if forbidden_found:
-                    st.error(f"❌ FORBIDDEN PATTERNS 잔존: {forbidden_found}")
-                else:
-                    st.success("✅ FORBIDDEN PATTERNS 없음")
+                st.session_state["cmp_synth_result"] = {
+                    "model": _model,
+                    "raw_text": raw_text,
+                    "repaired": repaired,
+                    "repairs": repairs,
+                    "user_nodes": _user_nodes,
+                    "force_titles": _force_titles,
+                    "sop_map": _universal_sop_chunks(new_rows or []),
+                    "structured": _build_structured_regulation_section(
+                        new_rows or [], user_incident_nodes=_user_nodes,
+                    ),
+                }
             except Exception as e:
                 st.error(f"답변 생성 실패: {type(e).__name__}: {e}")
                 import traceback
                 st.code(traceback.format_exc())
+
+        # synth 결과 렌더링도 session_state 기반 (rerun 안전).
+        sr = st.session_state.get("cmp_synth_result")
+        if sr:
+            st.success(f"✅ 답변 생성 완료 (model=`{sr['model']}`)")
+            if sr["repairs"]:
+                st.warning(f"🛠 자동 보정 적용: {len(sr['repairs'])}건")
+                for rep in sr["repairs"]:
+                    st.text(f"  • {rep}")
+            else:
+                st.info("자동 보정 없음 — LLM 답변이 규칙을 통과.")
+
+            st.markdown("**답변 본문 (보정 후):**")
+            st.markdown(sr["repaired"])
+
+            sop_map = sr["sop_map"]
+            col_a, col_b = st.columns(2)
+            col_a.metric(
+                "일반 사건사고 청크",
+                len(sop_map["(공통) 일반 사건사고 보고지침"]),
+            )
+            col_b.metric(
+                "중대 사건사고 청크",
+                len(sop_map["(공통) 중대 사건사고 보고지침"]),
+            )
+
+            if sr["structured"]:
+                st.markdown("**구조화 추출 결과 (validator 가 주입 시도하는 내용):**")
+                st.code(sr["structured"], language=None)
+            else:
+                st.warning("⚠️ 구조화 추출 실패 — universal SOP 청크 부족 또는 매칭 0건")
+
+            checks = (
+                ("▼ 사건 분류", "분류"),
+                ("▼ 일반 vs 중대", "판정 기준"),
+                ("▼ 일반 사건사고 보고 절차", "일반 절차"),
+                ("▼ 중대 사건사고 보고 절차", "중대 절차"),
+            )
+            st.markdown("**4단계 구조 포함 여부 (보정 후 답변 기준):**")
+            for marker, label in checks:
+                if marker in sr["repaired"]:
+                    st.text(f"  ✅ {label} 포함")
+                else:
+                    st.text(f"  ❌ {label} 누락")
+
+            st.markdown(f"**Force-included docs**: `{sr['force_titles'] or '(없음)'}`")
+            cited_count = sum(1 for t in sr["force_titles"] if t in sr["repaired"])
+            if sr["force_titles"]:
+                if cited_count == len(sr["force_titles"]):
+                    st.success(
+                        f"✅ 모든 force-included doc 인용됨 "
+                        f"({cited_count}/{len(sr['force_titles'])})"
+                    )
+                elif cited_count > 0:
+                    st.warning(
+                        f"⚠️ 부분 인용 ({cited_count}/{len(sr['force_titles'])})"
+                    )
+                else:
+                    st.error(
+                        "❌ Force-included doc 0개 인용"
+                    )
+
+            forbidden_found: list = []
+            for pat in (
+                "[참조: 검색 결과 없음]",
+                "관련 사규에서 확인되지 않습니다",
+                "해당 유형 문서가 검색되지 않았습니다",
+            ):
+                if pat in sr["repaired"]:
+                    forbidden_found.append(pat)
+            if forbidden_found:
+                st.error(f"❌ FORBIDDEN PATTERNS 잔존: {forbidden_found}")
+            else:
+                st.success("✅ FORBIDDEN PATTERNS 없음")
 
 
 def main():
