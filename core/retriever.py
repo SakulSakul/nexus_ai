@@ -65,6 +65,31 @@ FALLBACK_INCIDENT_DOC_TITLES: tuple = (
     "사건, 부적합 시정조치 지침",
 )
 
+# 절차 키워드 — 매장 사고 응급/보고/분류 전반 (best chunk 선정용).
+# 청크가 본 키워드를 많이 포함할수록 절차 청크로 간주 → relevance-aware
+# best chunk per doc 선정에 활용.
+PROCEDURE_KEYWORDS: tuple = (
+    # 응급 대응
+    "응급조치", "응급 조치", "병원 후송", "병원후송", "보안실", "현장 보존",
+    "현장보존", "응급구호", "응급 구호", "구급",
+    # 보고 절차
+    "신고", "보고", "유선보고", "유선 보고", "구두보고", "SRMS", "정식 보고",
+    "사건사고 보고", "사고 보고", "1차 보고", "2차 보고",
+    # 시한
+    "24시간", "12시간", "2시간 이내", "즉시 보고", "즉시 인지", "최초 인지자",
+    # 분류
+    "고객상해", "인사사고", "중대 사건사고", "일반 사건사고", "사고 분류",
+    "중대재해", "인명사고",
+    # 부서·역할
+    "CSR팀", "관리감독자", "안전보건 담당", "안전관리 책임자", "점장",
+    "본사 지원부서",
+    # 매장 사고 mechanism
+    "매장 안전사고", "낙상", "전도", "추락", "매장 내 사고", "시설물",
+)
+# 청크 키워드 1개당 rrf_score 가산 — best chunk selection 결정성 유지하면서
+# tiebreaker 역할 (절차 키워드 많은 청크 우선).
+PROCEDURE_KEYWORD_WEIGHT: float = 0.01
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -97,6 +122,8 @@ def _normalize_v2_row(row: dict) -> dict:
         "force_include_source": row.get("force_include_source") or "",
         "chunk_incident_boost_applied": bool(row.get("chunk_incident_boost_applied")),
         "matched_chunk_incident_nodes": row.get("matched_chunk_incident_nodes") or [],
+        "procedure_keyword_count": int(row.get("procedure_keyword_count") or 0),
+        "matched_procedure_keywords": row.get("matched_procedure_keywords") or [],
     }
 
 
@@ -425,6 +452,17 @@ def hybrid_search(
             if chunk.get("force_included_by_intent"):
                 chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + FORCE_INCLUDE_DOC_BOOST
 
+            # Relevance-aware: 절차 키워드 매칭 수 측정 + 약한 rrf 가산.
+            # best_chunk_per_doc 선정 시 절차 청크가 intro 청크보다 우선되도록.
+            proc_matches = [kw for kw in PROCEDURE_KEYWORDS if kw in chunk_text]
+            chunk["procedure_keyword_count"] = len(proc_matches)
+            chunk["matched_procedure_keywords"] = proc_matches
+            if proc_matches:
+                chunk["rrf_score"] = (
+                    (chunk.get("rrf_score") or 0.0)
+                    + PROCEDURE_KEYWORD_WEIGHT * len(proc_matches)
+                )
+
         # 4) Deterministic Top-K Selection (PR #81)
         # 정렬: rrf_score 내림차순 + chunk_id 사전순 (UUID — 항상 동일 결과).
         MAX_CHUNKS_PER_DOC = 2
@@ -432,6 +470,7 @@ def hybrid_search(
         raw_chunks.sort(
             key=lambda c: (
                 -(c.get("rrf_score") or 0.0),
+                -(c.get("procedure_keyword_count") or 0),
                 str(c.get("id") or ""),
             )
         )
@@ -452,6 +491,7 @@ def hybrid_search(
         guaranteed_chunks.sort(
             key=lambda c: (
                 -(c.get("rrf_score") or 0.0),
+                -(c.get("procedure_keyword_count") or 0),
                 str(c.get("id") or ""),
             )
         )
@@ -504,6 +544,14 @@ def hybrid_search(
             f"final_unique_docs={len(unique_final_docs)} "
             f"top_k={TOP_K} "
             f"max_per_doc={MAX_CHUNKS_PER_DOC}",
+            file=sys.stderr, flush=True,
+        )
+        print(
+            f"[retriever:procedure_score] "
+            f"total_chunks_with_proc_match="
+            f"{sum(1 for c in raw_chunks if (c.get('procedure_keyword_count') or 0) > 0)} "
+            f"max_proc_match_in_top5="
+            f"{max((c.get('procedure_keyword_count') or 0 for c in final_rows), default=0)}",
             file=sys.stderr, flush=True,
         )
 
