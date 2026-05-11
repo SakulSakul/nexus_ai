@@ -2207,6 +2207,15 @@ def _tab_search_compare(sb):
                         st.caption(
                             f"🚑 +{_retriever.EMERGENCY_CHUNK_BOOST:.2f} 응급키워드 매칭: {kws}"
                         )
+                    _proc_count = int(r.get("procedure_keyword_count") or 0)
+                    if _proc_count > 0:
+                        _proc_matched = r.get("matched_procedure_keywords") or []
+                        _bonus = _retriever.PROCEDURE_KEYWORD_WEIGHT * _proc_count
+                        _preview = ", ".join(_proc_matched[:5])
+                        _suffix = f" 외 {_proc_count - 5}개" if _proc_count > 5 else ""
+                        st.caption(
+                            f"📋 +{_bonus:.2f} 절차키워드 `{_proc_count}`개 매칭: {_preview}{_suffix}"
+                        )
                     if r.get("chunk_incident_boost_applied"):
                         nodes = ", ".join(r.get("matched_chunk_incident_nodes") or [])
                         st.caption(
