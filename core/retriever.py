@@ -121,7 +121,7 @@ def hybrid_search(
                     doc_meta_map = {}
 
         # 3) Incident-aware boost.
-        INCIDENT_BOOST = 0.15
+        INCIDENT_BOOST = 0.30
         for chunk in raw_chunks:
             meta = doc_meta_map.get(chunk.get("document_id"), {}) or {}
             doc_incident_nodes = set(meta.get("incident_nodes") or [])
@@ -134,9 +134,28 @@ def hybrid_search(
                 chunk["incident_boost_applied"] = False
                 chunk["matched_incident_nodes"] = []
 
-        # 4) boost 후 재정렬, match_count 컷.
+        # 4) boost 후 재정렬 + doc-level diversity cap (동일 doc 최대 N개).
         raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
-        final_rows = raw_chunks[:match_count]
+        MAX_CHUNKS_PER_DOC = 2
+        final_rows: list = []
+        doc_count: dict = {}
+        for chunk in raw_chunks:
+            doc_id = chunk.get("document_id") or ""
+            if doc_count.get(doc_id, 0) >= MAX_CHUNKS_PER_DOC:
+                continue
+            final_rows.append(chunk)
+            doc_count[doc_id] = doc_count.get(doc_id, 0) + 1
+            if len(final_rows) >= match_count:
+                break
+        # 부족하면 cap 무시하고 채움 (안전장치 — 단일 doc 만 hit 한 케이스).
+        if len(final_rows) < match_count:
+            seen_ids = {c.get("id") for c in final_rows}
+            for chunk in raw_chunks:
+                if chunk.get("id") in seen_ids:
+                    continue
+                final_rows.append(chunk)
+                if len(final_rows) >= match_count:
+                    break
         return [_normalize_v2_row(r) for r in final_rows]
 
     # ── 기존 경로 (rollback safety net) ──────────────────────────
