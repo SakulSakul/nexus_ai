@@ -2050,7 +2050,7 @@ def _tab_search_compare(sb):
                     boost_caption = ""
                     if r.get("incident_boost_applied"):
                         matched = ", ".join(r.get("matched_incident_nodes") or [])
-                        boost_caption = f" · ⚡ +0.15 (매칭: {matched})"
+                        boost_caption = f" · ⚡ +{_retriever.INCIDENT_BOOST:.2f} (매칭: {matched})"
                     st.caption(
                         f"rrf_score = {float(r.get('score') or 0.0):.4f}{boost_caption}"
                     )
