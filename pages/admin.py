@@ -1927,7 +1927,11 @@ def _tab_search_compare(sb):
     import time as _time
     import streamlit as st
     from core import retriever as _retriever
-    from core.nexus_query_rewriter import rewrite_query_for_retrieval
+    from core.nexus_query_rewriter import (
+        rewrite_query_for_retrieval,
+        nexus_build_keyword_tsquery,
+        REWRITE_MODEL_INFO,
+    )
 
     st.subheader("🔬 검색 비교 (Old vs New)")
     st.caption(
@@ -2010,13 +2014,19 @@ def _tab_search_compare(sb):
     with col_new:
         st.markdown(f"#### New (Tier 1+2 — {new_ms:.0f} ms)")
         st.caption("retrieval_mode = `hybrid`")
-        # 회귀 디버깅용: raw response 와 후처리 결과를 같이 노출.
-        # - raw 가 1글자 → Gemini 호출/프롬프트 문제
-        # - raw 가 정상인데 cleaned 가 1글자 → 후처리 문제
-        # - 둘 다 정상 → 수정 완료
-        st.markdown(f"**Gemini raw response** (앞 500자):")
+        # 디버깅용 4줄 — 어느 단계가 실패하는지 한눈에 식별.
+        _mi = REWRITE_MODEL_INFO
+        st.markdown(
+            f"**Gemini model / params**: `{_mi.get('model')}` · "
+            f"max_output_tokens=`{_mi.get('max_output_tokens')}` · "
+            f"temperature=`{_mi.get('temperature')}`"
+        )
+        st.markdown("**Gemini raw response (앞 500자)**:")
         st.code((raw_response or "")[:500] or "(empty)", language="text")
         st.markdown(f"**rewritten_query (postprocessed)**: `{rewritten}`")
+        st.markdown(
+            f"**tsquery passed to RPC**: `{nexus_build_keyword_tsquery(rewritten)}`"
+        )
         if new_err:
             st.error(f"실패: {new_err}")
         elif not new_rows:
