@@ -2025,7 +2025,7 @@ def _tab_search_compare(sb):
         st.code((raw_response or "")[:500] or "(empty)", language="text")
         st.markdown(f"**rewritten_query (postprocessed)**: `{rewritten}`")
         st.markdown(
-            f"**tsquery passed to RPC**: `{nexus_build_keyword_tsquery(rewritten)}`"
+            f"**tsquery passed to RPC**: `{nexus_build_keyword_tsquery(rewritten, original=q)}`"
         )
         if new_err:
             st.error(f"실패: {new_err}")
