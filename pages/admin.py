@@ -1915,6 +1915,119 @@ def _tab_pii(sb):
         )
 
 
+def _tab_search_compare(sb):
+    """🔬 검색 비교 (Old vs New) — DF COMPASS Tier 1+2 디버그.
+
+    USE_HYBRID_SEARCH 토글을 한 번의 입력으로 양쪽 다 호출해 결과를
+    좌(Old: 기존 RPC, 쿼리 재작성 없음) / 우(New: query rewrite + 신규
+    nexus_hybrid_search_v2) 로 비교한다. 각 경로 elapsed_ms 표기.
+
+    어드민 게이트는 main() 의 _require_auth() 에 의해 이미 통과된 상태.
+    """
+    import time as _time
+    import streamlit as st
+    from core import retriever as _retriever
+    from core.nexus_query_rewriter import rewrite_query_for_retrieval
+
+    st.subheader("🔬 검색 비교 (Old vs New)")
+    st.caption(
+        "동일 질문에 대해 기존 경로(USE_HYBRID_SEARCH=False)와 "
+        "신규 경로(True, query rewrite + nexus_hybrid_search_v2) 결과를 "
+        "나란히 비교합니다. 각 경로 top-5 와 소요 시간(ms) 표시."
+    )
+
+    q = st.text_input("질문", key="search_compare_q",
+                      placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
+    run = st.button("▶ 비교 실행", key="search_compare_run", type="primary")
+
+    if not (run and q.strip()):
+        return
+
+    if sb is None:
+        st.error("Supabase 미설정 — 검색 호출 불가.")
+        return
+
+    K = 5
+    saved_flag = _retriever.USE_HYBRID_SEARCH
+
+    # ── Old (기존 RPC, 쿼리 원문 그대로) ───────────────────
+    old_err = None
+    old_rows: list[dict] = []
+    old_ms = 0.0
+    try:
+        _retriever.USE_HYBRID_SEARCH = False
+        t0 = _time.perf_counter()
+        old_rows = _retriever.hybrid_search(
+            sb, question=q, categories=None, top_k=K,
+        )
+        old_ms = (_time.perf_counter() - t0) * 1000.0
+    except Exception as e:
+        old_err = str(e)
+    finally:
+        _retriever.USE_HYBRID_SEARCH = saved_flag
+
+    # ── New (query rewrite + 신규 RPC) ─────────────────────
+    new_err = None
+    new_rows: list[dict] = []
+    new_ms = 0.0
+    rewritten = ""
+    try:
+        rewritten = rewrite_query_for_retrieval(q)
+        _retriever.USE_HYBRID_SEARCH = True
+        t0 = _time.perf_counter()
+        new_rows = _retriever.hybrid_search(
+            sb, question=q, categories=None, top_k=K,
+        )
+        new_ms = (_time.perf_counter() - t0) * 1000.0
+    except Exception as e:
+        new_err = str(e)
+    finally:
+        _retriever.USE_HYBRID_SEARCH = saved_flag
+
+    col_old, col_new = st.columns(2)
+
+    with col_old:
+        st.markdown(f"#### Old (기존, vector_only* — {old_ms:.0f} ms)")
+        st.caption("retrieval_mode = `vector_only` (= 기존 nexus_hybrid_search RPC, 쿼리 재작성 없음)")
+        if old_err:
+            st.error(f"실패: {old_err}")
+        elif not old_rows:
+            st.info("결과 0건.")
+        else:
+            for i, r in enumerate(old_rows[:K], 1):
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{i}. {r.get('doc_title') or '(제목없음)'}** · "
+                        f"`{r.get('article_no') or '-'}`"
+                    )
+                    st.caption(
+                        f"similarity (score) = {float(r.get('score') or 0.0):.4f}"
+                    )
+                    txt = (r.get("text") or "").strip().replace("\n", " ")
+                    st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
+
+    with col_new:
+        st.markdown(f"#### New (Tier 1+2 — {new_ms:.0f} ms)")
+        st.caption("retrieval_mode = `hybrid`")
+        st.markdown(f"**rewritten_query**: `{rewritten}`")
+        if new_err:
+            st.error(f"실패: {new_err}")
+        elif not new_rows:
+            st.info("결과 0건.")
+        else:
+            for i, r in enumerate(new_rows[:K], 1):
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{i}. {r.get('doc_title') or '(제목없음)'}** · "
+                        f"`{r.get('article_no') or '-'}`"
+                    )
+                    st.caption(
+                        f"rrf_score = {float(r.get('score') or 0.0):.4f}"
+                    )
+                    txt = (r.get("text") or "").strip().replace("\n", " ")
+                    st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
+
+
 def main():
     _require_auth()
 
@@ -1939,6 +2052,7 @@ def main():
         "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
+        "🔬 검색 비교",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -1950,6 +2064,7 @@ def main():
     with tabs[7]: _tab_consents(sb)
     with tabs[8]: _tab_eval(sb)
     with tabs[9]: _tab_pii(sb)
+    with tabs[10]: _tab_search_compare(sb)
 
 
 if __name__ == "__main__":
