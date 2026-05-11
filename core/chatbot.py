@@ -759,6 +759,15 @@ _DOC_KIND_RATIOS: "OrderedDict[str, int]" = OrderedDict([
     ("case", 2),
 ])
 
+# Phase 6 (PR #101): universal SOP preservation cap.
+# Phase 1.5 의 unconditional 보존이 7 슬롯을 universal SOP 만으로 채워
+# 카테고리 specific docs 누락. 5 chunks 까지 보존 — 나머지는 category 청크용.
+_UNIVERSAL_SOP_MAX_CHUNKS: int = 5
+
+# Phase 6: retriever pool 확장 — category-specific docs 가 _balance_by_doc_kind
+# 에서 universal SOP 와 경쟁할 때 더 많이 surface 되도록.
+_POOL_SIZE_MARGIN: int = 8  # 기존 3 → 8 (raw pool ~15 chunks)
+
 
 def _balance_by_doc_kind(
     contexts: list[dict],
@@ -895,21 +904,22 @@ def ask(
 
     _emit("search_start")
     # doc_kind 분산: 큰 풀에서 검색 후 비율로 잘라냄. 한 doc_kind 가 풀에서
-    # 우세할 때 다른 kind 가 풀에서 빠질 위험 완화 위해 합계 + 여유분 3.
-    pool_size = sum(_DOC_KIND_RATIOS.values()) + 3
+    # 우세할 때 다른 kind 가 풀에서 빠질 위험 완화 위해 합계 + 여유분 _POOL_SIZE_MARGIN.
+    pool_size = sum(_DOC_KIND_RATIOS.values()) + _POOL_SIZE_MARGIN
     contexts_raw = hybrid_search(
         supabase, question=masked, categories=cats, top_k=pool_size,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
-    # Phase 1.5 (PR #95): universal SOP 청크는 doc_kind ratio cap 우회 보존.
-    # _balance_by_doc_kind 의 rule=3 cap 때문에 (공통) 일반/중대 사건사고 보고지침
-    # 이 다른 rule 도큐먼트와 경쟁하다 잘리던 회귀 차단. Gemini synthesis 가
-    # 일관된 청크 set 을 받도록 보장 → Answer.contexts 결정성 확보.
+    # Phase 1.5 (PR #95) → Phase 6 (PR #101): universal SOP 청크 보존, _UNIVERSAL_SOP_MAX_CHUNKS 까지 cap.
+    # _balance_by_doc_kind 의 rule=3 cap 으로 universal SOP 가 drop 되는 회귀 차단 +
+    # 7 슬롯 모두 universal SOP 로 차서 카테고리 specific docs 누락하던 회귀 차단.
     _balanced_ids = {c.get("chunk_id") for c in contexts if c.get("chunk_id")}
     _sop_preserved = 0
     for c in contexts_raw:
         if not c.get("is_universal_sop"):
             continue
+        if _sop_preserved >= _UNIVERSAL_SOP_MAX_CHUNKS:
+            break
         cid = c.get("chunk_id")
         if cid and cid not in _balanced_ids:
             contexts.append(c)
@@ -918,7 +928,7 @@ def ask(
     if _sop_preserved:
         import sys as _sys
         print(
-            f"[chatbot:ask] universal_sop_preserved={_sop_preserved} "
+            f"[chatbot:ask] universal_sop_preserved={_sop_preserved}/{_UNIVERSAL_SOP_MAX_CHUNKS} "
             f"contexts_after_balance={len(contexts)}",
             file=_sys.stderr, flush=True,
         )
@@ -1246,17 +1256,19 @@ def ask_stream(
 
     t0 = time.perf_counter()
     _emit("search_start")
-    pool_size = sum(_DOC_KIND_RATIOS.values()) + 3
+    pool_size = sum(_DOC_KIND_RATIOS.values()) + _POOL_SIZE_MARGIN
     contexts_raw = hybrid_search(
         supabase, question=masked, categories=cats, top_k=pool_size,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
-    # Phase 1.5 (PR #95): universal SOP 청크 ratio cap 우회 보존 — ask() 동일.
+    # Phase 1.5 → Phase 6: universal SOP 청크 ratio cap 우회 보존 + max cap.
     _balanced_ids = {c.get("chunk_id") for c in contexts if c.get("chunk_id")}
     _sop_preserved = 0
     for c in contexts_raw:
         if not c.get("is_universal_sop"):
             continue
+        if _sop_preserved >= _UNIVERSAL_SOP_MAX_CHUNKS:
+            break
         cid = c.get("chunk_id")
         if cid and cid not in _balanced_ids:
             contexts.append(c)
@@ -1265,7 +1277,7 @@ def ask_stream(
     if _sop_preserved:
         import sys as _sys
         print(
-            f"[chatbot:ask_stream] universal_sop_preserved={_sop_preserved} "
+            f"[chatbot:ask_stream] universal_sop_preserved={_sop_preserved}/{_UNIVERSAL_SOP_MAX_CHUNKS} "
             f"contexts_after_balance={len(contexts)}",
             file=_sys.stderr, flush=True,
         )

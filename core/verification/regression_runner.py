@@ -83,7 +83,9 @@ def _run_single_case(
 
     try:
         # 1. ask() 호출 — Answer dataclass 반환.
+        _t_ask = time.time()
         ans = ask_fn(supabase, question=query, category=None)
+        gemini_latency_ms = int((time.time() - _t_ask) * 1000)
         if hasattr(ans, "text") and hasattr(ans, "contexts"):
             answer_text = ans.text or ""
             chunks = list(ans.contexts) if ans.contexts else []
@@ -140,6 +142,7 @@ def _run_single_case(
                 retrieved_chunk_count=len(chunks),
                 gemini_model_id="gemini",
                 gemini_answer=(answer_text or "")[:5000] or None,
+                gemini_latency_ms=gemini_latency_ms,
                 claude_model_id=report.judge_model,
                 claude_verdict=verdict_val,
                 claude_score=report.overall_score,
