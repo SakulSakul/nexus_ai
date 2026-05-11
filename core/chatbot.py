@@ -961,6 +961,19 @@ def ask(
     else:
         final = answer_text
 
+    # Layer 3 (PR #83): 답변 사후 검증 + 자동 보정.
+    # force-included 청크 있는데 LLM 이 "[참조: 검색 결과 없음]" 답변하면 자동 교체.
+    try:
+        from .synthesis_validator import (
+            validate_and_repair_answer, extract_force_included_titles,
+        )
+        _force_titles = extract_force_included_titles(contexts)
+        final, _ = validate_and_repair_answer(
+            final, _force_titles, raw_chunks_count=len(contexts or []),
+        )
+    except Exception:
+        pass
+
     # PR-Quality-4: 사용자 질문 원문 quote 줄을 mechanical prepend.
     # LLM 외부에서 강제하여 paraphrase·변형 사고 원천 차단.
     # PR-Quality-4 hotfix: PII filter 의 false-positive ("안전관리 책임자"
@@ -1267,6 +1280,17 @@ def ask_stream(
     answer_text, suggestions = _split_suggestions(answer_text)
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
+    # Layer 3 (PR #83): 답변 사후 검증 + 자동 보정 — streaming 도 동일 적용.
+    try:
+        from .synthesis_validator import (
+            validate_and_repair_answer, extract_force_included_titles,
+        )
+        _force_titles = extract_force_included_titles(contexts)
+        answer_text, _ = validate_and_repair_answer(
+            answer_text, _force_titles, raw_chunks_count=len(contexts or []),
+        )
+    except Exception:
+        pass
     # PR-Quality-4: streaming 중 quote_prefix 를 이미 yield 했으므로 최종
     # Answer.text 에도 동일하게 prepend — 화면 placeholder 갱신 시 누락 방지.
     # hotfix: raw question 사용 (위 quote_prefix 와 동일 기준).

@@ -2234,6 +2234,64 @@ def _tab_search_compare(sb):
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
 
+    # ── Synthesis 검증 (Layer 4) ──────────────────────────
+    with st.expander("🔍 Synthesis 검증 (LLM 답변 + 자동 보정 결과)"):
+        if st.button("🤖 답변 생성 + 검증 실행", key="synth_verify_btn"):
+            try:
+                from core.prompts import SYSTEM_PROMPT, build_user_prompt
+                from core.chatbot import _gen_gemini
+                from core.synthesis_validator import (
+                    validate_and_repair_answer, extract_force_included_titles,
+                )
+                user_prompt = build_user_prompt(q, list(new_rows or []))
+                raw_text, _, _model = _gen_gemini(
+                    SYSTEM_PROMPT, user_prompt, include_thinking=False,
+                )
+                _force_titles = extract_force_included_titles(new_rows)
+                repaired, repairs = validate_and_repair_answer(
+                    raw_text, _force_titles, raw_chunks_count=len(new_rows or []),
+                )
+                st.success(f"✅ 답변 생성 완료 (model=`{_model}`)")
+                if repairs:
+                    st.warning(f"🛠 자동 보정 적용: {len(repairs)}건")
+                    for r in repairs:
+                        st.text(f"  • {r}")
+                else:
+                    st.info("자동 보정 없음 — LLM 답변이 규칙을 통과.")
+                st.markdown("**답변 본문 (보정 후):**")
+                st.markdown(repaired)
+                st.markdown(f"**Force-included docs**: `{_force_titles or '(없음)'}`")
+                cited_count = sum(1 for t in _force_titles if t in repaired)
+                if _force_titles:
+                    if cited_count == len(_force_titles):
+                        st.success(
+                            f"✅ 모든 force-included doc 인용됨 "
+                            f"({cited_count}/{len(_force_titles)})"
+                        )
+                    elif cited_count > 0:
+                        st.warning(
+                            f"⚠️ 부분 인용 ({cited_count}/{len(_force_titles)})"
+                        )
+                    else:
+                        st.error(
+                            "❌ Force-included doc 0개 인용 — "
+                            "Layer 3 validator 가 [참조] 자동 추가했어야 함"
+                        )
+                forbidden_found: list = []
+                for pat in (
+                    "[참조: 검색 결과 없음]",
+                    "관련 사규에서 확인되지 않습니다",
+                    "검색되지 않았습니다",
+                ):
+                    if pat in repaired:
+                        forbidden_found.append(pat)
+                if forbidden_found:
+                    st.error(f"❌ FORBIDDEN PATTERNS 잔존: {forbidden_found}")
+                else:
+                    st.success("✅ FORBIDDEN PATTERNS 없음")
+            except Exception as e:
+                st.error(f"답변 생성 실패: {type(e).__name__}: {e}")
+
 
 def main():
     _require_auth()
