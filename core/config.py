@@ -74,6 +74,10 @@ class Settings:
     # 여지를 위해 코드 보존 — 현재 활용처 없음.
     confidence_high: float       # NEXUS_CONFIDENCE_HIGH   default 0.025
     confidence_medium: float     # NEXUS_CONFIDENCE_MEDIUM default 0.015
+    # Phase 4 (PR #98): 라이브 chat 의 Claude judge 통합 토글.
+    # True 면 ask() 대신 verified_ask() 사용 — Gemini 답변 후 Claude 검증.
+    # 기본 False (regression 위험 zero, 기존 streaming UX 보존).
+    chatbot_use_verified_ask: bool
 
 
 @lru_cache(maxsize=1)
@@ -101,6 +105,9 @@ def settings() -> Settings:
         claude_effort=get_secret("NEXUS_CLAUDE_EFFORT", "medium").lower(),
         confidence_high=float(get_secret("NEXUS_CONFIDENCE_HIGH", "0.025")),
         confidence_medium=float(get_secret("NEXUS_CONFIDENCE_MEDIUM", "0.015")),
+        chatbot_use_verified_ask=get_secret(
+            "CHATBOT_USE_VERIFIED_ASK", "false",
+        ).strip().lower() in ("1", "true", "yes", "y"),
     )
 
 
