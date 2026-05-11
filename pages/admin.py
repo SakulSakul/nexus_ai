@@ -2451,6 +2451,123 @@ def _tab_search_compare(sb):
                 else:
                     st.info(f"🎯 Golden 매핑: **{golden.get('description', '')}**")
 
+                # === 🔬 진단 (PR diag/phase-0-chunk-count-discovery) ===
+                # 같은 incident_nodes 인데 phrasing 마다 chunk 수가 다른 원인 분기:
+                #   (A) retriever bug — hybrid_search 자체가 universal SOP 누락
+                #   (B) admin bug — admin 추출 단계에서 chunks 손실
+                st.markdown("---")
+                st.markdown("### 🔬 진단 — chunk extraction path")
+                st.write(
+                    f"**ask() return type:** `{type(ans_obj).__name__}` "
+                    f"(Answer dataclass)"
+                )
+                _ans_attrs = {
+                    "text": f"str(len={len(ans_obj.text or '')})",
+                    "contexts": (
+                        f"list[{len(ans_obj.contexts or [])}]"
+                        if isinstance(ans_obj.contexts, list)
+                        else type(ans_obj.contexts).__name__
+                    ),
+                    "is_critical": ans_obj.is_critical,
+                    "elapsed": f"{ans_obj.elapsed:.2f}s",
+                }
+                for _k, _v in _ans_attrs.items():
+                    st.write(f"  - `{_k}`: {_v}")
+                if ans_obj.contexts and isinstance(ans_obj.contexts[0], dict):
+                    st.write(
+                        f"  - sample chunk keys: "
+                        f"`{sorted(ans_obj.contexts[0].keys())}`"
+                    )
+
+                st.write(
+                    f"\n**Claude judge 로 전달된 live_chunks:** "
+                    f"`{len(live_chunks) if live_chunks else 0}`개"
+                )
+                if live_chunks:
+                    for _i, _c in enumerate(live_chunks):
+                        if not isinstance(_c, dict):
+                            continue
+                        _cid = _c.get("id") or _c.get("chunk_id") or "?"
+                        _cid_short = str(_cid)[:8] if _cid != "?" else "?"
+                        st.write(
+                            f"  {_i+1}. **{_c.get('doc_title', '?')}** / "
+                            f"chunk_idx=`{_c.get('chunk_idx', '?')}` / "
+                            f"id=`{_cid_short}` / "
+                            f"text_len={len(_c.get('text', '') or '')}"
+                        )
+
+                # direct hybrid_search 비교 호출
+                _direct_chunks: list = []
+                try:
+                    _direct_chunks = _hybrid_search(
+                        sb, question=judge_question,
+                        categories=None, top_k=10,
+                    )
+                    st.write(
+                        f"\n**direct hybrid_search(top_k=10):** "
+                        f"`{len(_direct_chunks)}`개"
+                    )
+                    _direct_titles = sorted({
+                        c.get("doc_title", "?") for c in _direct_chunks
+                        if isinstance(c, dict)
+                    })
+                    for _t in _direct_titles:
+                        _count = sum(
+                            1 for c in _direct_chunks
+                            if isinstance(c, dict) and c.get("doc_title") == _t
+                        )
+                        st.write(f"  - {_t}: {_count}개")
+                except Exception as _diag_e:
+                    st.write(f"  ⚠️ direct hybrid_search 실패: {_diag_e}")
+
+                # Universal SOP 분기 판정
+                _UNIVERSAL_SOP_TITLES = {
+                    "(공통) 일반 사건사고 보고지침",
+                    "(공통) 중대 사건사고 보고지침",
+                }
+                _live_universal = {
+                    c.get("doc_title") for c in (live_chunks or [])
+                    if isinstance(c, dict)
+                } & _UNIVERSAL_SOP_TITLES
+                _direct_universal = {
+                    c.get("doc_title") for c in _direct_chunks
+                    if isinstance(c, dict)
+                } & _UNIVERSAL_SOP_TITLES
+                st.write("\n**Universal SOP 포함 여부**")
+                st.write(
+                    f"  - live_chunks (judge 입력): {_live_universal or '❌ 없음'}"
+                )
+                st.write(
+                    f"  - direct hybrid_search: {_direct_universal or '❌ 없음'}"
+                )
+
+                # 결론 시그널
+                if not _live_universal and _direct_universal:
+                    st.error(
+                        "🚨 (B) admin 도구 bug — direct hybrid_search 는 "
+                        "universal SOP 가져오는데 live_chunks 추출이 누락. "
+                        "admin extraction 수정 필요."
+                    )
+                elif not _live_universal and not _direct_universal:
+                    st.error(
+                        "🚨 (A) retriever bug — hybrid_search 자체가 "
+                        "universal SOP 리턴 안 함. retriever enrichment "
+                        "일관성 수정 필요."
+                    )
+                elif _live_universal == _direct_universal:
+                    st.success(
+                        "✅ admin 추출 = direct hybrid_search 일치 — "
+                        "phrasing 별 retrieval variance 자체는 진짜 "
+                        "(다른 원인 조사 필요)"
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ 부분 불일치 — live={_live_universal} / "
+                        f"direct={_direct_universal}"
+                    )
+                st.markdown("---")
+                # === 진단 끝 — 기존 verify_with_claude 호출 이어짐 ===
+
                 with st.spinner("Claude Opus judge 호출 중..."):
                     report = verify_with_claude(
                         query=judge_question,
