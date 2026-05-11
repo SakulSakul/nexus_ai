@@ -1941,6 +1941,59 @@ def _tab_search_compare(sb):
         "나란히 비교합니다. 각 경로 top-5 와 소요 시간(ms) 표시."
     )
 
+    # ── Pre-flight: Force-include RPC 검증 ────────────────
+    with st.expander("🔬 Pre-flight: Force-include RPC 검증 (배포 후 가장 먼저)"):
+        test_nodes_str = st.text_input(
+            "테스트 노드 (콤마 구분)",
+            value="고객상해, 응급대응, 인사사고, 직원상해, 고객관리, 시설안전, 안전관리",
+            key="rpc_test_nodes",
+        )
+        if st.button("🚀 RPC 호출 테스트", key="rpc_test_btn"):
+            test_nodes = [n.strip() for n in test_nodes_str.split(",") if n.strip()]
+            if sb is None:
+                st.error("Supabase 미설정.")
+            else:
+                # 1) Main RPC
+                try:
+                    resp = sb.rpc(
+                        "nexus_force_include_chunks_by_incident_nodes",
+                        {"p_nodes": test_nodes},
+                    ).execute()
+                    chunks = resp.data or []
+                    st.success(f"✅ Main RPC 정상 — {len(chunks)} chunks 반환")
+                    doc_dist: dict = {}
+                    for c in chunks:
+                        title = c.get("doc_title") or "?"
+                        doc_dist[title] = doc_dist.get(title, 0) + 1
+                    if doc_dist:
+                        st.markdown("**Doc 별 분포**:")
+                        for title, count in sorted(doc_dist.items(), key=lambda x: -x[1]):
+                            st.text(f"  {title}: {count} chunks")
+                except Exception as e:
+                    st.error(f"❌ Main RPC 실패: {type(e).__name__}: {e}")
+                    st.warning(
+                        "→ Layer 2 (direct table) / Layer 3 (hardcoded title) fallback 가 라이브에서 동작 예정."
+                    )
+                # 2) Diagnostic RPC
+                try:
+                    resp2 = sb.rpc(
+                        "nexus_diagnose_incident_node_matching",
+                        {"p_nodes": test_nodes},
+                    ).execute()
+                    diag = resp2.data or []
+                    matched_diag = [d for d in diag if d.get("matched_nodes")]
+                    st.markdown(
+                        f"**Diagnostic RPC**: `{len(matched_diag)}` 매칭 / "
+                        f"`{len(diag)}` 전체 active+tagged"
+                    )
+                    for d in matched_diag:
+                        st.text(
+                            f"  {d.get('doc_title')} ← {d.get('matched_nodes')} "
+                            f"({d.get('total_chunks')} chunks)"
+                        )
+                except Exception as e:
+                    st.error(f"❌ Diagnostic RPC 실패: {type(e).__name__}: {e}")
+
     q = st.text_input("질문", key="search_compare_q",
                       placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
     run = st.button("▶ 비교 실행", key="search_compare_run", type="primary")
@@ -2036,14 +2089,25 @@ def _tab_search_compare(sb):
         st.markdown(
             f"**User incident nodes**: `{_classified or '(없음)'}`"
         )
-        # Track C — top-5 안의 intent force-include 청크 수 / 매칭 doc 수 요약.
+        # Track C v2 — top-5 안의 intent force-include 청크 수 / 매칭 doc 수 요약 + source layer.
         _intent_force_chunks = [r for r in (new_rows or []) if r.get("force_included_by_intent")]
         _intent_force_docs = {r.get("document_id") for r in _intent_force_chunks if r.get("document_id")}
-        st.markdown(
-            f"**Intent-matched docs force-included**: "
-            f"`{len(_intent_force_chunks)}` chunks · "
-            f"`{len(_intent_force_docs)}` docs (top-5 기준)"
+        _src = next(
+            (r.get("force_include_source") for r in _intent_force_chunks if r.get("force_include_source")),
+            "none",
         )
+        if len(_intent_force_chunks) == 0:
+            st.error(
+                "❌ Force-include 0 chunks (top-5 기준) — **Track C 미작동 가능성**. "
+                "위 Pre-flight RPC 검증 실행하세요."
+            )
+        else:
+            st.success(
+                f"✅ Force-include 작동 — "
+                f"`{len(_intent_force_chunks)}` chunks · "
+                f"`{len(_intent_force_docs)}` docs (top-5 기준) · "
+                f"source `{_src}`"
+            )
         if new_err:
             st.error(f"실패: {new_err}")
         elif not new_rows:
@@ -2077,8 +2141,10 @@ def _tab_search_compare(sb):
                             f"🔒 Force-included +{_retriever.EMERGENCY_FORCE_INCLUDE_BOOST:.2f} (chunk-level incident node 매칭)"
                         )
                     if r.get("force_included_by_intent"):
+                        _src_chunk = r.get("force_include_source") or "?"
                         st.caption(
-                            f"🔒 Intent force-include +{_retriever.FORCE_INCLUDE_DOC_BOOST:.2f} (intent-matched doc)"
+                            f"🔒 Intent force-include +{_retriever.FORCE_INCLUDE_DOC_BOOST:.2f} "
+                            f"(source=`{_src_chunk}`)"
                         )
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
