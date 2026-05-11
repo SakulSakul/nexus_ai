@@ -58,15 +58,21 @@ def hybrid_search(
     s = settings()
     if USE_HYBRID_SEARCH:
         # Tier 1 — 사규 용어 확장. 실패 시 원문 반환 (raise 안 함).
-        from .nexus_query_rewriter import rewrite_query_for_retrieval
+        from .nexus_query_rewriter import (
+            rewrite_query_for_retrieval, nexus_build_keyword_tsquery,
+        )
         retrieval_query_text = rewrite_query_for_retrieval(question)
         retrieval_embedding = embed_one(
             retrieval_query_text, task_type="RETRIEVAL_QUERY",
         )
+        # Tier 2 보조: 한국어 조사 제거 + prefix tsquery 빌더. RPC v3 가
+        # to_tsquery('simple', …) 로 받기 때문에 plainto_tsquery 형식이 아닌
+        # 정식 tsquery 표현식("토큰:* | 토큰:*") 을 넘긴다.
+        ts_query = nexus_build_keyword_tsquery(retrieval_query_text)
         match_count = top_k or s.top_k
         payload = {
             "query_embedding": retrieval_embedding,
-            "query_text": retrieval_query_text,
+            "query_text": ts_query,
             "match_count": match_count,
             "rrf_k": 60,
             "pool_size": max(30, match_count * 6),
