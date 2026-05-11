@@ -23,7 +23,7 @@ from .embedder import embed_one
 # Tier 1 + Tier 2 활성화 토글. False 면 즉시 기존 RPC 경로로 롤백.
 # 2026-05-11 핫픽스: rewriter 1글자 절단 버그 수정 검증 전까지 False 유지.
 # admin "🔬 검색 비교" 패널에서 사용자가 raw vs cleaned 확인 후 True 로 복귀.
-USE_HYBRID_SEARCH: bool = False
+USE_HYBRID_SEARCH: bool = True
 
 
 def _normalize_v2_row(row: dict) -> dict:
