@@ -51,26 +51,33 @@ _INCIDENT_CATEGORY_MAP: dict = {
 # Forbidden patterns
 # ──────────────────────────────────────────────────────────
 _FORBIDDEN_NO_REF_PATTERNS: tuple = (
-    r"\[참조:\s*검색 결과 없음\s*\]",
-    r"\[참조:\s*관련 사규 미발견\s*\]",
-    r"\[참조:\s*관련 사규에서 확인되지 않음\s*\]",
-    r"\[참조:\s*해당 사규 없음\s*\]",
+    r"\[참조\s*:\s*검색\s*결과\s*없음\s*\]",
+    r"\[참조\s*:\s*관련\s*사규\s*미발견\s*\]",
+    r"\[참조\s*:\s*관련\s*사규에서\s*확인되지\s*(?:않음|않습니다|않았습니다)\.?\s*\]",
+    r"\[참조\s*:\s*해당\s*사규\s*없음\s*\]",
 )
 
-# 📋 사규 기준 섹션의 denial — 다음 카테고리 (⚖️/📂/[참조) 직전까지만 매칭
+# 📋 사규 기준 섹션의 denial — 다음 카테고리 (⚖️/📂/[참조) 직전까지만 매칭.
+# 헤더와 denial 이 한 줄로 붙어 있든 줄바꿈 양쪽이든 매칭. 후처리 템플릿
+# 교체 (예: "📋 사규 기준\n해당 유형 문서가 검색되지 않았습니다.") 회복용.
 _REGULATION_DENIAL_SECTION_PATTERN = re.compile(
-    r"(📋\s*사규 기준[^\n]*\n)"
-    r"(?:\s*(?:[\*\-•]\s*)?(?:관련 사규 내용을 확인할 수 없습니다\.?|"
-    r"해당 유형 문서가 검색되지 않았습니다\.?|"
-    r"관련 사규에서 확인되지 않습니다\.?)\s*\n?)+"
-    r"(?=\s*(?:⚖️|📂|\[참조|$))",
-    re.MULTILINE
+    r"(📋\s*사규\s*기준[^\n]*?)"
+    r"(?:\s*\n)?"
+    r"\s*(?:[\*\-•]\s*)?"
+    r"(?:해당\s*유형\s*문서가\s*검색되지\s*않았습니다\.?|"
+    r"관련\s*사규\s*내용을\s*확인할\s*수\s*없습니다\.?|"
+    r"관련\s*사규에서\s*확인되지\s*(?:않음|않습니다|않았습니다)\.?)"
+    r"(?=\s*\n*\s*(?:⚖️|📂|\[참조|$))",
+    re.MULTILINE | re.DOTALL
 )
 
 _BODY_DENIAL_PATTERNS: tuple = (
     "관련 사규에서 확인되지 않습니다",
     "관련 사규에서 확인되지 않았습니다",
     "관련 사규가 확인되지 않았습니다",
+    "구체적인 대응 절차는 관련 사규에서 확인되지 않습니다",
+    "구체적인 대응 절차는 관련 사규에서 확인되지 않았습니다",
+    "해당 유형 문서가 검색되지 않았습니다",
     "확인되지 않습니다",
     "확인하기 어렵습니다",
 )
@@ -317,8 +324,24 @@ def validate_and_repair_answer(
     sop_chunks_map = _universal_sop_chunks(chunks)
     has_universal_sop = any(sop_chunks_map.values())
 
+    # 진입 로그 — 매 호출마다 출력 (silent return 진단용).
+    print(
+        f"[synthesis:validator:ENTRY] "
+        f"answer_len={len(answer)} "
+        f"chunks={len(chunks or [])} "
+        f"force_titles={len(force_titles)} "
+        f"universal_sop_chunks="
+        f"{{{', '.join(f'{k!r}: {len(v)}' for k, v in sop_chunks_map.items())}}} "
+        f"user_incident_nodes={list(user_incident_nodes or [])}",
+        file=sys.stderr, flush=True,
+    )
+
     # 진짜 검색 0건은 보정 안 함.
     if not force_titles and not chunks:
+        print(
+            "[synthesis:validator:SKIP] no chunks, no force titles",
+            file=sys.stderr, flush=True,
+        )
         return answer, []
 
     # Repair 1: FORBIDDEN [참조: 검색 결과 없음] → 실제 doc titles
@@ -377,5 +400,19 @@ def validate_and_repair_answer(
                     file=sys.stderr, flush=True,
                 )
                 break
+
+    # 종료 로그 — repair 수 / regex miss 진단.
+    if not repairs:
+        print(
+            "[synthesis:validator:EXIT] no repairs applied "
+            "(answer already clean OR regex miss)",
+            file=sys.stderr, flush=True,
+        )
+    else:
+        print(
+            f"[synthesis:validator:EXIT] {len(repairs)} repair(s): "
+            f"{'; '.join(r[:60] for r in repairs[:3])}",
+            file=sys.stderr, flush=True,
+        )
 
     return repaired, repairs

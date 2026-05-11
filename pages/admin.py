@@ -2259,10 +2259,15 @@ def _tab_search_compare(sb):
 
     # ── Synthesis 검증 (Layer 4) — session_state 기반 ──────
     with st.expander("🔍 Synthesis 검증 (LLM 답변 + 구조화 자동 보정)"):
+        verify_via_live = st.checkbox(
+            "라이브 흐름으로 검증 (ask() 전체 파이프라인 — 후처리 + validator 포함)",
+            value=False,
+            key="synth_verify_live_mode",
+        )
         if st.button("🤖 답변 생성 + 구조화 검증", key="synth_verify_btn"):
             try:
                 from core.prompts import SYSTEM_PROMPT, build_user_prompt
-                from core.chatbot import _gen_gemini
+                from core.chatbot import _gen_gemini, ask as _live_ask
                 from core.synthesis_validator import (
                     validate_and_repair_answer,
                     extract_force_included_titles,
@@ -2270,15 +2275,24 @@ def _tab_search_compare(sb):
                     _universal_sop_chunks,
                 )
 
-                user_prompt = build_user_prompt(q, list(new_rows or []))
-                raw_text, _, _model = _gen_gemini(
-                    SYSTEM_PROMPT, user_prompt, include_thinking=False,
-                )
+                if verify_via_live:
+                    # 라이브 흐름 — retrieval + ask 전체. validator 가 이미 ask 내부에서
+                    # 호출됐으므로 여기서는 결과만 받아 검증·표시.
+                    ans = _live_ask(sb, question=q)
+                    repaired = ans.text
+                    repairs: list = ["live mode: validator already applied inside ask()"]
+                    _model = "live (ask pipeline)"
+                else:
+                    user_prompt = build_user_prompt(q, list(new_rows or []))
+                    raw_text, _, _model = _gen_gemini(
+                        SYSTEM_PROMPT, user_prompt, include_thinking=False,
+                    )
+                    _user_nodes = nexus_classify_to_incident_nodes(q or "")
+                    repaired, repairs = validate_and_repair_answer(
+                        raw_text, chunks=new_rows, user_incident_nodes=_user_nodes,
+                    )
                 _user_nodes = nexus_classify_to_incident_nodes(q or "")
                 _force_titles = extract_force_included_titles(new_rows)
-                repaired, repairs = validate_and_repair_answer(
-                    raw_text, chunks=new_rows, user_incident_nodes=_user_nodes,
-                )
                 st.session_state["cmp_synth_result"] = {
                     "model": _model,
                     "raw_text": raw_text,

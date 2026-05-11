@@ -961,15 +961,33 @@ def ask(
     else:
         final = answer_text
 
-    # Layer 3 (PR #83 → PR #84): 답변 사후 검증 + 구조화 사규 기준 강제 주입.
-    # is_universal_sop 청크 있는데 LLM 이 "[참조: 검색 결과 없음]" / 사규 기준
-    # 섹션 denial 답변하면 청크 텍스트 기반 구조화 SOP 로 자동 교체.
+    # Layer 3 (PR #83 → PR #84 → PR #86): 답변 사후 검증 + 구조화 사규 기준 주입.
+    # validator user_incident_nodes 는 retriever 와 동기화 — question + rewritten
+    # union (단독 question 만으로는 retriever 가 매칭한 노드를 못 잡을 때 있음).
+    # chunks 는 contexts_raw 사용 — force_included_by_intent / is_universal_sop /
+    # doc_title 메타 보존 (_balance_by_doc_kind 가 일부 drop 한 force 청크까지 복구).
     try:
+        import sys as _sys
         from .synthesis_validator import validate_and_repair_answer
-        from .nexus_query_rewriter import nexus_classify_to_incident_nodes
-        _user_nodes = nexus_classify_to_incident_nodes(question or "")
+        from .nexus_query_rewriter import (
+            nexus_classify_to_incident_nodes, rewrite_query_for_retrieval,
+        )
+        _question_nodes = set(nexus_classify_to_incident_nodes(question or ""))
+        try:
+            _rewritten = rewrite_query_for_retrieval(masked or question or "")
+            if _rewritten:
+                _question_nodes |= set(nexus_classify_to_incident_nodes(_rewritten))
+        except Exception:
+            pass
+        _user_nodes = sorted(_question_nodes)
+        print(
+            f"[chatbot:ask:validator_input] user_incident_nodes={_user_nodes} "
+            f"chunks_raw={len(contexts_raw or [])} "
+            f"chunks_balanced={len(contexts or [])}",
+            file=_sys.stderr, flush=True,
+        )
         final, _ = validate_and_repair_answer(
-            final, chunks=contexts, user_incident_nodes=_user_nodes,
+            final, chunks=contexts_raw, user_incident_nodes=_user_nodes,
         )
     except Exception:
         pass
@@ -1280,13 +1298,30 @@ def ask_stream(
     answer_text, suggestions = _split_suggestions(answer_text)
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
-    # Layer 3 (PR #83 → PR #84): 답변 사후 검증 + 구조화 사규 기준 강제 주입.
+    # Layer 3 (PR #83 → PR #84 → PR #86): 답변 사후 검증 + 구조화 사규 기준 주입.
+    # ask() 와 동일 — question + rewritten union, chunks=contexts_raw.
     try:
+        import sys as _sys
         from .synthesis_validator import validate_and_repair_answer
-        from .nexus_query_rewriter import nexus_classify_to_incident_nodes
-        _user_nodes = nexus_classify_to_incident_nodes(question or "")
+        from .nexus_query_rewriter import (
+            nexus_classify_to_incident_nodes, rewrite_query_for_retrieval,
+        )
+        _question_nodes = set(nexus_classify_to_incident_nodes(question or ""))
+        try:
+            _rewritten = rewrite_query_for_retrieval(masked or question or "")
+            if _rewritten:
+                _question_nodes |= set(nexus_classify_to_incident_nodes(_rewritten))
+        except Exception:
+            pass
+        _user_nodes = sorted(_question_nodes)
+        print(
+            f"[chatbot:ask_stream:validator_input] user_incident_nodes={_user_nodes} "
+            f"chunks_raw={len(contexts_raw or [])} "
+            f"chunks_balanced={len(contexts or [])}",
+            file=_sys.stderr, flush=True,
+        )
         answer_text, _ = validate_and_repair_answer(
-            answer_text, chunks=contexts, user_incident_nodes=_user_nodes,
+            answer_text, chunks=contexts_raw, user_incident_nodes=_user_nodes,
         )
     except Exception:
         pass
