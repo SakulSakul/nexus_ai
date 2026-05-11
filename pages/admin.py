@@ -2234,22 +2234,28 @@ def _tab_search_compare(sb):
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
 
-    # ── Synthesis 검증 (Layer 4) ──────────────────────────
-    with st.expander("🔍 Synthesis 검증 (LLM 답변 + 자동 보정 결과)"):
-        if st.button("🤖 답변 생성 + 검증 실행", key="synth_verify_btn"):
+    # ── Synthesis 검증 (Layer 4) — 구조화 4단계 검증 + 보정 ──────
+    with st.expander("🔍 Synthesis 검증 (LLM 답변 + 구조화 자동 보정)"):
+        if st.button("🤖 답변 생성 + 구조화 검증", key="synth_verify_btn"):
             try:
                 from core.prompts import SYSTEM_PROMPT, build_user_prompt
                 from core.chatbot import _gen_gemini
                 from core.synthesis_validator import (
-                    validate_and_repair_answer, extract_force_included_titles,
+                    validate_and_repair_answer,
+                    extract_force_included_titles,
+                    _build_structured_regulation_section,
+                    _universal_sop_chunks,
                 )
+                from core.nexus_query_rewriter import nexus_classify_to_incident_nodes
+
                 user_prompt = build_user_prompt(q, list(new_rows or []))
                 raw_text, _, _model = _gen_gemini(
                     SYSTEM_PROMPT, user_prompt, include_thinking=False,
                 )
+                _user_nodes = nexus_classify_to_incident_nodes(q or "")
                 _force_titles = extract_force_included_titles(new_rows)
                 repaired, repairs = validate_and_repair_answer(
-                    raw_text, _force_titles, raw_chunks_count=len(new_rows or []),
+                    raw_text, chunks=new_rows, user_incident_nodes=_user_nodes,
                 )
                 st.success(f"✅ 답변 생성 완료 (model=`{_model}`)")
                 if repairs:
@@ -2258,8 +2264,47 @@ def _tab_search_compare(sb):
                         st.text(f"  • {r}")
                 else:
                     st.info("자동 보정 없음 — LLM 답변이 규칙을 통과.")
+
                 st.markdown("**답변 본문 (보정 후):**")
                 st.markdown(repaired)
+
+                # Universal SOP 청크 분포.
+                sop_map = _universal_sop_chunks(new_rows or [])
+                col_a, col_b = st.columns(2)
+                col_a.metric(
+                    "일반 사건사고 청크",
+                    len(sop_map["(공통) 일반 사건사고 보고지침"]),
+                )
+                col_b.metric(
+                    "중대 사건사고 청크",
+                    len(sop_map["(공통) 중대 사건사고 보고지침"]),
+                )
+
+                # 구조화 추출 미리보기.
+                structured = _build_structured_regulation_section(
+                    new_rows or [], user_incident_nodes=_user_nodes,
+                )
+                if structured:
+                    st.markdown("**구조화 추출 결과 (validator 가 주입 시도하는 내용):**")
+                    st.code(structured, language=None)
+                else:
+                    st.warning("⚠️ 구조화 추출 실패 — universal SOP 청크 부족 또는 매칭 0건")
+
+                # 4단계 섹션 포함 여부.
+                checks = (
+                    ("▼ 사건 분류", "분류"),
+                    ("▼ 일반 vs 중대", "판정 기준"),
+                    ("▼ 일반 사건사고 보고 절차", "일반 절차"),
+                    ("▼ 중대 사건사고 보고 절차", "중대 절차"),
+                )
+                st.markdown("**4단계 구조 포함 여부 (보정 후 답변 기준):**")
+                for marker, label in checks:
+                    if marker in repaired:
+                        st.text(f"  ✅ {label} 포함")
+                    else:
+                        st.text(f"  ❌ {label} 누락")
+
+                # Force-included docs 인용률.
                 st.markdown(f"**Force-included docs**: `{_force_titles or '(없음)'}`")
                 cited_count = sum(1 for t in _force_titles if t in repaired)
                 if _force_titles:
@@ -2274,14 +2319,15 @@ def _tab_search_compare(sb):
                         )
                     else:
                         st.error(
-                            "❌ Force-included doc 0개 인용 — "
-                            "Layer 3 validator 가 [참조] 자동 추가했어야 함"
+                            "❌ Force-included doc 0개 인용"
                         )
+
+                # FORBIDDEN PATTERNS.
                 forbidden_found: list = []
                 for pat in (
                     "[참조: 검색 결과 없음]",
                     "관련 사규에서 확인되지 않습니다",
-                    "검색되지 않았습니다",
+                    "해당 유형 문서가 검색되지 않았습니다",
                 ):
                     if pat in repaired:
                         forbidden_found.append(pat)
@@ -2291,6 +2337,8 @@ def _tab_search_compare(sb):
                     st.success("✅ FORBIDDEN PATTERNS 없음")
             except Exception as e:
                 st.error(f"답변 생성 실패: {type(e).__name__}: {e}")
+                import traceback
+                st.code(traceback.format_exc())
 
 
 def main():
