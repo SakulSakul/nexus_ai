@@ -90,6 +90,13 @@ PROCEDURE_KEYWORDS: tuple = (
 # tiebreaker 역할 (절차 키워드 많은 청크 우선).
 PROCEDURE_KEYWORD_WEIGHT: float = 0.01
 
+# Universal Incident SOP — 모든 사건사고 적용 (사용자 통찰 2026-05-11).
+# 일반/중대 사건사고 보고지침 청크에 분류/판정/시한/절차 모두 명시됨.
+UNIVERSAL_INCIDENT_SOP_TITLES: set = {
+    "(공통) 일반 사건사고 보고지침",
+    "(공통) 중대 사건사고 보고지침",
+}
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -120,6 +127,7 @@ def _normalize_v2_row(row: dict) -> dict:
         "force_included": bool(row.get("force_included")),
         "force_included_by_intent": bool(row.get("force_included_by_intent")),
         "force_include_source": row.get("force_include_source") or "",
+        "is_universal_sop": bool(row.get("is_universal_sop")),
         "chunk_incident_boost_applied": bool(row.get("chunk_incident_boost_applied")),
         "matched_chunk_incident_nodes": row.get("matched_chunk_incident_nodes") or [],
         "procedure_keyword_count": int(row.get("procedure_keyword_count") or 0),
@@ -317,10 +325,11 @@ def hybrid_search(
                     skipped_count += 1
                     continue
                 _doc = _doc_meta_enrich.get(fc.get("document_id"), {}) or {}
+                _title = fc.get("doc_title") or _doc.get("title") or ""
                 raw_chunks.append({
                     "id": fc.get("id"),
                     "document_id": fc.get("document_id"),
-                    "doc_title": fc.get("doc_title") or _doc.get("title"),
+                    "doc_title": _title,
                     "doc_kind": _doc.get("doc_kind"),
                     "article_no": fc.get("article_no"),
                     "text": fc.get("text") or "",
@@ -329,6 +338,7 @@ def hybrid_search(
                     "rrf_score": 0.0,
                     "force_included_by_intent": True,
                     "force_include_source": force_include_source,
+                    "is_universal_sop": _title in UNIVERSAL_INCIDENT_SOP_TITLES,
                 })
                 added_count += 1
             print(
@@ -372,10 +382,11 @@ def hybrid_search(
                     if ec.get("id") in raw_chunk_ids:
                         continue
                     d = em_doc_meta.get(ec.get("document_id"), {}) or {}
+                    _title = d.get("title") or ""
                     raw_chunks.append({
                         "id": ec.get("id"),
                         "document_id": ec.get("document_id"),
-                        "doc_title": d.get("title"),
+                        "doc_title": _title,
                         "doc_kind": d.get("doc_kind"),
                         "article_no": ec.get("article_no"),
                         "text": ec.get("text") or "",
@@ -383,6 +394,7 @@ def hybrid_search(
                         "chunk_incident_nodes": ec.get("chunk_incident_nodes") or [],
                         "rrf_score": 0.0,
                         "force_included": True,
+                        "is_universal_sop": _title in UNIVERSAL_INCIDENT_SOP_TITLES,
                     })
             except Exception:
                 # force-include 실패는 검색 흐름을 막지 않는다.
@@ -552,6 +564,15 @@ def hybrid_search(
             f"{sum(1 for c in raw_chunks if (c.get('procedure_keyword_count') or 0) > 0)} "
             f"max_proc_match_in_top5="
             f"{max((c.get('procedure_keyword_count') or 0 for c in final_rows), default=0)}",
+            file=sys.stderr, flush=True,
+        )
+        universal_sop_titles_in_top = sorted({
+            c.get("doc_title", "?") for c in final_rows if c.get("is_universal_sop")
+        })
+        print(
+            f"[retriever:universal_sop] "
+            f"in_top_k={sum(1 for c in final_rows if c.get('is_universal_sop'))} "
+            f"titles={universal_sop_titles_in_top}",
             file=sys.stderr, flush=True,
         )
 

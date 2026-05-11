@@ -961,15 +961,15 @@ def ask(
     else:
         final = answer_text
 
-    # Layer 3 (PR #83): 답변 사후 검증 + 자동 보정.
-    # force-included 청크 있는데 LLM 이 "[참조: 검색 결과 없음]" 답변하면 자동 교체.
+    # Layer 3 (PR #83 → PR #84): 답변 사후 검증 + 구조화 사규 기준 강제 주입.
+    # is_universal_sop 청크 있는데 LLM 이 "[참조: 검색 결과 없음]" / 사규 기준
+    # 섹션 denial 답변하면 청크 텍스트 기반 구조화 SOP 로 자동 교체.
     try:
-        from .synthesis_validator import (
-            validate_and_repair_answer, extract_force_included_titles,
-        )
-        _force_titles = extract_force_included_titles(contexts)
+        from .synthesis_validator import validate_and_repair_answer
+        from .nexus_query_rewriter import nexus_classify_to_incident_nodes
+        _user_nodes = nexus_classify_to_incident_nodes(question or "")
         final, _ = validate_and_repair_answer(
-            final, _force_titles, raw_chunks_count=len(contexts or []),
+            final, chunks=contexts, user_incident_nodes=_user_nodes,
         )
     except Exception:
         pass
@@ -1280,14 +1280,13 @@ def ask_stream(
     answer_text, suggestions = _split_suggestions(answer_text)
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
-    # Layer 3 (PR #83): 답변 사후 검증 + 자동 보정 — streaming 도 동일 적용.
+    # Layer 3 (PR #83 → PR #84): 답변 사후 검증 + 구조화 사규 기준 강제 주입.
     try:
-        from .synthesis_validator import (
-            validate_and_repair_answer, extract_force_included_titles,
-        )
-        _force_titles = extract_force_included_titles(contexts)
+        from .synthesis_validator import validate_and_repair_answer
+        from .nexus_query_rewriter import nexus_classify_to_incident_nodes
+        _user_nodes = nexus_classify_to_incident_nodes(question or "")
         answer_text, _ = validate_and_repair_answer(
-            answer_text, _force_titles, raw_chunks_count=len(contexts or []),
+            answer_text, chunks=contexts, user_incident_nodes=_user_nodes,
         )
     except Exception:
         pass

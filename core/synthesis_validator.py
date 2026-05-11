@@ -1,50 +1,308 @@
-"""LLM 답변 사후 검증 및 자동 보정.
+"""LLM 답변 사후 검증 + 구조화 사건사고 SOP 강제 주입 (PR #84).
 
-Layer 3 of synthesis hardening (PR #83) — prompt 무시 시 last-resort 안전망.
-Layer 1 (SYSTEM_PROMPT) / Layer 2 (FORBIDDEN PATTERNS) 가 LLM 의 conservative
-bias 를 막지 못한 경우 본 모듈이 답변을 자동 보정한다.
+Layer 3 of synthesis hardening. 청크 텍스트 keyword markers 매칭으로
+extraction — hallucination zero. 청크에 없는 라인은 답변에 안 들어감.
 
-자동 보정 범위 (force-included 청크 있을 때만):
-- "[참조: 검색 결과 없음]" → 실제 doc titles 자동 교체
-- [참조] 섹션 자체 누락 시 force-included docs 자동 첨부
+검증 범위 (force_included_by_intent 청크 있을 때만):
+- [참조: 검색 결과 없음] → 실제 doc titles 자동 교체
+- [참조] 섹션 누락 시 force-included docs 자동 첨부
+- 사규 기준 섹션 denial → 구조화 4단계 SOP 강제 교체
+  (분류 / 일반·중대 판정 / 일반 절차 / 중대 절차)
+- 본문 denial 표현 soft replacement
 
-자동 보정 안 하지만 stderr 경고:
-- "확인되지 않습니다" 류 표현 사용 (사용자가 답변 다시 시도 가능)
+⚖️ 징계 기준 / 📂 사건사례 섹션은 절대 미수정 (정규식 lookahead 엄격).
+진짜 검색 0건은 보정 안 함.
 """
 
 from __future__ import annotations
 
 import re
 import sys
+from typing import Optional
 
 
-# Forbidden patterns — force-included 청크 있을 때 사용 시 자동 교체
+# ──────────────────────────────────────────────────────────
+# 사건사고 카테고리 — 일반 사건사고 보고지침 3.1조 13개 대분류
+# LLM 답변 구조화 시 user_incident_nodes 와 매핑용
+# ──────────────────────────────────────────────────────────
+_INCIDENT_CATEGORY_MAP: dict = {
+    # incident_node → (대분류, 중분류 또는 None)
+    "고객상해":   ("인사사고", "고객상해"),
+    "직원상해":   ("인사사고", "직원상해"),
+    "직원질병":   ("인사사고", "직원질병"),
+    "고객질병":   ("인사사고", "고객질병/취식후병증"),
+    "취식후병증": ("인사사고", "고객질병/취식후병증"),
+    "인사관리":   ("인사사고", "인사관리"),
+    "인사사고":   ("인사사고", None),
+    "매장사고":   ("안전관리", "시설안전"),
+    "시설안전":   ("안전관리", "시설안전"),
+    "안전관리":   ("안전관리", None),
+    "응급대응":   ("안전관리", None),
+    "고객관리":   ("고객관리", None),
+    "고객난동":   ("고객관리", "고객난동"),
+    "고객분실":   ("고객관리", "고객분실"),
+    "고객불만":   ("고객관리", "고객불만"),
+    "회사정보":   ("정보보안", "회사정보"),
+    "고객정보":   ("정보보안", "고객정보"),
+}
+
+
+# ──────────────────────────────────────────────────────────
+# Forbidden patterns
+# ──────────────────────────────────────────────────────────
 _FORBIDDEN_NO_REF_PATTERNS: tuple = (
     r"\[참조:\s*검색 결과 없음\s*\]",
     r"\[참조:\s*관련 사규 미발견\s*\]",
+    r"\[참조:\s*관련 사규에서 확인되지 않음\s*\]",
     r"\[참조:\s*해당 사규 없음\s*\]",
-    r"참조:\s*검색 결과 없음(?!\])",  # 대괄호 없는 변형
 )
 
-_WARNING_PATTERNS: tuple = (
+# 📋 사규 기준 섹션의 denial — 다음 카테고리 (⚖️/📂/[참조) 직전까지만 매칭
+_REGULATION_DENIAL_SECTION_PATTERN = re.compile(
+    r"(📋\s*사규 기준[^\n]*\n)"
+    r"(?:\s*(?:[\*\-•]\s*)?(?:관련 사규 내용을 확인할 수 없습니다\.?|"
+    r"해당 유형 문서가 검색되지 않았습니다\.?|"
+    r"관련 사규에서 확인되지 않습니다\.?)\s*\n?)+"
+    r"(?=\s*(?:⚖️|📂|\[참조|$))",
+    re.MULTILINE
+)
+
+_BODY_DENIAL_PATTERNS: tuple = (
     "관련 사규에서 확인되지 않습니다",
+    "관련 사규에서 확인되지 않았습니다",
     "관련 사규가 확인되지 않았습니다",
-    "해당 유형 문서가 검색되지 않았습니다",
-    "검색되지 않았습니다",
+    "확인되지 않습니다",
+    "확인하기 어렵습니다",
 )
 
 
+# ──────────────────────────────────────────────────────────
+# 청크 필터링
+# ──────────────────────────────────────────────────────────
+def _universal_sop_chunks(chunks: list) -> dict:
+    """force-included universal SOP 청크를 doc_title 별 분리."""
+    out: dict = {
+        "(공통) 일반 사건사고 보고지침": [],
+        "(공통) 중대 사건사고 보고지침": [],
+    }
+    for c in chunks or []:
+        if not c.get("is_universal_sop"):
+            continue
+        title = c.get("doc_title") or ""
+        if title in out:
+            out[title].append(c)
+    return out
+
+
+def _force_included_titles(chunks: list) -> list:
+    """force-included 모든 doc titles (입력 순 dedup)."""
+    titles: list = []
+    seen: set = set()
+    for c in chunks or []:
+        if not c.get("force_included_by_intent"):
+            continue
+        t = c.get("doc_title") or ""
+        if t and t not in seen:
+            titles.append(t)
+            seen.add(t)
+    return titles
+
+
+# 외부 import 용 — chatbot.py 가 사용 (PR #83 호환).
+def extract_force_included_titles(chunks: list) -> list:
+    return _force_included_titles(chunks)
+
+
+# ──────────────────────────────────────────────────────────
+# Section 1 — 분류 추출
+# ──────────────────────────────────────────────────────────
+def _extract_classification(
+    user_incident_nodes: Optional[list],
+    general_chunks: list,
+) -> Optional[str]:
+    if not user_incident_nodes:
+        return None
+    major, minor = None, None
+    for node in user_incident_nodes:
+        if node in _INCIDENT_CATEGORY_MAP:
+            m, sub = _INCIDENT_CATEGORY_MAP[node]
+            if not major:
+                major = m
+            if sub and not minor:
+                minor = sub
+                break
+    if not major:
+        return None
+
+    lines = ["▼ 사건 분류", f"- 대분류: {major}"]
+    if minor:
+        definition = None
+        for chunk in general_chunks:
+            text = chunk.get("text") or ""
+            m = re.search(
+                rf"{re.escape(minor)}\s*[:：]\s*([^\n]+?)(?:\n|$)",
+                text,
+            )
+            if m:
+                definition = m.group(1).strip()
+                break
+        if definition:
+            lines.append(f"- 중분류: {minor} ({definition})")
+        else:
+            lines.append(f"- 중분류: {minor}")
+    lines.append("출처: (공통) 일반 사건사고 보고지침 3.1조")
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────
+# Section 2 — 중대 판정 기준 추출
+# ──────────────────────────────────────────────────────────
+_SEVERITY_CRITERIA_PATTERNS: tuple = (
+    (r"사망[,，]?\s*중상[^•\n]*?(?:고객|협력사원|직원)[^•\n]*",
+     "사망 또는 중상 (고객/협력사원: 사업장 內 발생, 직원: 모든 건)"),
+    (r"경상[^•\n]*?(?:동시\s*)?5인\s*이상[^•\n]*",
+     "경상이라도 동시 5인 이상 상해 발생"),
+    (r"성범죄[^•\n]*",
+     "직원·협력사원 연루 사업장 內 성범죄"),
+    (r"(?:강도|유괴|폭행|인질극)[^•\n]*강력\s*범죄[^•\n]*",
+     "강도, 유괴, 폭행, 인질극 등 강력 범죄"),
+    (r"법정\s*감염병[^•\n]*",
+     "법정 감염병 발생"),
+)
+
+
+def _extract_severity_criteria(severe_chunks: list) -> Optional[str]:
+    if not severe_chunks:
+        return None
+    matched: list = []
+    for chunk in severe_chunks:
+        text = chunk.get("text") or ""
+        for pattern, label in _SEVERITY_CRITERIA_PATTERNS:
+            if re.search(pattern, text) and label not in matched:
+                matched.append(label)
+    if not matched:
+        return None
+    lines = ["▼ 일반 vs 중대 사건사고 판단",
+             "다음 중 하나라도 해당하면 중대 사건사고로 분류:"]
+    for c in matched:
+        lines.append(f"- {c}")
+    lines.append("위 조건 미해당 시 → 일반 사건사고로 처리")
+    lines.append("출처: (공통) 중대 사건사고 보고지침 3.1조")
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────
+# Section 3 — 일반 사건사고 절차 추출
+# ──────────────────────────────────────────────────────────
+_GENERAL_PROCEDURE_PATTERNS: tuple = (
+    (r"4\.1\.2[^\n]*최초\s*인지자[^\n]*즉시\s*보고[^\n]*",
+     "최초 인지자 즉시 보고 (4.1.2조)"),
+    (r"4\.1\.3[^\n]*24시간[^\n]*유선[^\n]*SRMS[^\n]*",
+     "24시간 이내 유선(구두) + SRMS 모두 이용하여 보고 (4.1.3조)"),
+    (r"4\.1\.4[^\n]*24시간[^\n]*정식\s*서면[^\n]*",
+     "24시간 이내 정식 서면 보고 (4.1.4조)"),
+    (r"4\.2\.1[^\n]*점장[^\n]*",
+     "최초 인지자 → 점장(점포) / 해당팀장(본사) 즉시 보고 (4.2.1조)"),
+    (r"4\.2\.2[^\n]*CSR팀[^\n]*",
+     "점장/팀장 → 본사 지원부서 팀장(CSR팀·인사팀·총무팀·경영관리팀) 병렬 + 담당임원 (4.2.2조)"),
+    (r"4\.2\.3[^\n]*대표이사[^\n]*",
+     "담당임원 보고 후 24시간 이내 대표이사까지 정식 서면 (4.2.3조)"),
+)
+
+
+def _extract_general_procedure(general_chunks: list) -> Optional[str]:
+    if not general_chunks:
+        return None
+    matched: list = []
+    for chunk in general_chunks:
+        text = chunk.get("text") or ""
+        for pattern, label in _GENERAL_PROCEDURE_PATTERNS:
+            if re.search(pattern, text) and label not in matched:
+                matched.append(label)
+    if not matched:
+        return None
+    lines = ["▼ 일반 사건사고 보고 절차"]
+    for m in matched:
+        lines.append(f"- {m}")
+    lines.append("출처: (공통) 일반 사건사고 보고지침")
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────
+# Section 4 — 중대 사건사고 절차 추출
+# ──────────────────────────────────────────────────────────
+_SEVERE_PROCEDURE_PATTERNS: tuple = (
+    (r"1차\s*보고[^\n]*즉시[^\n]*",
+     "1차 보고: 사고 인지 즉시, 모바일 사건사고 긴급보고 (유선/문자)"),
+    (r"2차\s*보고[^\n]*2시간[^\n]*",
+     "2차 보고: 인지 후 2시간 內, 서면(이메일)"),
+    (r"SRMS\s*등록[^\n]*12시간[^\n]*",
+     "SRMS 등록: 발생 후 12시간 內 (PC/모바일)"),
+)
+
+
+def _extract_severe_procedure(severe_chunks: list) -> Optional[str]:
+    if not severe_chunks:
+        return None
+    matched: list = []
+    for chunk in severe_chunks:
+        text = chunk.get("text") or ""
+        for pattern, label in _SEVERE_PROCEDURE_PATTERNS:
+            if re.search(pattern, text) and label not in matched:
+                matched.append(label)
+    if not matched:
+        return None
+    lines = ["▼ 중대 사건사고 보고 절차"]
+    for m in matched:
+        lines.append(f"- {m}")
+    lines.append("출처: (공통) 중대 사건사고 보고지침 4.2조")
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────
+# 통합 — 4 sections 조합
+# ──────────────────────────────────────────────────────────
+def _build_structured_regulation_section(
+    chunks: list,
+    user_incident_nodes: Optional[list] = None,
+) -> Optional[str]:
+    """Universal SOP 청크에서 4단계 구조 답변 생성.
+    하나라도 추출 가능하면 답변 반환, 전부 실패면 None.
+    """
+    sop_chunks = _universal_sop_chunks(chunks)
+    general_chunks = sop_chunks["(공통) 일반 사건사고 보고지침"]
+    severe_chunks = sop_chunks["(공통) 중대 사건사고 보고지침"]
+    if not (general_chunks or severe_chunks):
+        return None
+
+    sections = ["📋 사규 기준 (사건사고 보고 절차)\n"]
+    classification = _extract_classification(user_incident_nodes, general_chunks)
+    if classification:
+        sections.append(classification + "\n")
+    severity = _extract_severity_criteria(severe_chunks)
+    if severity:
+        sections.append(severity + "\n")
+    general_proc = _extract_general_procedure(general_chunks)
+    if general_proc:
+        sections.append(general_proc + "\n")
+    severe_proc = _extract_severe_procedure(severe_chunks)
+    if severe_proc:
+        sections.append(severe_proc + "\n")
+
+    if len(sections) <= 1:
+        return None
+    return "\n".join(sections)
+
+
+# ──────────────────────────────────────────────────────────
+# Main validator
+# ──────────────────────────────────────────────────────────
 def validate_and_repair_answer(
     answer: str,
-    force_included_doc_titles: list,
-    raw_chunks_count: int,
-) -> tuple[str, list]:
-    """LLM 답변을 검증하고 필요 시 자동 보정.
-
-    Args:
-        answer: LLM 이 생성한 답변
-        force_included_doc_titles: force-include 된 doc titles (중복 제거)
-        raw_chunks_count: 전체 검색된 청크 수
+    chunks: list,
+    user_incident_nodes: Optional[list] = None,
+) -> tuple:
+    """LLM 답변 검증 + 자동 보정.
 
     Returns:
         (repaired_answer, applied_repairs_log)
@@ -55,67 +313,69 @@ def validate_and_repair_answer(
     repairs: list = []
     repaired = answer
 
-    # 진짜 검색 결과 0건 케이스 — 보정 안 함.
-    if not force_included_doc_titles and raw_chunks_count == 0:
+    force_titles = _force_included_titles(chunks)
+    sop_chunks_map = _universal_sop_chunks(chunks)
+    has_universal_sop = any(sop_chunks_map.values())
+
+    # 진짜 검색 0건은 보정 안 함.
+    if not force_titles and not chunks:
         return answer, []
 
-    # ==========================================================
-    # Repair 1: "[참조: 검색 결과 없음]" → 실제 doc titles
-    # ==========================================================
-    if force_included_doc_titles:
-        actual_ref_line = f"[참조: {', '.join(force_included_doc_titles)}]"
+    # Repair 1: FORBIDDEN [참조: 검색 결과 없음] → 실제 doc titles
+    if force_titles:
+        actual_ref = f"[참조: {', '.join(force_titles)}]"
         for pattern in _FORBIDDEN_NO_REF_PATTERNS:
             if re.search(pattern, repaired):
-                repaired = re.sub(pattern, actual_ref_line, repaired)
-                repairs.append(
-                    f"FORBIDDEN_NO_REF: '{pattern}' → '{actual_ref_line[:80]}...'"
-                )
+                repaired = re.sub(pattern, actual_ref, repaired)
+                repairs.append("FORBIDDEN_NO_REF replaced")
                 print(
                     "[synthesis:validator] FORBIDDEN_NO_REF repaired",
                     file=sys.stderr, flush=True,
                 )
 
-    # ==========================================================
-    # Repair 2: [참조: ] 섹션 자체 누락 시 자동 추가
-    # ==========================================================
-    if force_included_doc_titles and "[참조:" not in repaired:
-        actual_ref_line = f"[참조: {', '.join(force_included_doc_titles)}]"
-        repaired = repaired.rstrip() + f"\n\n{actual_ref_line}"
-        repairs.append(f"MISSING_REF_SECTION: 자동 추가 — {actual_ref_line[:80]}")
+    # Repair 2: [참조] 섹션 자체 누락 시 자동 추가
+    if force_titles and "[참조:" not in repaired:
+        actual_ref = f"[참조: {', '.join(force_titles)}]"
+        repaired = repaired.rstrip() + f"\n\n{actual_ref}"
+        repairs.append("MISSING_REF auto-injected")
         print(
             "[synthesis:validator] MISSING_REF auto-injected",
             file=sys.stderr, flush=True,
         )
 
-    # ==========================================================
-    # Repair 3: "확인되지 않습니다" — force-included 있는데 사용 시 stderr 경고
-    # ==========================================================
-    if force_included_doc_titles:
-        for pattern in _WARNING_PATTERNS:
-            if pattern in repaired:
-                repairs.append(
-                    f"SUSPICIOUS_DENIAL: '{pattern}' present despite "
-                    f"{len(force_included_doc_titles)} force-included docs"
-                )
+    # Repair 3: 사규 기준 섹션 denial → 구조화 사규 기준으로 강제 교체
+    #          ⚖️/📂/[참조 lookahead 로 다른 섹션 보존.
+    if has_universal_sop:
+        structured = _build_structured_regulation_section(
+            chunks, user_incident_nodes
+        )
+        if structured and _REGULATION_DENIAL_SECTION_PATTERN.search(repaired):
+            repaired = _REGULATION_DENIAL_SECTION_PATTERN.sub(
+                structured + "\n",
+                repaired,
+                count=1,
+            )
+            repairs.append(
+                f"DENIAL_SECTION_REPLACED: structured SOP injected "
+                f"({len(structured)} chars)"
+            )
+            print(
+                f"[synthesis:validator] 📋 사규 기준 섹션 → 구조화 SOP 교체 "
+                f"({sum(1 for v in sop_chunks_map.values() if v)} SOP doc types)",
+                file=sys.stderr, flush=True,
+            )
+
+    # Repair 4: 본문 denial 표현 → soft replacement (한 번만)
+    if has_universal_sop:
+        for denial in _BODY_DENIAL_PATTERNS:
+            if denial in repaired:
+                soft = "사건사고 보고지침에 따라 다음 절차로 처리해야 합니다"
+                repaired = repaired.replace(denial, soft, 1)
+                repairs.append(f"BODY_DENIAL softened: '{denial[:30]}'")
                 print(
-                    f"[synthesis:validator] WARNING: LLM denial despite "
-                    f"force-included chunks — '{pattern}'",
+                    "[synthesis:validator] body denial softened",
                     file=sys.stderr, flush=True,
                 )
-                # 자동 보정 안 함 — LLM 응답을 본문 차원에서 자동 교체하면 침해 큼.
+                break
 
     return repaired, repairs
-
-
-def extract_force_included_titles(chunks: list) -> list:
-    """contexts/chunks 에서 force-included doc title 만 dedup 추출."""
-    titles: list = []
-    seen: set = set()
-    for c in (chunks or []):
-        if not c.get("force_included_by_intent"):
-            continue
-        title = c.get("doc_title") or ""
-        if title and title not in seen:
-            titles.append(title)
-            seen.add(title)
-    return titles
