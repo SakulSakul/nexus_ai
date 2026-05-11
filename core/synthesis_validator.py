@@ -158,6 +158,44 @@ def _section_has_denial(section_text: str) -> bool:
     return any(kw in section_text for kw in _REGULATION_DENIAL_KEYWORDS)
 
 
+# 4단계 완성도 검사 (PR #91) — 답변 사규 기준 섹션이 모든 sub-section 갖췄는지.
+# LLM 이 "넘어짐" 등을 자율적으로 가벼운 사고로 해석해 일부 sub-section
+# prune 하는 케이스 차단.
+_REQUIRED_4SECTION_MARKERS: dict = {
+    "classification": (
+        "사건 분류",
+        "고객상해", "직원상해",
+        "인사사고",
+    ),
+    "severity_criteria": (
+        "일반 vs 중대", "중대 사건사고로 분류",
+        "사망", "중상", "5인 이상",
+    ),
+    "general_procedure": (
+        "일반 사건사고 보고 절차", "24시간", "SRMS",
+        "최초 인지자",
+    ),
+    "severe_procedure": (
+        "중대 사건사고 보고 절차",
+        "1차 보고", "2차 보고", "모바일 사건사고",
+        "2시간", "12시간",
+    ),
+}
+
+
+def _is_section_incomplete(section_text: str) -> tuple:
+    """사규 기준 섹션이 4 sub-section 모두 갖췄는지 검사.
+
+    각 sub-section 의 keyword set 중 최소 1개라도 매칭되면 그 sub-section
+    있음으로 판정. Returns (is_incomplete, missing_sections).
+    """
+    missing: list = []
+    for section_key, keywords in _REQUIRED_4SECTION_MARKERS.items():
+        if not any(kw in section_text for kw in keywords):
+            missing.append(section_key)
+    return (len(missing) > 0, missing)
+
+
 # ──────────────────────────────────────────────────────────
 # Section 1 — 분류 추출
 # ──────────────────────────────────────────────────────────
@@ -414,9 +452,10 @@ def validate_and_repair_answer(
             file=sys.stderr, flush=True,
         )
 
-    # Repair 3 (PR #87, string-based): 사규 기준 섹션 denial → 구조화 SOP 교체.
-    # regex 대신 marker scan — 유니코드 변형(⚖️ VS16) / line ending / NBSP 등에 robust.
-    # ⚖️ / 📂 / [참조 절대 미수정 (boundary marker 직전까지만 교체).
+    # Repair 3 (PR #91, v3 — strict 4-section enforcement):
+    #   universal SOP 청크 있고 사규 기준 섹션이 미완성이면 → 강제 구조화 주입.
+    #   denial pattern 유무와 무관하게 4단계 절대 보장 (LLM 자율 prune 차단).
+    #   ⚖️ / 📂 / 권장 행동 / [참조] 영역은 절대 미수정.
     if has_universal_sop:
         structured = _build_structured_regulation_section(
             chunks, user_incident_nodes
@@ -437,24 +476,33 @@ def validate_and_repair_answer(
             else:
                 start_idx, end_idx = bounds
                 section_text = repaired[start_idx:end_idx]
-                if not _section_has_denial(section_text):
+                has_denial = _section_has_denial(section_text)
+                is_incomplete, missing = _is_section_incomplete(section_text)
+                should_replace = has_denial or is_incomplete
+                if not should_replace:
                     print(
-                        f"[synthesis:validator:R3_SKIP] 사규 기준 섹션에 denial 없음 "
-                        f"(content_len={len(section_text)}). LLM 이 이미 좋은 답변 생성.",
+                        f"[synthesis:validator:R3_SKIP] 사규 기준 섹션 완성 "
+                        f"(denial=False, 4단계 모두 충족). LLM 답변 보존.",
                         file=sys.stderr, flush=True,
                     )
                 else:
+                    reason_parts: list = []
+                    if has_denial:
+                        reason_parts.append("denial")
+                    if is_incomplete:
+                        reason_parts.append(f"incomplete(missing={missing})")
+                    reason = "+".join(reason_parts)
                     before = repaired[:start_idx]
                     after = repaired[end_idx:].lstrip("\n")
                     repaired = before + structured + "\n\n" + after
                     repairs.append(
-                        f"DENIAL_SECTION_REPLACED: "
+                        f"STRUCTURED_INJECT: reason={reason} "
                         f"section_len={end_idx - start_idx} → "
                         f"structured_len={len(structured)}"
                     )
                     print(
-                        f"[synthesis:validator] DENIAL_SECTION_REPLACED "
-                        f"(string-based) — section={end_idx - start_idx}chars "
+                        f"[synthesis:validator] STRUCTURED_INJECT "
+                        f"reason={reason} — section={end_idx - start_idx}chars "
                         f"→ structured={len(structured)}chars",
                         file=sys.stderr, flush=True,
                     )
