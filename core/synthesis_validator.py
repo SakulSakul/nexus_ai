@@ -57,18 +57,25 @@ _FORBIDDEN_NO_REF_PATTERNS: tuple = (
     r"\[참조\s*:\s*해당\s*사규\s*없음\s*\]",
 )
 
-# 📋 사규 기준 섹션의 denial — 다음 카테고리 (⚖️/📂/[참조) 직전까지만 매칭.
-# 헤더와 denial 이 한 줄로 붙어 있든 줄바꿈 양쪽이든 매칭. 후처리 템플릿
-# 교체 (예: "📋 사규 기준\n해당 유형 문서가 검색되지 않았습니다.") 회복용.
-_REGULATION_DENIAL_SECTION_PATTERN = re.compile(
-    r"(📋\s*사규\s*기준[^\n]*?)"
-    r"(?:\s*\n)?"
-    r"\s*(?:[\*\-•]\s*)?"
-    r"(?:해당\s*유형\s*문서가\s*검색되지\s*않았습니다\.?|"
-    r"관련\s*사규\s*내용을\s*확인할\s*수\s*없습니다\.?|"
-    r"관련\s*사규에서\s*확인되지\s*(?:않음|않습니다|않았습니다)\.?)"
-    r"(?=\s*\n*\s*(?:⚖️|📂|\[참조|$))",
-    re.MULTILINE | re.DOTALL
+# 📋 사규 기준 섹션 boundary markers — 유니코드 변형 모두 cover.
+# regex 의존 → string-based marker scan 으로 교체 (PR #87).
+_SECTION_NEXT_BOUNDARIES: tuple = (
+    "⚖️", "⚖",                       # 징계 기준 (VS16 유무 양쪽)
+    "📂",                            # 사건사례
+    "[참조", "[참 조",
+    "권장 행동",
+    "AI 안내",
+)
+
+# Denial keywords (substring 매칭, 유연 — 띄어쓰기/맞춤법 변형 cover).
+_REGULATION_DENIAL_KEYWORDS: tuple = (
+    "해당 유형 문서가 검색되지 않았습니다",
+    "해당 유형 문서가 검색 되지 않았습니다",
+    "관련 사규 내용을 확인할 수 없습니다",
+    "관련 사규에서 확인되지 않습니다",
+    "관련 사규에서 확인되지 않았습니다",
+    "관련 사규에서 확인되지 않음",
+    "관련 사규 내용을 확인하기 어렵습니다",
 )
 
 _BODY_DENIAL_PATTERNS: tuple = (
@@ -121,6 +128,37 @@ def extract_force_included_titles(chunks: list) -> list:
 
 
 # ──────────────────────────────────────────────────────────
+# 사규 기준 섹션 string-based marker scan (PR #87)
+# ──────────────────────────────────────────────────────────
+def _find_regulation_section_bounds(answer: str) -> Optional[tuple]:
+    """📋 사규 기준 섹션의 (start_idx, end_idx) 반환.
+
+    end_idx = 다음 boundary marker (⚖️/📂/[참조/권장 행동/AI 안내) 직전 또는 답변 끝.
+    섹션 미발견 시 None.
+    """
+    start_idx = -1
+    L = len(answer)
+    for i in range(L):
+        if answer[i] == "📋" and "사규 기준" in answer[i:i + 30]:
+            start_idx = i
+            break
+    if start_idx == -1:
+        return None
+    search_start = start_idx + len("📋")
+    end_idx = L
+    for marker in _SECTION_NEXT_BOUNDARIES:
+        idx = answer.find(marker, search_start)
+        if idx != -1 and idx < end_idx:
+            end_idx = idx
+    return (start_idx, end_idx)
+
+
+def _section_has_denial(section_text: str) -> bool:
+    """섹션 본문에 denial keyword 포함 여부."""
+    return any(kw in section_text for kw in _REGULATION_DENIAL_KEYWORDS)
+
+
+# ──────────────────────────────────────────────────────────
 # Section 1 — 분류 추출
 # ──────────────────────────────────────────────────────────
 def _extract_classification(
@@ -129,15 +167,25 @@ def _extract_classification(
 ) -> Optional[str]:
     if not user_incident_nodes:
         return None
+
+    # 1차: subcategory 있는 노드 우선 (specific match — 예: '고객상해' → 인사사고/고객상해).
     major, minor = None, None
     for node in user_incident_nodes:
         if node in _INCIDENT_CATEGORY_MAP:
             m, sub = _INCIDENT_CATEGORY_MAP[node]
-            if not major:
+            if sub:
                 major = m
-            if sub and not minor:
                 minor = sub
                 break
+
+    # 2차: subcategory 없는 노드라도 매핑 있으면 major 만 사용.
+    if not major:
+        for node in user_incident_nodes:
+            if node in _INCIDENT_CATEGORY_MAP:
+                m, _sub = _INCIDENT_CATEGORY_MAP[node]
+                major = m
+                break
+
     if not major:
         return None
 
@@ -366,27 +414,50 @@ def validate_and_repair_answer(
             file=sys.stderr, flush=True,
         )
 
-    # Repair 3: 사규 기준 섹션 denial → 구조화 사규 기준으로 강제 교체
-    #          ⚖️/📂/[참조 lookahead 로 다른 섹션 보존.
+    # Repair 3 (PR #87, string-based): 사규 기준 섹션 denial → 구조화 SOP 교체.
+    # regex 대신 marker scan — 유니코드 변형(⚖️ VS16) / line ending / NBSP 등에 robust.
+    # ⚖️ / 📂 / [참조 절대 미수정 (boundary marker 직전까지만 교체).
     if has_universal_sop:
         structured = _build_structured_regulation_section(
             chunks, user_incident_nodes
         )
-        if structured and _REGULATION_DENIAL_SECTION_PATTERN.search(repaired):
-            repaired = _REGULATION_DENIAL_SECTION_PATTERN.sub(
-                structured + "\n",
-                repaired,
-                count=1,
-            )
-            repairs.append(
-                f"DENIAL_SECTION_REPLACED: structured SOP injected "
-                f"({len(structured)} chars)"
-            )
+        if not structured:
             print(
-                f"[synthesis:validator] 📋 사규 기준 섹션 → 구조화 SOP 교체 "
-                f"({sum(1 for v in sop_chunks_map.values() if v)} SOP doc types)",
+                "[synthesis:validator:R3_SKIP] structured_section 빌드 실패 "
+                "(universal SOP 청크에서 4단계 추출 불가)",
                 file=sys.stderr, flush=True,
             )
+        else:
+            bounds = _find_regulation_section_bounds(repaired)
+            if not bounds:
+                print(
+                    "[synthesis:validator:R3_SKIP] 📋 사규 기준 섹션 미발견 in answer",
+                    file=sys.stderr, flush=True,
+                )
+            else:
+                start_idx, end_idx = bounds
+                section_text = repaired[start_idx:end_idx]
+                if not _section_has_denial(section_text):
+                    print(
+                        f"[synthesis:validator:R3_SKIP] 사규 기준 섹션에 denial 없음 "
+                        f"(content_len={len(section_text)}). LLM 이 이미 좋은 답변 생성.",
+                        file=sys.stderr, flush=True,
+                    )
+                else:
+                    before = repaired[:start_idx]
+                    after = repaired[end_idx:].lstrip("\n")
+                    repaired = before + structured + "\n\n" + after
+                    repairs.append(
+                        f"DENIAL_SECTION_REPLACED: "
+                        f"section_len={end_idx - start_idx} → "
+                        f"structured_len={len(structured)}"
+                    )
+                    print(
+                        f"[synthesis:validator] DENIAL_SECTION_REPLACED "
+                        f"(string-based) — section={end_idx - start_idx}chars "
+                        f"→ structured={len(structured)}chars",
+                        file=sys.stderr, flush=True,
+                    )
 
     # Repair 4: 본문 denial 표현 → soft replacement (한 번만)
     if has_universal_sop:
