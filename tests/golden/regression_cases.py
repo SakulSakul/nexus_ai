@@ -26,4 +26,8 @@ REGRESSION_CASES: list = [
     # === store_incident ===
     {"category": "store_incident", "query": "매장에서 화재 발생"},
     {"category": "store_incident", "query": "어린이가 실종됐어요"},
+
+    # === embezzlement (Hotfix — 실 사용자 query 발견) ===
+    {"category": "embezzlement", "query": "회사 돈을 훔치면 어떻게 됨?"},
+    {"category": "embezzlement", "query": "직원이 회사 자금 횡령했어요"},
 ]

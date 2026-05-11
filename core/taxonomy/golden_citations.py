@@ -278,6 +278,44 @@ INCIDENT_GOLDEN_CITATIONS: dict[str, dict[str, Any]] = {
             "▼ (해당 시) 중대 사건사고 판정",
         ],
     },
+
+    # === Hotfix: 횡령/배임/금전사고 (실 사용자 query 발견) ===
+    "embezzlement": {
+        "description": "횡령·배임·금전사고·절도 (회사 자금/자산 비위행위)",
+        "matching_incident_nodes": ["횡령", "배임", "금전사고", "절도", "비위행위"],
+        "required_docs": {
+            "(공통) 임직원 징계기준": {
+                "severity": "REQUIRED",
+                "required_clauses": [
+                    {"clause": "횡령/절도 행위 정의", "topic": "회사 자금/자산 비위행위 정의", "severity": "HIGH"},
+                    {"clause": "징계 수위", "topic": "횡령 금액별 징계 (감봉/정직/해임)", "severity": "HIGH"},
+                    {"clause": "형사고발 가능성", "topic": "형사 처벌 동시 진행 여부", "severity": "MEDIUM"},
+                    {"clause": "인사위원회 회부", "topic": "징계 절차 (인사위원회 심의)", "severity": "MEDIUM"},
+                ],
+            },
+            "(공통) 일반 사건사고 보고지침": {
+                "severity": "REQUIRED",
+                "required_clauses": [
+                    {"clause": "3.1조 인사사고/비위", "topic": "비위행위 사건사고 분류", "severity": "HIGH"},
+                    {"clause": "4.1.2조", "topic": "최초 인지자 즉시 보고", "severity": "MEDIUM"},
+                    {"clause": "4.2.1조", "topic": "CSR팀장 + 점장/팀장 즉시 보고", "severity": "MEDIUM"},
+                ],
+            },
+            "(공통) 중대 사건사고 보고지침": {
+                "severity": "OPTIONAL",
+                "required_clauses": [
+                    {"clause": "중대 판정", "topic": "고액 횡령 등 중대 사건사고 가능", "severity": "MEDIUM"},
+                ],
+            },
+        },
+        "expected_sections": [
+            "▼ 사건 분류 (횡령/배임/금전사고)",
+            "▼ 징계 수위 (감봉/정직/해임)",
+            "▼ 형사고발 가능성",
+            "▼ 인사위원회 회부 절차",
+            "▼ 보고 절차 (일반 사건사고)",
+        ],
+    },
 }
 
 
