@@ -1930,6 +1930,7 @@ def _tab_search_compare(sb):
     from core.nexus_query_rewriter import (
         rewrite_query_for_retrieval,
         nexus_build_keyword_tsquery,
+        nexus_classify_to_incident_nodes,
         REWRITE_MODEL_INFO,
     )
 
@@ -2027,6 +2028,14 @@ def _tab_search_compare(sb):
         st.markdown(
             f"**tsquery passed to RPC**: `{nexus_build_keyword_tsquery(rewritten, original=q)}`"
         )
+        # Incident-aware rerank — 사용자 질문에서 분류된 노드 노출.
+        _classified = sorted(
+            set(nexus_classify_to_incident_nodes(q or ""))
+            | set(nexus_classify_to_incident_nodes(rewritten or ""))
+        )
+        st.markdown(
+            f"**User incident nodes**: `{_classified or '(없음)'}`"
+        )
         if new_err:
             st.error(f"실패: {new_err}")
         elif not new_rows:
@@ -2038,8 +2047,12 @@ def _tab_search_compare(sb):
                         f"**{i}. {r.get('doc_title') or '(제목없음)'}** · "
                         f"`{r.get('article_no') or '-'}`"
                     )
+                    boost_caption = ""
+                    if r.get("incident_boost_applied"):
+                        matched = ", ".join(r.get("matched_incident_nodes") or [])
+                        boost_caption = f" · ⚡ +0.15 (매칭: {matched})"
                     st.caption(
-                        f"rrf_score = {float(r.get('score') or 0.0):.4f}"
+                        f"rrf_score = {float(r.get('score') or 0.0):.4f}{boost_caption}"
                     )
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
