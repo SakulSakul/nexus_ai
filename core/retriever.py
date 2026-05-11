@@ -14,6 +14,7 @@ DF COMPASS Tier 1+2 (2026-05-11):
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from .config import settings
@@ -48,7 +49,21 @@ EMERGENCY_FORCE_INCLUDE_BOOST: float = 0.40
 # Intent-matched docs force-include — user_incident_nodes 와 meta.incident_nodes
 # 가 교집합 있는 모든 active docs 의 모든 청크를 retrieval pool 에 강제 포함.
 # 4개 동등 phrasing 이 동일 doc set 을 보장 (결정론적 retrieval).
-FORCE_INCLUDE_DOC_BOOST: float = 0.20
+# v2: 0.20 → 0.50 (top-5 진입 확실 보장).
+FORCE_INCLUDE_DOC_BOOST: float = 0.50
+
+# Layer 3 (hardcoded title-based whitelist) — RPC + direct table 둘 다 실패 시
+# 최후 안전망. 운영 중 신규 doc 추가되면 본 리스트도 업데이트 (단, Layer 1/2
+# 정상 동작 시에는 사용 안 됨).
+FALLBACK_INCIDENT_DOC_TITLES: tuple = (
+    "AEO 출입통제",
+    "매장 안전보건관리 지침",
+    "안전보건관리규정",
+    "일반 사건사고 보고지침",
+    "중대 사건사고 보고지침",
+    "중대재해 대응 지침",
+    "사건, 부적합 시정조치 지침",
+)
 
 
 def _normalize_v2_row(row: dict) -> dict:
@@ -79,6 +94,7 @@ def _normalize_v2_row(row: dict) -> dict:
         "matched_emergency_keywords": row.get("matched_emergency_keywords") or [],
         "force_included": bool(row.get("force_included")),
         "force_included_by_intent": bool(row.get("force_included_by_intent")),
+        "force_include_source": row.get("force_include_source") or "",
         "chunk_incident_boost_applied": bool(row.get("chunk_incident_boost_applied")),
         "matched_chunk_incident_nodes": row.get("matched_chunk_incident_nodes") or [],
     }
@@ -130,53 +146,170 @@ def hybrid_search(
             nexus_classify_to_incident_nodes(retrieval_query_text or "")
         )
 
-        # 1.4) Track C — Intent-matched docs guaranteed inclusion.
-        # user_incident_nodes 와 meta.incident_nodes 교집합 있는 모든 active
-        # docs 의 청크를 retrieval pool 에 강제 포함. 4개 동등 phrasing 이
-        # 같은 doc set 을 받도록 결정론적 retrieval 보장.
-        intent_matched_doc_ids: list = []
+        # 1.4) Track C v2 — Triple-layer fallback force-include.
+        # Layer 1: SQL RPC (intersect SQL-side, 가장 신뢰)
+        # Layer 2: Direct table query (RPC 미배포/실패 시)
+        # Layer 3: Hardcoded title-based whitelist (둘 다 실패 시 최후 안전망)
         if user_incident_nodes:
+            nodes_list = sorted(user_incident_nodes)
+            force_chunks_raw: list = []
+            force_include_source: str = "none"
+            _doc_meta_enrich: dict = {}
+
+            # ── Layer 1: SQL RPC ─────────────────────────────
             try:
-                docs_full_resp = (
-                    supabase.table("nexus_documents")
-                    .select("id, title, doc_kind, meta")
-                    .eq("status", "active")
-                    .execute()
+                force_resp = supabase.rpc(
+                    "nexus_force_include_chunks_by_incident_nodes",
+                    {"p_nodes": nodes_list},
+                ).execute()
+                force_chunks_raw = force_resp.data or []
+                if force_chunks_raw:
+                    force_include_source = "rpc"
+                print(
+                    f"[retriever:force_include:L1_RPC] nodes={nodes_list} "
+                    f"returned={len(force_chunks_raw)}",
+                    file=sys.stderr, flush=True,
                 )
-                docs_full_rows = docs_full_resp.data or []
-                _intent_doc_info: dict = {}
-                for d in docs_full_rows:
-                    doc_nodes = set((d.get("meta") or {}).get("incident_nodes") or [])
-                    if doc_nodes & user_incident_nodes:
-                        intent_matched_doc_ids.append(d["id"])
-                        _intent_doc_info[d["id"]] = d
-                if intent_matched_doc_ids:
-                    chunks_resp = (
-                        supabase.table("nexus_chunks")
-                        .select("id, document_id, chunk_idx, article_no, text, categories, chunk_incident_nodes")
-                        .in_("document_id", intent_matched_doc_ids)
+            except Exception as e:
+                print(
+                    f"[retriever:force_include:L1_RPC] FAILED: "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr, flush=True,
+                )
+
+            # ── Layer 2: Direct table query ─────────────────
+            if not force_chunks_raw:
+                try:
+                    docs_resp = (
+                        supabase.table("nexus_documents")
+                        .select("id, title, doc_kind, meta")
+                        .eq("status", "active")
                         .execute()
                     )
-                    existing_ids = {c.get("id") for c in raw_chunks if c.get("id")}
-                    for fc in (chunks_resp.data or []):
-                        if fc.get("id") in existing_ids:
+                    all_docs = docs_resp.data or []
+                    print(
+                        f"[retriever:force_include:L2_DIRECT] "
+                        f"active_docs_fetched={len(all_docs)}",
+                        file=sys.stderr, flush=True,
+                    )
+                    matched_doc_ids: list = []
+                    for doc in all_docs:
+                        doc_meta = doc.get("meta")
+                        if isinstance(doc_meta, str):
+                            try:
+                                import json as _json
+                                doc_meta = _json.loads(doc_meta)
+                            except Exception:
+                                continue
+                        if not isinstance(doc_meta, dict):
                             continue
-                        d = _intent_doc_info.get(fc.get("document_id"), {}) or {}
-                        raw_chunks.append({
-                            "id": fc.get("id"),
-                            "document_id": fc.get("document_id"),
-                            "doc_title": d.get("title"),
-                            "doc_kind": d.get("doc_kind"),
-                            "article_no": fc.get("article_no"),
-                            "text": fc.get("text") or "",
-                            "categories": fc.get("categories") or [],
-                            "chunk_incident_nodes": fc.get("chunk_incident_nodes") or [],
-                            "rrf_score": 0.0,
-                            "force_included_by_intent": True,
-                        })
-            except Exception:
-                # force-include 실패는 검색 흐름을 막지 않는다.
-                pass
+                        doc_nodes_raw = doc_meta.get("incident_nodes") or []
+                        if not isinstance(doc_nodes_raw, list):
+                            continue
+                        if set(doc_nodes_raw) & user_incident_nodes:
+                            matched_doc_ids.append(doc["id"])
+                            _doc_meta_enrich[doc["id"]] = doc
+                    print(
+                        f"[retriever:force_include:L2_DIRECT] "
+                        f"matched_doc_ids={len(matched_doc_ids)}",
+                        file=sys.stderr, flush=True,
+                    )
+                    if matched_doc_ids:
+                        chunks_resp = (
+                            supabase.table("nexus_chunks")
+                            .select("id, document_id, chunk_idx, article_no, text")
+                            .in_("document_id", matched_doc_ids)
+                            .execute()
+                        )
+                        force_chunks_raw = chunks_resp.data or []
+                        if force_chunks_raw:
+                            force_include_source = "direct_table"
+                        print(
+                            f"[retriever:force_include:L2_DIRECT] "
+                            f"chunks_fetched={len(force_chunks_raw)}",
+                            file=sys.stderr, flush=True,
+                        )
+                except Exception as e:
+                    print(
+                        f"[retriever:force_include:L2_DIRECT] FAILED: "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr, flush=True,
+                    )
+
+            # ── Layer 3: Hardcoded title whitelist ──────────
+            if not force_chunks_raw:
+                try:
+                    print(
+                        "[retriever:force_include:L3_HARDCODED] "
+                        "entering last-resort fallback",
+                        file=sys.stderr, flush=True,
+                    )
+                    docs_resp = (
+                        supabase.table("nexus_documents")
+                        .select("id, title, doc_kind")
+                        .eq("status", "active")
+                        .execute()
+                    )
+                    all_docs = docs_resp.data or []
+                    matched_doc_ids = []
+                    for doc in all_docs:
+                        title = doc.get("title") or ""
+                        for known in FALLBACK_INCIDENT_DOC_TITLES:
+                            if known in title:
+                                matched_doc_ids.append(doc["id"])
+                                _doc_meta_enrich[doc["id"]] = doc
+                                break
+                    print(
+                        f"[retriever:force_include:L3_HARDCODED] "
+                        f"matched_via_title={len(matched_doc_ids)}",
+                        file=sys.stderr, flush=True,
+                    )
+                    if matched_doc_ids:
+                        chunks_resp = (
+                            supabase.table("nexus_chunks")
+                            .select("id, document_id, chunk_idx, article_no, text")
+                            .in_("document_id", matched_doc_ids)
+                            .execute()
+                        )
+                        force_chunks_raw = chunks_resp.data or []
+                        if force_chunks_raw:
+                            force_include_source = "hardcoded_whitelist"
+                except Exception as e:
+                    print(
+                        f"[retriever:force_include:L3_HARDCODED] FAILED: "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr, flush=True,
+                    )
+
+            # ── Union into raw_chunks (dedup by chunk id) ───
+            existing_chunk_ids = {c.get("id") for c in raw_chunks if c.get("id")}
+            added_count = 0
+            skipped_count = 0
+            for fc in force_chunks_raw:
+                if fc.get("id") in existing_chunk_ids:
+                    skipped_count += 1
+                    continue
+                _doc = _doc_meta_enrich.get(fc.get("document_id"), {}) or {}
+                raw_chunks.append({
+                    "id": fc.get("id"),
+                    "document_id": fc.get("document_id"),
+                    "doc_title": fc.get("doc_title") or _doc.get("title"),
+                    "doc_kind": _doc.get("doc_kind"),
+                    "article_no": fc.get("article_no"),
+                    "text": fc.get("text") or "",
+                    "categories": fc.get("categories") or [],
+                    "chunk_incident_nodes": fc.get("chunk_incident_nodes") or [],
+                    "rrf_score": 0.0,
+                    "force_included_by_intent": True,
+                    "force_include_source": force_include_source,
+                })
+                added_count += 1
+            print(
+                f"[retriever:force_include:FINAL] source={force_include_source} "
+                f"total_force_chunks={len(force_chunks_raw)} "
+                f"added={added_count} skipped_duplicates={skipped_count}",
+                file=sys.stderr, flush=True,
+            )
 
         # 1.5) Force-include — '응급대응' 의도일 때 chunk_incident_nodes 에
         # '응급대응' 태그된 청크를 vector/keyword pool 미포함이어도 강제 합류.
@@ -292,29 +425,61 @@ def hybrid_search(
             if chunk.get("force_included_by_intent"):
                 chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + FORCE_INCLUDE_DOC_BOOST
 
-        # 4) boost 후 재정렬 + doc-level diversity cap (동일 doc 최대 N개).
+        # 4) boost 후 재정렬 + diversity cap override (force-include 우선).
         raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
         MAX_CHUNKS_PER_DOC = 2
         TOP_K = 5
-        final_rows: list = []
-        doc_count: dict = {}
+
+        # 4-1) Force-included 매칭 doc 별로 최소 1청크 보장 (top-score 청크).
+        forced_doc_ids_seen: set = set()
+        guaranteed_chunks: list = []
         for chunk in raw_chunks:
-            doc_id = chunk.get("document_id") or ""
-            if doc_count.get(doc_id, 0) >= MAX_CHUNKS_PER_DOC:
+            if not chunk.get("force_included_by_intent"):
                 continue
-            final_rows.append(chunk)
-            doc_count[doc_id] = doc_count.get(doc_id, 0) + 1
+            doc_id = chunk.get("document_id") or ""
+            if doc_id in forced_doc_ids_seen:
+                continue
+            guaranteed_chunks.append(chunk)
+            forced_doc_ids_seen.add(doc_id)
+
+        # 4-2) guaranteed 청크 우선 등록 (단, TOP_K-1 까지만 — 마지막 slot 일반용).
+        GUARANTEED_RESERVE = max(0, TOP_K - 1)
+        final_rows: list = list(guaranteed_chunks[:GUARANTEED_RESERVE])
+        final_doc_count: dict = {}
+        for c in final_rows:
+            doc_id = c.get("document_id") or ""
+            final_doc_count[doc_id] = final_doc_count.get(doc_id, 0) + 1
+        final_chunk_ids: set = {c.get("id") for c in final_rows}
+
+        # 4-3) 나머지 slot 을 rrf_score 순 + diversity cap.
+        for chunk in raw_chunks:
             if len(final_rows) >= TOP_K:
                 break
-        # 부족하면 cap 무시하고 채움 (안전장치 — 단일 doc 만 hit 한 케이스).
-        if len(final_rows) < TOP_K:
-            seen_ids = {c.get("id") for c in final_rows}
-            for chunk in raw_chunks:
-                if chunk.get("id") in seen_ids:
-                    continue
-                final_rows.append(chunk)
-                if len(final_rows) >= TOP_K:
-                    break
+            if chunk.get("id") in final_chunk_ids:
+                continue
+            doc_id = chunk.get("document_id") or ""
+            if final_doc_count.get(doc_id, 0) >= MAX_CHUNKS_PER_DOC:
+                continue
+            final_rows.append(chunk)
+            final_doc_count[doc_id] = final_doc_count.get(doc_id, 0) + 1
+            final_chunk_ids.add(chunk.get("id"))
+
+        # 4-4) Safety — 여전히 부족하면 cap 무시 채움.
+        for chunk in raw_chunks:
+            if len(final_rows) >= TOP_K:
+                break
+            if chunk.get("id") in final_chunk_ids:
+                continue
+            final_rows.append(chunk)
+            final_chunk_ids.add(chunk.get("id"))
+
+        print(
+            f"[retriever:top5_selection] "
+            f"guaranteed_force_chunks={len(guaranteed_chunks[:GUARANTEED_RESERVE])} "
+            f"total_final={len(final_rows)} "
+            f"doc_distribution={dict(final_doc_count)}",
+            file=sys.stderr, flush=True,
+        )
         return [_normalize_v2_row(r) for r in final_rows]
 
     # ── 기존 경로 (rollback safety net) ──────────────────────────
