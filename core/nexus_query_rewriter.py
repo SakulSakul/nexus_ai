@@ -386,10 +386,15 @@ def _nexus_expand_with_incident_taxonomy(tokens: list) -> list:
     return extra
 
 
-def nexus_build_keyword_tsquery(text: str) -> str:
+def nexus_build_keyword_tsquery(text: str, original: str | None = None) -> str:
     """자연어/재작성 쿼리를 prefix tsquery 문자열로 변환.
 
     예: '고객이 매장에 처리하나요' -> '고객:* | 매장:* | 처리:*'
+
+    original: 사용자 원문(rewritten 적용 전). 전달 시 원문 토큰도 같이
+    dict 매핑에 노출되어, Gemini rewriter 가 운영 동사("넘어졌어"/"다쳤")
+    를 abstract 키워드로 치환해도 dict expansion 이 트리거된다.
+    None 이면 기존 동작 (text 만 사용) — 100% 후방 호환.
     """
     if not text:
         return ""
@@ -402,6 +407,16 @@ def nexus_build_keyword_tsquery(text: str) -> str:
                 break
         if len(tok) >= 2:
             cleaned.append(tok)
+    if original:
+        # 원본 자연어의 토큰도 같이 dict 매핑에 노출
+        original_tokens = re.findall(r"[가-힣A-Za-z0-9]+", original)
+        for tok in original_tokens:
+            for p in _KOREAN_PARTICLES:
+                if tok.endswith(p) and len(tok) > len(p) + 1:
+                    tok = tok[: -len(p)]
+                    break
+            if len(tok) >= 2:
+                cleaned.append(tok)
     seen: set[str] = set()
     uniq: list[str] = []
     for t in cleaned:
