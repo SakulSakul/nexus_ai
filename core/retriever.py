@@ -145,91 +145,61 @@ def _ensure_universal_sop_completeness(
     top_k_chunks: list,
     all_force_chunks: list,
 ) -> list:
-    """Universal SOP 도큐먼트의 chunk 0 + chunk 1 모두 final 결과에 포함되도록 보강.
+    """Universal SOP 도큐먼트의 모든 chunks 를 final 결과에 포함.
 
-    PR #89 진단 추가:
-    - 항상 DEBUG 로그 출력 (raw_chunks_count / first_keys / first_doc_title /
-      first_chunk_idx) → RPC 가 doc_title / chunk_idx 반환하는지 확인
-    - 키 fallback: doc_title 없으면 title 시도, chunk_idx 없으면 다른 id 시도
-    - matched / skipped 분류별 카운트 stderr 출력
+    근거 (PR #89 DEBUG): Layer 1 RPC 가 chunk_idx 미반환 → chunk index
+    기반 필터 불가. Universal SOP 도큐먼트는 작은 doc (일반 4 chunks /
+    중대 3 chunks) 이라 모두 포함해도 LLM 컨텍스트 부담 minimal.
+    효과: 4 phrasing 동일 chunk set → 동일 답변 (신뢰성 4/4).
+
+    UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES 상수는 호환성 유지 위해 잔존 (미사용).
     """
+    if not all_force_chunks:
+        print(
+            "[retriever:universal_sop:enrichment] SKIP empty raw_chunks",
+            file=sys.stderr, flush=True,
+        )
+        return list(top_k_chunks)
+
     out = list(top_k_chunks)
-
-    # ── 진단 — 매 호출마다 출력 (universal_sop:enrichment 가 silent 인 원인 추적) ──
-    first = (all_force_chunks or [None])[0] if all_force_chunks else None
-    first_keys = sorted(first.keys()) if isinstance(first, dict) else []
-    first_doc_title = (first or {}).get("doc_title") if isinstance(first, dict) else None
-    first_title_alt = (first or {}).get("title") if isinstance(first, dict) else None
-    first_chunk_idx = (first or {}).get("chunk_idx") if isinstance(first, dict) else None
-    print(
-        f"[retriever:universal_sop:enrichment:DEBUG] "
-        f"raw_chunks_count={len(all_force_chunks or [])} "
-        f"top_k_count={len(top_k_chunks or [])} "
-        f"first_keys={first_keys} "
-        f"first_doc_title={first_doc_title!r} "
-        f"first_title_alt={first_title_alt!r} "
-        f"first_chunk_idx={first_chunk_idx!r}",
-        file=sys.stderr, flush=True,
-    )
-
-    def _doc_title_of(c: dict) -> str:
-        # doc_title / title fallback
-        return (c.get("doc_title") or c.get("title") or "") if isinstance(c, dict) else ""
-
-    def _chunk_idx_of(c: dict):
-        if not isinstance(c, dict):
-            return None
-        idx = c.get("chunk_idx")
-        if idx is not None:
-            return idx
-        # 라이브 데이터에서 chunk_idx 누락 시 fallback
-        return c.get("idx") or c.get("index")
-
-    existing_keys: set = set()
+    existing_chunk_ids: set = set()
     for c in out:
         if not isinstance(c, dict):
             continue
-        existing_keys.add((c.get("document_id"), _chunk_idx_of(c)))
+        cid = c.get("id") or c.get("chunk_id")
+        if cid:
+            existing_chunk_ids.add(cid)
 
     added_count = 0
-    skipped_not_sop_title = 0
-    skipped_idx_mismatch = 0
-    skipped_already_in = 0
-    seen_universal_pairs: list = []
+    sop_doc_counts: dict = {}
 
-    for chunk in (all_force_chunks or []):
+    for chunk in all_force_chunks:
         if not isinstance(chunk, dict):
             continue
-        doc_title = _doc_title_of(chunk)
-        chunk_idx = _chunk_idx_of(chunk)
-        if doc_title in UNIVERSAL_INCIDENT_SOP_TITLES:
-            seen_universal_pairs.append((doc_title, chunk_idx))
+        doc_title = (
+            chunk.get("doc_title")
+            or chunk.get("title")
+            or chunk.get("document_title")
+            or ""
+        )
         if doc_title not in UNIVERSAL_INCIDENT_SOP_TITLES:
-            skipped_not_sop_title += 1
             continue
-        if chunk_idx not in UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES:
-            skipped_idx_mismatch += 1
-            continue
-        key = (chunk.get("document_id"), chunk_idx)
-        if key in existing_keys:
-            skipped_already_in += 1
+        chunk_id = chunk.get("id") or chunk.get("chunk_id")
+        if chunk_id and chunk_id in existing_chunk_ids:
             continue
         enriched = dict(chunk)
-        enriched["doc_title"] = doc_title  # fallback 적용 결과를 명시 저장
-        enriched["chunk_idx"] = chunk_idx
         enriched["enrichment"] = "universal_sop_completeness"
         enriched["is_universal_sop"] = True
+        enriched["doc_title"] = doc_title
         out.append(enriched)
-        existing_keys.add(key)
+        if chunk_id:
+            existing_chunk_ids.add(chunk_id)
         added_count += 1
+        sop_doc_counts[doc_title] = sop_doc_counts.get(doc_title, 0) + 1
 
     print(
         f"[retriever:universal_sop:enrichment] "
-        f"added={added_count} "
-        f"skipped_not_sop_title={skipped_not_sop_title} "
-        f"skipped_idx_mismatch={skipped_idx_mismatch} "
-        f"skipped_already_in={skipped_already_in} "
-        f"seen_universal_pairs={seen_universal_pairs[:6]} "
+        f"added={added_count} per_doc={sop_doc_counts} "
         f"final_chunks={len(out)}",
         file=sys.stderr, flush=True,
     )
