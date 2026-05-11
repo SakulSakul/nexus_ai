@@ -1971,8 +1971,9 @@ def _tab_search_compare(sb):
     new_rows: list[dict] = []
     new_ms = 0.0
     rewritten = ""
+    raw_response = ""
     try:
-        rewritten = rewrite_query_for_retrieval(q)
+        rewritten, raw_response = rewrite_query_for_retrieval(q, return_debug=True)
         _retriever.USE_HYBRID_SEARCH = True
         t0 = _time.perf_counter()
         new_rows = _retriever.hybrid_search(
@@ -2009,7 +2010,13 @@ def _tab_search_compare(sb):
     with col_new:
         st.markdown(f"#### New (Tier 1+2 — {new_ms:.0f} ms)")
         st.caption("retrieval_mode = `hybrid`")
-        st.markdown(f"**rewritten_query**: `{rewritten}`")
+        # 회귀 디버깅용: raw response 와 후처리 결과를 같이 노출.
+        # - raw 가 1글자 → Gemini 호출/프롬프트 문제
+        # - raw 가 정상인데 cleaned 가 1글자 → 후처리 문제
+        # - 둘 다 정상 → 수정 완료
+        st.markdown(f"**Gemini raw response** (앞 500자):")
+        st.code((raw_response or "")[:500] or "(empty)", language="text")
+        st.markdown(f"**rewritten_query (postprocessed)**: `{rewritten}`")
         if new_err:
             st.error(f"실패: {new_err}")
         elif not new_rows:

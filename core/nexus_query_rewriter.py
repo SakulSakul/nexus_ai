@@ -13,8 +13,7 @@
 
 from __future__ import annotations
 
-import os
-from functools import lru_cache
+import functools
 
 from .config import get_secret
 
@@ -48,32 +47,13 @@ _PROMPT_TEMPLATE = """당신은 사규 검색을 돕는 쿼리 재작성 보조�
 답:"""
 
 
-def _postprocess(raw: str) -> str:
-    s = (raw or "").replace("\n", " ").replace("\r", " ")
-    s = s.replace('"', "").replace("'", "").replace("`", "")
-    s = s.strip().strip("·,.;:!?")
-    s = " ".join(s.split())
-    if len(s) > _MAX_LEN:
-        s = s[:_MAX_LEN].rstrip()
-    return s
-
-
-@lru_cache(maxsize=512)
-def rewrite_query_for_retrieval(user_question: str) -> str:
-    """사규 검색용 키워드 확장 문자열 반환.
-
-    실패 시 원문 user_question 을 그대로 반환 (절대 raise 하지 않음).
-    동일 질문은 캐시 적중. retriever 가 매 검색 호출 직전에 사용.
-    """
-    q = (user_question or "").strip()
-    if not q:
-        return user_question or ""
-
+def _call_gemini_for_rewrite(user_question: str) -> str:
+    """Gemini 호출 — raw 응답 텍스트 반환. 실패 시 빈 문자열."""
     try:
         # 신규 클라이언트 금지 — 기존 embedder 의 _client 재사용.
         from .embedder import _client
         cli = _client()
-        prompt = _PROMPT_TEMPLATE.format(user_question=q)
+        prompt = _PROMPT_TEMPLATE.format(user_question=user_question)
         res = cli.models.generate_content(
             model=_REWRITE_MODEL,
             contents=prompt,
@@ -88,8 +68,56 @@ def rewrite_query_for_retrieval(user_question: str) -> str:
             if cands:
                 parts = getattr(getattr(cands[0], "content", None), "parts", None) or []
                 text = "".join(getattr(p, "text", "") or "" for p in parts)
-        out = _postprocess(text or "")
-        return out or q
+        return text or ""
     except Exception:
-        # 절대 retrieval 흐름을 막지 않는다.
-        return q
+        return ""
+
+
+def _postprocess_rewritten(raw: str, fallback: str) -> str:
+    """
+    Gemini 원문 응답 -> 검색용 키워드 문자열로 정규화.
+    실패 시 원문 user_question(fallback) 반환.
+    """
+    if not raw:
+        return fallback
+    try:
+        text = raw.strip()
+        # 접두 라벨 제거 (모델이 가끔 붙임)
+        for prefix in ("답:", "답 :", "답변:", "Answer:", "A:"):
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+                break
+        # 첫 줄만 사용 (모델이 가끔 여러 줄을 출력)
+        text = text.splitlines()[0] if text else ""
+        # 양쪽 따옴표 제거
+        text = text.strip().strip('"').strip("'").strip("「").strip("」").strip()
+        # 글자 단위 60자 컷 (바이트 아님)
+        if len(text) > 60:
+            text = text[:60]
+        # 빈 문자열이면 원문 폴백
+        if not text or len(text) < 2:
+            return fallback
+        return text
+    except Exception:
+        return fallback
+
+
+@functools.lru_cache(maxsize=512)
+def rewrite_query_for_retrieval(user_question: str, return_debug: bool = False):
+    """사규 검색용 키워드 확장 문자열 반환.
+
+    실패 시 원문 user_question 을 그대로 반환 (절대 raise 하지 않음).
+    동일 질문은 캐시 적중. retriever 가 매 검색 호출 직전에 사용.
+
+    return_debug=True 면 (cleaned, raw_response) 튜플 반환 — admin 디버그 패널
+    전용. 라이브 검색 경로(core/retriever.py)는 절대 본 인자를 넘기지 말 것.
+    """
+    if not user_question or not user_question.strip():
+        result = user_question or ""
+        return (result, "") if return_debug else result
+    try:
+        raw = _call_gemini_for_rewrite(user_question)
+    except Exception:
+        raw = ""
+    cleaned = _postprocess_rewritten(raw, fallback=user_question)
+    return (cleaned, raw) if return_debug else cleaned
