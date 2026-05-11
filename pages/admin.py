@@ -2059,6 +2059,15 @@ def _tab_search_compare(sb):
                         st.caption(
                             f"🚑 +{_retriever.EMERGENCY_CHUNK_BOOST:.2f} 응급키워드 매칭: {kws}"
                         )
+                    if r.get("chunk_incident_boost_applied"):
+                        nodes = ", ".join(r.get("matched_chunk_incident_nodes") or [])
+                        st.caption(
+                            f"⚡⚡ chunk-level +{_retriever.INCIDENT_BOOST:.2f} (매칭: {nodes})"
+                        )
+                    if r.get("force_included"):
+                        st.caption(
+                            f"🔒 Force-included +{_retriever.EMERGENCY_FORCE_INCLUDE_BOOST:.2f} (chunk-level incident node 매칭)"
+                        )
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
 

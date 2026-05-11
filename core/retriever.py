@@ -41,6 +41,10 @@ EMERGENCY_KEYWORDS: tuple = (
 )
 EMERGENCY_CHUNK_BOOST: float = 0.10
 
+# Force-included 청크는 base rrf_score=0 이라 normal 청크와 경쟁 불가 →
+# top-5 진입 보장 위해 별도의 큰 가산.
+EMERGENCY_FORCE_INCLUDE_BOOST: float = 0.40
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -68,6 +72,9 @@ def _normalize_v2_row(row: dict) -> dict:
         "matched_incident_nodes": row.get("matched_incident_nodes") or [],
         "emergency_chunk_boost_applied": bool(row.get("emergency_chunk_boost_applied")),
         "matched_emergency_keywords": row.get("matched_emergency_keywords") or [],
+        "force_included": bool(row.get("force_included")),
+        "chunk_incident_boost_applied": bool(row.get("chunk_incident_boost_applied")),
+        "matched_chunk_incident_nodes": row.get("matched_chunk_incident_nodes") or [],
     }
 
 
@@ -117,6 +124,56 @@ def hybrid_search(
             nexus_classify_to_incident_nodes(retrieval_query_text or "")
         )
 
+        # 1.5) Force-include — '응급대응' 의도일 때 chunk_incident_nodes 에
+        # '응급대응' 태그된 청크를 vector/keyword pool 미포함이어도 강제 합류.
+        # AEO 출입통제 위기상황 대응표 같은 청크 보장. doc title/kind/categories
+        # 는 nexus_documents 별도 조회로 enrich.
+        if "응급대응" in user_incident_nodes:
+            try:
+                raw_chunk_ids = {c.get("id") for c in raw_chunks if c.get("id")}
+                em_resp = (
+                    supabase.table("nexus_chunks")
+                    .select("id, document_id, chunk_idx, article_no, text, categories, chunk_incident_nodes")
+                    .contains("chunk_incident_nodes", ["응급대응"])
+                    .execute()
+                )
+                em_rows = em_resp.data or []
+                # 부족한 doc 메타 (title/kind) 보강 — RPC 결과 schema 와 정렬.
+                em_doc_ids = list({
+                    e.get("document_id") for e in em_rows
+                    if e.get("document_id") and e.get("id") not in raw_chunk_ids
+                })
+                em_doc_meta: dict = {}
+                if em_doc_ids:
+                    em_docs_resp = (
+                        supabase.table("nexus_documents")
+                        .select("id, title, doc_kind, meta")
+                        .in_("id", em_doc_ids)
+                        .execute()
+                    )
+                    em_doc_meta = {
+                        d["id"]: d for d in (em_docs_resp.data or [])
+                    }
+                for ec in em_rows:
+                    if ec.get("id") in raw_chunk_ids:
+                        continue
+                    d = em_doc_meta.get(ec.get("document_id"), {}) or {}
+                    raw_chunks.append({
+                        "id": ec.get("id"),
+                        "document_id": ec.get("document_id"),
+                        "doc_title": d.get("title"),
+                        "doc_kind": d.get("doc_kind"),
+                        "article_no": ec.get("article_no"),
+                        "text": ec.get("text") or "",
+                        "categories": ec.get("categories") or [],
+                        "chunk_incident_nodes": ec.get("chunk_incident_nodes") or [],
+                        "rrf_score": 0.0,
+                        "force_included": True,
+                    })
+            except Exception:
+                # force-include 실패는 검색 흐름을 막지 않는다.
+                pass
+
         # 2) doc meta 일괄 조회 (RPC 결과에 meta 미포함 — 컬럼 미반환).
         doc_meta_map: dict = {}
         if raw_chunks and user_incident_nodes:
@@ -161,6 +218,22 @@ def hybrid_search(
             else:
                 chunk["emergency_chunk_boost_applied"] = False
                 chunk["matched_emergency_keywords"] = []
+
+            # chunk-level incident_nodes 매칭 (force-include 가 채워뒀거나,
+            # 향후 일반 청크에도 태그된 경우 둘 다 커버).
+            chunk_nodes = set(chunk.get("chunk_incident_nodes") or [])
+            chunk_matched = chunk_nodes & user_incident_nodes
+            if chunk_matched:
+                chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + INCIDENT_BOOST
+                chunk["chunk_incident_boost_applied"] = True
+                chunk["matched_chunk_incident_nodes"] = sorted(chunk_matched)
+            else:
+                chunk["chunk_incident_boost_applied"] = False
+                chunk["matched_chunk_incident_nodes"] = []
+
+            # Force-included 청크는 base rrf_score=0 이므로 top-5 진입 보장 위해 큰 가산.
+            if chunk.get("force_included"):
+                chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + EMERGENCY_FORCE_INCLUDE_BOOST
 
         # 4) boost 후 재정렬 + doc-level diversity cap (동일 doc 최대 N개).
         raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
