@@ -2384,6 +2384,92 @@ def _tab_search_compare(sb):
             else:
                 st.success("✅ FORBIDDEN PATTERNS 없음")
 
+    # ── Claude Opus judge 검증 (Phase 0) ─────────────────
+    with st.expander("🧑‍⚖️ Claude Opus judge 검증 (Phase 0)", expanded=False):
+        st.markdown(
+            "Gemini 답변 + 검색 청크를 Claude Opus 가 청크와 매칭 검증.  \n"
+            "Phase 0: customer injury (인사사고/고객상해) 만 golden 매핑 정의됨."
+        )
+
+        judge_question = st.text_input(
+            "검증할 질문",
+            value=q if "cmp_results" in st.session_state else "",
+            key="claude_judge_question",
+        )
+
+        col_j1, col_j2 = st.columns([1, 3])
+        with col_j1:
+            run_judge = st.button(
+                "🧑‍⚖️ 실행", key="claude_judge_run", type="primary",
+            )
+        with col_j2:
+            st.caption(
+                "Live ask() 호출 → 답변 + 청크 → Claude Opus judge → VerificationReport"
+            )
+
+        if run_judge and judge_question:
+            try:
+                from core.chatbot import ask as _live_ask
+                from core.retriever import hybrid_search as _hybrid_search
+                from core.verification.claude_judge import verify_with_claude
+                from core.verification.reports import render_report_markdown
+                from core.taxonomy.golden_citations import lookup_golden
+
+                with st.spinner("Gemini 답변 생성 + 청크 검색..."):
+                    if sb is None:
+                        st.error("Supabase 미설정 — 검증 불가.")
+                        st.stop()
+                    ans_obj = _live_ask(
+                        sb, question=judge_question, category=None,
+                    )
+                    live_answer = ans_obj.text or ""
+                    live_chunks = ans_obj.contexts or []
+                    if not live_chunks:
+                        # fallback — ask 가 contexts 비었으면 직접 retrieval
+                        live_chunks = _hybrid_search(
+                            sb, question=judge_question,
+                            categories=None, top_k=10,
+                        )
+                    incident_nodes = sorted(set(
+                        nexus_classify_to_incident_nodes(judge_question or "")
+                    ))
+
+                st.markdown("---")
+                st.markdown("### 📝 Gemini 답변")
+                st.markdown(live_answer or "*(빈 답변)*")
+                st.caption(
+                    f"청크 {len(live_chunks)}개 · incident_nodes: {incident_nodes}"
+                )
+
+                golden = lookup_golden(incident_nodes)
+                if not golden:
+                    st.warning(
+                        f"⚠️ incident_nodes {incident_nodes} 에 매칭되는 golden 미정의. "
+                        f"Phase 0 지원 카테고리: customer_injury (고객상해/인사사고). "
+                        f"검증 진행되지만 coverage_gaps 검사는 skip."
+                    )
+                else:
+                    st.info(f"🎯 Golden 매핑: **{golden.get('description', '')}**")
+
+                with st.spinner("Claude Opus judge 호출 중..."):
+                    report = verify_with_claude(
+                        query=judge_question,
+                        chunks=live_chunks,
+                        answer=live_answer,
+                        golden_citations=golden,
+                        incident_nodes=incident_nodes,
+                    )
+
+                st.markdown("---")
+                st.markdown(render_report_markdown(report))
+
+                with st.expander("🔬 Raw Claude response (디버그)"):
+                    st.code(report.raw_response or "<none>", language="json")
+            except Exception as e:
+                import traceback
+                st.error(f"검증 실패: {type(e).__name__}: {e}")
+                st.code(traceback.format_exc())
+
 
 def main():
     _require_auth()
