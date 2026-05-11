@@ -2125,6 +2125,61 @@ def _run_ask(
             elif stage == "complete":
                 progress_bar.progress(1.0, text="✅ 답변 완료")
 
+        # ─────────────────────────────────────────────────
+        # Phase 4 (PR #98): verified_ask 분기 (feature flag).
+        # CHATBOT_USE_VERIFIED_ASK=True 시 Gemini 답변 + Claude judge 검증
+        # 통합 흐름. block-until-verified — 컴플라이언스 신뢰성 우선.
+        # 기본 False — 기존 streaming UX 보존, regression 위험 zero.
+        # ─────────────────────────────────────────────────
+        _s_phase4 = settings()
+        if getattr(_s_phase4, "chatbot_use_verified_ask", False):
+            try:
+                from core.orchestration.verified_ask import verified_ask
+                with st.spinner("🔄 답변 생성 + 검증 중... (약 30~60초 소요)"):
+                    progress_bar.progress(0.3, text="Gemini 답변 생성 중...")
+                    verified = verified_ask(
+                        sb, effective_q,
+                        category=(cat if cat and cat != "전체" else None),
+                        audit_source="live_chat",
+                    )
+                    progress_bar.progress(1.0, text="✅ 검증 완료")
+                if verified.verdict == "pass":
+                    st.success(
+                        f"✅ 검증 완료 (score {verified.score:.0f}/100)"
+                    )
+                elif verified.verdict == "warn":
+                    st.warning(
+                        f"⚠️ 검증 결과 주의 (score {verified.score:.0f}/100)"
+                    )
+                elif verified.verdict == "fail":
+                    st.error("❌ 검증 실패 — 관할 부서 확인 권장")
+                else:
+                    st.error("🔥 검증 시스템 오류 — 답변 사용 시 주의")
+                answer_placeholder.markdown(verified.text)
+                with st.expander(
+                    f"🔬 상세 검증 결과 "
+                    f"(⏱️ Gemini {verified.elapsed_gemini_ms}ms / "
+                    f"Claude {verified.elapsed_claude_ms}ms / "
+                    f"전체 {verified.elapsed_total_ms}ms)"
+                ):
+                    from core.verification.reports import render_report_markdown
+                    st.markdown(render_report_markdown(verified.report))
+                # progress placeholder 정리.
+                progress_placeholder.markdown(
+                    "<div style='height:0;overflow:hidden'></div>",
+                    unsafe_allow_html=True,
+                )
+                progress_bar.empty()
+                return
+            except Exception as _verr:
+                # verified_ask 실패 시 — 기존 streaming 으로 fallback.
+                import sys as _vsys
+                print(
+                    f"[app:_run_ask] verified_ask failed, fallback to ask_stream: "
+                    f"{type(_verr).__name__}: {_verr}",
+                    file=_vsys.stderr, flush=True,
+                )
+
         stream_buffer = ""
         for attempt in range(3):
             try:

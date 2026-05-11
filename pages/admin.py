@@ -2588,6 +2588,45 @@ def _tab_search_compare(sb):
                 st.code(traceback.format_exc())
 
     # ── 자동 회귀 테스트 (Phase 2.6) ─────────────────────
+    # ── verified_ask 통합 테스트 (Phase 4) ───────────────
+    with st.expander("🎯 verified_ask 통합 테스트 (Phase 4)", expanded=False):
+        st.markdown(
+            "라이브 chat 통합 흐름 admin 테스트.  \n"
+            "Gemini 합성 → Claude 검증 → policy → 최종 사용자 답변."
+        )
+        st.caption(
+            "Feature flag `CHATBOT_USE_VERIFIED_ASK` 가 True 일 때 라이브 "
+            "chat 도 동일 흐름 사용. 본 expander 는 flag 와 무관하게 강제 실행."
+        )
+        verified_test_query = st.text_input(
+            "테스트 query",
+            value="고객이 매장에서 넘어졌어",
+            key="verified_ask_query",
+        )
+        if st.button("🎯 verified_ask 실행", key="verified_ask_run"):
+            if sb is None:
+                st.error("Supabase 미설정 — 실행 불가.")
+            else:
+                from core.orchestration.verified_ask import verified_ask as _vask
+                with st.spinner("실행 중... (30~60초)"):
+                    result = _vask(sb, verified_test_query, audit_source="admin_test")
+                col_v1, col_v2, col_v3 = st.columns(3)
+                col_v1.metric("Verdict", result.verdict.upper())
+                col_v2.metric("Score", f"{result.score:.0f}/100")
+                col_v3.metric("Total", f"{result.elapsed_total_ms}ms")
+                st.markdown("---")
+                st.markdown("### 📝 사용자에게 표시될 최종 답변")
+                st.markdown(result.text)
+                st.markdown("---")
+                with st.expander("🔬 상세 VerificationReport"):
+                    from core.verification.reports import render_report_markdown
+                    st.markdown(render_report_markdown(result.report))
+                    st.caption(
+                        f"⏱️ Gemini {result.elapsed_gemini_ms}ms / "
+                        f"Claude {result.elapsed_claude_ms}ms / "
+                        f"Total {result.elapsed_total_ms}ms"
+                    )
+
     with st.expander("🤖 자동 회귀 테스트 (Phase 2.6)", expanded=False):
         st.markdown(
             "6 카테고리 × ~2 phrasing = 14 case 일괄 검증.  \n"
