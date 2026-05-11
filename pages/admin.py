@@ -2587,6 +2587,109 @@ def _tab_search_compare(sb):
                 st.error(f"검증 실패: {type(e).__name__}: {e}")
                 st.code(traceback.format_exc())
 
+    # ── 자동 회귀 테스트 (Phase 2.6) ─────────────────────
+    with st.expander("🤖 자동 회귀 테스트 (Phase 2.6)", expanded=False):
+        st.markdown(
+            "6 카테고리 × ~2 phrasing = 14 case 일괄 검증.  \n"
+            "**클릭 후 떠나도 됨** — 결과는 세션 동안 유지."
+        )
+        st.caption(
+            "예상 시간: 5-7분. API 529 자동 retry (5s/10s 백오프). "
+            "Anthropic 비용: 약 $0.70 ($0.05 × 14 case)."
+        )
+
+        col_reg1, _ = st.columns([1, 3])
+        with col_reg1:
+            run_regression = st.button(
+                "🚀 전체 실행",
+                key="regression_run",
+                type="primary",
+            )
+
+        if run_regression:
+            if sb is None:
+                st.error("Supabase 미설정 — 실행 불가.")
+            else:
+                from tests.golden.regression_cases import REGRESSION_CASES
+                from core.verification.regression_runner import run_regression_suite
+
+                progress_bar = st.progress(0)
+                status_box = st.empty()
+
+                def _reg_on_progress(i, total, case):
+                    progress_bar.progress((i + 1) / total)
+                    status_box.text(
+                        f"[{i+1}/{total}] {case['category']}: {case['query']}"
+                    )
+
+                with st.spinner("회귀 테스트 실행 중..."):
+                    results = run_regression_suite(
+                        sb,
+                        REGRESSION_CASES,
+                        on_progress=_reg_on_progress,
+                        delay_seconds=2.0,
+                        max_retries=2,
+                    )
+
+                st.session_state["regression_results"] = results
+                progress_bar.empty()
+                status_box.success(f"✅ {len(results)} case 완료")
+
+        # 결과 표시 (세션 유지)
+        if "regression_results" in st.session_state:
+            from collections import Counter
+            results = st.session_state["regression_results"]
+
+            st.markdown("---")
+            st.markdown("### 📊 요약")
+            verdict_counts = Counter(r.verdict for r in results)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("✅ PASS", verdict_counts.get("pass", 0))
+            c2.metric("⚠️ WARN", verdict_counts.get("warn", 0))
+            c3.metric("❌ FAIL", verdict_counts.get("fail", 0))
+            c4.metric("🔥 ERROR", verdict_counts.get("error", 0))
+
+            valid_scores = [r.score for r in results if r.verdict != "error"]
+            if valid_scores:
+                avg = sum(valid_scores) / len(valid_scores)
+                st.metric("평균 score", f"{avg:.1f} / 100")
+
+            st.markdown("### 📋 카테고리별 결과")
+            rows: list = []
+            for r in results:
+                rows.append({
+                    "카테고리": r.category,
+                    "Query": r.query,
+                    "Verdict": r.verdict.upper(),
+                    "Score": f"{r.score:.0f}",
+                    "청크": r.chunk_count,
+                    "Grounded": r.grounded_count,
+                    "Halluc": r.hallucinated_count,
+                    "HIGH gap": r.high_gaps,
+                    "MED gap": r.medium_gaps,
+                })
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+            st.markdown("### 🔍 상세 보기")
+            case_labels = [
+                f"{r.category} — {r.query}" for r in results
+            ]
+            selected_idx = st.selectbox(
+                "case 선택",
+                range(len(results)),
+                format_func=lambda i: case_labels[i],
+                key="regression_drilldown",
+            )
+            if selected_idx is not None:
+                selected = results[selected_idx]
+                from core.verification.reports import render_report_markdown
+                st.markdown(f"**Incident nodes:** `{selected.incident_nodes}`")
+                st.markdown(f"**청크 수:** {selected.chunk_count}")
+                if selected.report is not None:
+                    st.markdown(render_report_markdown(selected.report))
+                if selected.error:
+                    st.error(f"error: {selected.error}")
+
 
 def main():
     _require_auth()
