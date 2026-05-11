@@ -1994,6 +1994,68 @@ def _tab_search_compare(sb):
                 except Exception as e:
                     st.error(f"❌ Diagnostic RPC 실패: {type(e).__name__}: {e}")
 
+    # ── 결정성 검증 ───────────────────────────────────────
+    with st.expander("🎯 결정성 검증 (같은 query 다회 호출 비교)"):
+        determinism_query = st.text_input(
+            "검증할 query",
+            value="고객이 매장에서 넘어졌어",
+            key="determinism_query",
+        )
+        num_calls = st.number_input(
+            "호출 횟수",
+            min_value=2, max_value=5, value=3, key="determinism_calls",
+        )
+        if st.button("🔁 결정성 테스트 실행", key="determinism_run_btn"):
+            if sb is None:
+                st.error("Supabase 미설정.")
+            else:
+                results: list = []
+                for i in range(int(num_calls)):
+                    try:
+                        r = _retriever.hybrid_search(
+                            sb, question=determinism_query,
+                            categories=None, top_k=5,
+                        )
+                        results.append({
+                            "chunk_ids": [c.get("chunk_id") for c in r],
+                            "doc_ids": [c.get("document_id") for c in r],
+                            "unique_docs": {c.get("document_id") for c in r},
+                        })
+                    except Exception as e:
+                        st.error(f"호출 {i+1} 실패: {e}")
+                        results.append(None)
+                valid = [r for r in results if r]
+                if len(valid) < 2:
+                    st.error("유효한 호출 결과 부족.")
+                else:
+                    ref_chunks = valid[0]["chunk_ids"]
+                    all_chunks_match = all(
+                        r["chunk_ids"] == ref_chunks for r in valid
+                    )
+                    ref_docs = valid[0]["unique_docs"]
+                    all_docs_match = all(
+                        r["unique_docs"] == ref_docs for r in valid
+                    )
+                    if all_chunks_match and all_docs_match:
+                        st.success(
+                            f"✅ 결정성 보장 — {len(valid)}회 호출 모두 "
+                            f"동일 chunk 순서 + 동일 doc set "
+                            f"({len(ref_docs)} unique docs)"
+                        )
+                    elif all_docs_match:
+                        st.warning(
+                            f"⚠️ Doc set 은 일관 ({len(ref_docs)} docs) — "
+                            f"chunk 순서만 변동. 정렬 tiebreaker 점검 필요."
+                        )
+                        for i, r in enumerate(valid):
+                            st.text(f"Call {i+1}: {r['chunk_ids']}")
+                    else:
+                        st.error(
+                            f"❌ 비결정성 감지 — 호출 별 doc set 다름"
+                        )
+                        for i, r in enumerate(valid):
+                            st.text(f"Call {i+1} docs: {r['unique_docs']}")
+
     q = st.text_input("질문", key="search_compare_q",
                       placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
     run = st.button("▶ 비교 실행", key="search_compare_run", type="primary")
@@ -2108,6 +2170,20 @@ def _tab_search_compare(sb):
                 f"`{len(_intent_force_docs)}` docs (top-5 기준) · "
                 f"source `{_src}`"
             )
+
+        # 매칭 doc 중 top-5 진입 실패 감지 (있으면 코드 버그).
+        # new_rows 에 force_included_by_intent 가 있는 청크만 보이므로,
+        # raw_chunks 전체 매칭 doc 정보는 stderr 로그로만 추적 가능.
+        # 여기서는 top-5 doc set 표시로 대체.
+        _displayed_doc_dist: dict = {}
+        for r in (new_rows or [])[:K]:
+            title = r.get("doc_title") or "?"
+            _displayed_doc_dist[title] = _displayed_doc_dist.get(title, 0) + 1
+        with st.expander(
+            f"📑 Top-{K} doc set ({len(set(_displayed_doc_dist.keys()))} unique docs)"
+        ):
+            for title, count in sorted(_displayed_doc_dist.items(), key=lambda x: -x[1]):
+                st.text(f"  {title}: {count} chunks")
         if new_err:
             st.error(f"실패: {new_err}")
         elif not new_rows:

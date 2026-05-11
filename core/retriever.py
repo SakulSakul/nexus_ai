@@ -425,46 +425,61 @@ def hybrid_search(
             if chunk.get("force_included_by_intent"):
                 chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + FORCE_INCLUDE_DOC_BOOST
 
-        # 4) boost 후 재정렬 + diversity cap override (force-include 우선).
-        raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
+        # 4) Deterministic Top-K Selection (PR #81)
+        # 정렬: rrf_score 내림차순 + chunk_id 사전순 (UUID — 항상 동일 결과).
         MAX_CHUNKS_PER_DOC = 2
         TOP_K = 5
+        raw_chunks.sort(
+            key=lambda c: (
+                -(c.get("rrf_score") or 0.0),
+                str(c.get("id") or ""),
+            )
+        )
 
-        # 4-1) Force-included 매칭 doc 별로 최소 1청크 보장 (top-score 청크).
-        forced_doc_ids_seen: set = set()
-        guaranteed_chunks: list = []
+        # 4-1) 매칭 doc 별 대표 chunk (sort 후 첫 발견 = best score chunk).
+        best_chunk_per_doc: dict = {}
         for chunk in raw_chunks:
             if not chunk.get("force_included_by_intent"):
                 continue
             doc_id = chunk.get("document_id") or ""
-            if doc_id in forced_doc_ids_seen:
+            if not doc_id or doc_id in best_chunk_per_doc:
                 continue
-            guaranteed_chunks.append(chunk)
-            forced_doc_ids_seen.add(doc_id)
+            best_chunk_per_doc[doc_id] = chunk
 
-        # 4-2) guaranteed 청크 우선 등록 (단, TOP_K-1 까지만 — 마지막 slot 일반용).
-        GUARANTEED_RESERVE = max(0, TOP_K - 1)
-        final_rows: list = list(guaranteed_chunks[:GUARANTEED_RESERVE])
-        final_doc_count: dict = {}
+        matched_doc_count = len(best_chunk_per_doc)
+        guaranteed_chunks = list(best_chunk_per_doc.values())
+        # guaranteed_chunks 도 결정적 정렬 (rrf desc + chunk_id asc).
+        guaranteed_chunks.sort(
+            key=lambda c: (
+                -(c.get("rrf_score") or 0.0),
+                str(c.get("id") or ""),
+            )
+        )
+        # 매칭 doc 가 TOP_K 보다 많으면 점수 순 cap (방어 코드).
+        guaranteed_chunks = guaranteed_chunks[:TOP_K]
+
+        # 4-2) final 초기화 — 매칭 doc 대표 chunk 우선 등록 (TOP_K 전체 활용).
+        final_rows: list = list(guaranteed_chunks)
+        final_chunk_ids: set = {c.get("id") for c in final_rows if c.get("id")}
+        doc_count_in_final: dict = {}
         for c in final_rows:
             doc_id = c.get("document_id") or ""
-            final_doc_count[doc_id] = final_doc_count.get(doc_id, 0) + 1
-        final_chunk_ids: set = {c.get("id") for c in final_rows}
+            doc_count_in_final[doc_id] = doc_count_in_final.get(doc_id, 0) + 1
 
-        # 4-3) 나머지 slot 을 rrf_score 순 + diversity cap.
+        # 4-3) 남은 슬롯을 일반 chunk 로 채움 (diversity cap 적용).
         for chunk in raw_chunks:
             if len(final_rows) >= TOP_K:
                 break
             if chunk.get("id") in final_chunk_ids:
                 continue
             doc_id = chunk.get("document_id") or ""
-            if final_doc_count.get(doc_id, 0) >= MAX_CHUNKS_PER_DOC:
+            if doc_count_in_final.get(doc_id, 0) >= MAX_CHUNKS_PER_DOC:
                 continue
             final_rows.append(chunk)
-            final_doc_count[doc_id] = final_doc_count.get(doc_id, 0) + 1
             final_chunk_ids.add(chunk.get("id"))
+            doc_count_in_final[doc_id] = doc_count_in_final.get(doc_id, 0) + 1
 
-        # 4-4) Safety — 여전히 부족하면 cap 무시 채움.
+        # 4-4) 안전망 — 여전히 부족하면 cap 무시 채움.
         for chunk in raw_chunks:
             if len(final_rows) >= TOP_K:
                 break
@@ -473,13 +488,40 @@ def hybrid_search(
             final_rows.append(chunk)
             final_chunk_ids.add(chunk.get("id"))
 
+        # 4-5) 진단 로깅.
+        unique_final_docs = {
+            c.get("document_id") for c in final_rows if c.get("document_id")
+        }
+        final_doc_dist: dict = {}
+        for c in final_rows:
+            d = c.get("document_id") or "?"
+            final_doc_dist[d] = final_doc_dist.get(d, 0) + 1
         print(
-            f"[retriever:top5_selection] "
-            f"guaranteed_force_chunks={len(guaranteed_chunks[:GUARANTEED_RESERVE])} "
-            f"total_final={len(final_rows)} "
-            f"doc_distribution={dict(final_doc_count)}",
+            f"[retriever:top_k_selection] "
+            f"matched_docs={matched_doc_count} "
+            f"guaranteed_in_top_k={len(guaranteed_chunks)} "
+            f"final_chunks={len(final_rows)} "
+            f"final_unique_docs={len(unique_final_docs)} "
+            f"top_k={TOP_K} "
+            f"max_per_doc={MAX_CHUNKS_PER_DOC}",
             file=sys.stderr, flush=True,
         )
+
+        # 4-6) 매칭 doc 누락 감지 (있으면 코드 버그).
+        all_force_doc_ids = {
+            c.get("document_id")
+            for c in raw_chunks
+            if c.get("force_included_by_intent") and c.get("document_id")
+        }
+        dropped_matched_docs = all_force_doc_ids - unique_final_docs
+        if dropped_matched_docs:
+            print(
+                f"[retriever:top_k_selection] WARNING: "
+                f"{len(dropped_matched_docs)} matched doc(s) dropped from top-K: "
+                f"{list(dropped_matched_docs)[:5]}",
+                file=sys.stderr, flush=True,
+            )
+
         return [_normalize_v2_row(r) for r in final_rows]
 
     # ── 기존 경로 (rollback safety net) ──────────────────────────
