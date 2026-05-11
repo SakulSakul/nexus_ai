@@ -25,6 +25,10 @@ from .embedder import embed_one
 # admin "🔬 검색 비교" 패널에서 사용자가 raw vs cleaned 확인 후 True 로 복귀.
 USE_HYBRID_SEARCH: bool = True
 
+# Incident-aware rerank — document.meta.incident_nodes 매칭 시 rrf_score
+# 에 가산할 boost. admin 디버그 패널이 본 상수를 import 해 표시 일관성 유지.
+INCIDENT_BOOST: float = 0.30
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -120,8 +124,7 @@ def hybrid_search(
                 except Exception:
                     doc_meta_map = {}
 
-        # 3) Incident-aware boost.
-        INCIDENT_BOOST = 0.30
+        # 3) Incident-aware boost (module-level INCIDENT_BOOST).
         for chunk in raw_chunks:
             meta = doc_meta_map.get(chunk.get("document_id"), {}) or {}
             doc_incident_nodes = set(meta.get("incident_nodes") or [])
