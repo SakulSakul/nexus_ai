@@ -82,6 +82,17 @@ Verdict 기준:
 - warn: hallucinated_claims=0 AND HIGH coverage_gaps<=0 AND (MEDIUM gaps OR consistency_issues>0) AND score 70-89
 - fail: hallucinated_claims>0 OR HIGH coverage_gaps>0 OR score<70
 
+중요 — hallucinated_claims 분류 시 주의:
+1. 어떤 claim 의 cited_clause 가 청크에 실제 존재하면 → grounded_claims 로 분류
+2. 자체 재검토 결과 grounded 로 판단된 항목은 절대 hallucinated_claims 에 포함하지 말 것
+3. hallucinated_claims 에 포함되는 것은 ONLY:
+   - cited_clause 자체가 청크에 없는 경우
+   - cited_clause 는 존재하나 claim 내용이 청크와 불일치
+   - 외부 지식으로 생성된 내용
+4. "재검토 결과 grounded — 제외" / "사실상 일치하여 partial 로 볼 수 있음" 같은
+   self-retraction 표현이 들어가는 항목은 처음부터 hallucinated_claims 에
+   포함하지 말고 grounded_claims 에 match_type='partial' 또는 'semantic' 으로 분류
+
 엄격하게. 컴플라이언스 실패는 법적/HR 결과 동반."""
 
 
