@@ -2054,6 +2054,11 @@ def _tab_search_compare(sb):
                     st.caption(
                         f"rrf_score = {float(r.get('score') or 0.0):.4f}{boost_caption}"
                     )
+                    if r.get("emergency_chunk_boost_applied"):
+                        kws = ", ".join(r.get("matched_emergency_keywords") or [])
+                        st.caption(
+                            f"🚑 +{_retriever.EMERGENCY_CHUNK_BOOST:.2f} 응급키워드 매칭: {kws}"
+                        )
                     txt = (r.get("text") or "").strip().replace("\n", " ")
                     st.write(txt[:200] + ("…" if len(txt) > 200 else ""))
 

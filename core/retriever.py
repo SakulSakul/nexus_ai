@@ -29,6 +29,18 @@ USE_HYBRID_SEARCH: bool = True
 # 에 가산할 boost. admin 디버그 패널이 본 상수를 import 해 표시 일관성 유지.
 INCIDENT_BOOST: float = 0.30
 
+# 청크 text 에 응급 대응 키워드가 포함될 때 추가 가산. AEO 출입통제 문서
+# 내 "비권한자 침입" 청크가 아닌 "응급조치" 청크 surface 보장 목적.
+EMERGENCY_KEYWORDS: tuple = (
+    "응급조치", "응급 조치",
+    "병원 후송", "병원후송",
+    "보안실 통보", "보안실통보", "보안실에 통보",
+    "현장 보존", "현장보존",
+    "응급구호", "응급 구호",
+    "구급",
+)
+EMERGENCY_CHUNK_BOOST: float = 0.10
+
 
 def _normalize_v2_row(row: dict) -> dict:
     """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
@@ -54,6 +66,8 @@ def _normalize_v2_row(row: dict) -> dict:
         "categories": row.get("categories") or [],
         "incident_boost_applied": bool(row.get("incident_boost_applied")),
         "matched_incident_nodes": row.get("matched_incident_nodes") or [],
+        "emergency_chunk_boost_applied": bool(row.get("emergency_chunk_boost_applied")),
+        "matched_emergency_keywords": row.get("matched_emergency_keywords") or [],
     }
 
 
@@ -124,7 +138,7 @@ def hybrid_search(
                 except Exception:
                     doc_meta_map = {}
 
-        # 3) Incident-aware boost (module-level INCIDENT_BOOST).
+        # 3) Incident-aware boost (module-level INCIDENT_BOOST) + 청크 keyword boost.
         for chunk in raw_chunks:
             meta = doc_meta_map.get(chunk.get("document_id"), {}) or {}
             doc_incident_nodes = set(meta.get("incident_nodes") or [])
@@ -136,6 +150,17 @@ def hybrid_search(
             else:
                 chunk["incident_boost_applied"] = False
                 chunk["matched_incident_nodes"] = []
+
+            # 청크 text 기반 추가 boost (응급 대응 키워드 매칭).
+            chunk_text = chunk.get("text") or ""
+            matched_keywords = [kw for kw in EMERGENCY_KEYWORDS if kw in chunk_text]
+            if matched_keywords:
+                chunk["rrf_score"] = (chunk.get("rrf_score") or 0.0) + EMERGENCY_CHUNK_BOOST
+                chunk["emergency_chunk_boost_applied"] = True
+                chunk["matched_emergency_keywords"] = matched_keywords
+            else:
+                chunk["emergency_chunk_boost_applied"] = False
+                chunk["matched_emergency_keywords"] = []
 
         # 4) boost 후 재정렬 + doc-level diversity cap (동일 doc 최대 N개).
         raw_chunks.sort(key=lambda c: c.get("rrf_score") or 0.0, reverse=True)
