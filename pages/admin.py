@@ -2577,6 +2577,56 @@ def _tab_search_compare(sb):
                         incident_nodes=incident_nodes,
                     )
 
+                # Phase 3: audit log (silent fail).
+                try:
+                    from core.audit.logger import log_query
+                    from core.audit.schemas import AuditLogEntry
+                    chunk_ids = [
+                        str(c.get("id") or c.get("chunk_id") or "")
+                        for c in (live_chunks or []) if isinstance(c, dict)
+                    ]
+                    log_query(AuditLogEntry(
+                        source="admin_judge",
+                        query=judge_question,
+                        incident_nodes=incident_nodes,
+                        retrieved_chunk_ids=chunk_ids,
+                        retrieved_chunk_count=len(live_chunks or []),
+                        gemini_model_id="gemini",
+                        gemini_answer=(live_answer or "")[:5000] or None,
+                        claude_model_id=report.judge_model,
+                        claude_verdict=(
+                            report.verdict.value
+                            if hasattr(report.verdict, "value")
+                            else "error"
+                        ),
+                        claude_score=report.overall_score,
+                        claude_report={
+                            "verdict": (
+                                report.verdict.value
+                                if hasattr(report.verdict, "value")
+                                else "error"
+                            ),
+                            "overall_score": report.overall_score,
+                            "grounded_count": len(report.grounded_claims),
+                            "hallucinated_count": len(report.hallucinated_claims),
+                            "high_gaps": sum(
+                                1 for g in report.coverage_gaps
+                                if g.severity == "HIGH"
+                            ),
+                            "medium_gaps": sum(
+                                1 for g in report.coverage_gaps
+                                if g.severity == "MEDIUM"
+                            ),
+                            "explanation": report.explanation,
+                        },
+                        claude_latency_ms=report.judge_latency_ms,
+                    ))
+                except Exception as _audit_e:
+                    st.caption(
+                        f"⚠️ Audit log 저장 실패 (검증은 정상): "
+                        f"{type(_audit_e).__name__}: {_audit_e}"
+                    )
+
                 st.markdown("---")
                 st.markdown(render_report_markdown(report))
 
@@ -2728,6 +2778,89 @@ def _tab_search_compare(sb):
                     st.markdown(render_report_markdown(selected.report))
                 if selected.error:
                     st.error(f"error: {selected.error}")
+
+    # ── Audit log 조회 (Phase 3) ─────────────────────────
+    with st.expander("📚 Audit log 조회 (Phase 3)", expanded=False):
+        st.markdown(
+            "Dual-LLM query/verification 영구 저장 기록 조회.  \n"
+            "Source: live_chat / admin_judge / regression_runner / admin_test"
+        )
+        col_a1, col_a2, col_a3 = st.columns(3)
+        with col_a1:
+            filter_source = st.selectbox(
+                "Source",
+                ["전체", "live_chat", "admin_judge", "regression_runner", "admin_test"],
+                key="audit_filter_source",
+            )
+        with col_a2:
+            filter_verdict = st.selectbox(
+                "Verdict",
+                ["전체", "pass", "warn", "fail", "error"],
+                key="audit_filter_verdict",
+            )
+        with col_a3:
+            limit_n = st.number_input(
+                "최근 N건", min_value=10, max_value=200, value=50, step=10,
+                key="audit_filter_limit",
+            )
+        if st.button("🔍 조회", key="audit_fetch"):
+            from core.audit.logger import fetch_recent_logs
+            with st.spinner("audit log 조회 중..."):
+                logs = fetch_recent_logs(
+                    limit=int(limit_n),
+                    source=None if filter_source == "전체" else filter_source,
+                    verdict=None if filter_verdict == "전체" else filter_verdict,
+                )
+            st.session_state["audit_logs"] = logs
+
+        if "audit_logs" in st.session_state:
+            logs = st.session_state["audit_logs"]
+            if not logs:
+                st.info("조회된 audit log 없음.")
+            else:
+                st.success(f"{len(logs)} 건 조회됨")
+                rows: list = []
+                for log in logs:
+                    rows.append({
+                        "시간": (log.get("created_at") or "")[:19],
+                        "Source": log.get("source", ""),
+                        "Verdict": (log.get("claude_verdict") or "—").upper(),
+                        "Score": log.get("claude_score") or "",
+                        "Query": (log.get("query") or "")[:50],
+                        "Incident": ", ".join(log.get("incident_nodes") or [])[:40],
+                        "Chunks": log.get("retrieved_chunk_count") or 0,
+                    })
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+                selected_idx = st.selectbox(
+                    "상세 보기 (선택)",
+                    range(len(logs)),
+                    format_func=lambda i: (
+                        f"{(logs[i].get('created_at') or '')[:19]} — "
+                        f"{(logs[i].get('query') or '')[:60]}"
+                    ),
+                    key="audit_drilldown",
+                )
+                if selected_idx is not None:
+                    selected = logs[selected_idx]
+                    st.markdown("---")
+                    st.markdown(f"**Query:** {selected.get('query')}")
+                    st.markdown(f"**Source:** `{selected.get('source')}`")
+                    st.markdown(
+                        f"**Verdict:** {selected.get('claude_verdict')} "
+                        f"(score {selected.get('claude_score')})"
+                    )
+                    st.markdown(
+                        f"**Incident nodes:** `{selected.get('incident_nodes')}`"
+                    )
+                    st.markdown(
+                        f"**Chunks:** {selected.get('retrieved_chunk_count')} 개"
+                    )
+                    with st.expander("📝 Gemini 답변"):
+                        st.markdown(selected.get("gemini_answer") or "*(없음)*")
+                    with st.expander("🧑‍⚖️ Claude 검증 report"):
+                        st.json(selected.get("claude_report") or {})
+                    with st.expander("🔧 Raw JSON"):
+                        st.json(selected)
 
 
 def main():

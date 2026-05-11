@@ -102,6 +102,59 @@ def _run_single_case(
             query, chunks, answer_text, golden, incident_nodes, max_retries,
         )
 
+        # Phase 3: audit log (silent fail).
+        try:
+            from core.audit.logger import log_query
+            from core.audit.schemas import AuditLogEntry
+            chunk_ids = [
+                str(c.get("id") or c.get("chunk_id") or "")
+                for c in chunks if isinstance(c, dict)
+            ]
+            verdict_val = (
+                report.verdict.value
+                if hasattr(report.verdict, "value")
+                else "error"
+            )
+            report_payload = {
+                "verdict": verdict_val,
+                "overall_score": report.overall_score,
+                "grounded_count": len(report.grounded_claims),
+                "hallucinated_count": len(report.hallucinated_claims),
+                "high_gaps": sum(
+                    1 for g in report.coverage_gaps if g.severity == "HIGH"
+                ),
+                "medium_gaps": sum(
+                    1 for g in report.coverage_gaps if g.severity == "MEDIUM"
+                ),
+                "low_gaps": sum(
+                    1 for g in report.coverage_gaps if g.severity == "LOW"
+                ),
+                "explanation": report.explanation,
+                "error": report.error,
+            }
+            log_query(AuditLogEntry(
+                source="regression_runner",
+                query=query,
+                incident_nodes=incident_nodes,
+                retrieved_chunk_ids=chunk_ids,
+                retrieved_chunk_count=len(chunks),
+                gemini_model_id="gemini",
+                gemini_answer=(answer_text or "")[:5000] or None,
+                claude_model_id=report.judge_model,
+                claude_verdict=verdict_val,
+                claude_score=report.overall_score,
+                claude_report=report_payload,
+                claude_latency_ms=report.judge_latency_ms,
+                notes=f"category={category}",
+            ))
+        except Exception as _audit_e:
+            import sys as _sys
+            print(
+                f"[regression_runner] audit hook failed (non-blocking): "
+                f"{type(_audit_e).__name__}: {_audit_e}",
+                file=_sys.stderr, flush=True,
+            )
+
         return RegressionResult(
             category=category,
             query=query,
