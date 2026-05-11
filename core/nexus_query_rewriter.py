@@ -170,6 +170,49 @@ _KOREAN_PARTICLES = (
 )
 
 
+# 자연어 토큰 → 사규 용어. 점진적으로 추가 가능한 단순 dict.
+# Gemini rewriter 가 흔들려도 작동하는 정적 안전망. compliance 도메인
+# 어휘가 좁아 dict 만으로도 핵심 패턴 커버 가능.
+_NEXUS_NL_TO_REGULATORY = {
+    # 매장 습득물 / 유실물 도메인
+    "두고": ("습득물", "유실물", "분실물", "인계", "보관"),
+    "잊고": ("습득물", "유실물", "분실물"),
+    "분실": ("습득물", "유실물"),
+    "잃어": ("습득물", "유실물"),
+    "잃어버": ("습득물", "유실물"),
+    "놓고": ("습득물", "유실물"),
+    # 금품 수수 / 윤리 도메인
+    "선물": ("금품", "이해관계자", "클린뱅크"),
+    "명절": ("금품", "이해관계자"),
+    "거래처": ("이해관계자", "협력업체"),
+    "접대": ("금품", "이해관계자"),
+    "촌지": ("금품", "이해관계자"),
+    # 정보보안 도메인
+    "외부": ("반출", "송신", "정보보안"),
+    "메일": ("송신", "외부반출"),
+    "유출": ("정보유출", "정보보안"),
+    "반출": ("정보보안", "외부반출"),
+    # 안전 도메인
+    "사고": ("안전사고", "재해"),
+    "다친": ("산업재해", "안전"),
+    "부상": ("산업재해", "안전"),
+}
+
+
+def _nexus_expand_with_synonyms(tokens: list) -> list:
+    """자연어 토큰에 대응하는 사규 용어를 OR 후보에 추가."""
+    expanded = list(tokens)
+    seen = set(tokens)
+    for tok in tokens:
+        for key, synonyms in _NEXUS_NL_TO_REGULATORY.items():
+            if key in tok:  # 부분 매칭으로 조사 잔재까지 잡음
+                for syn in synonyms:
+                    if syn not in seen:
+                        expanded.append(syn)
+                        seen.add(syn)
+    return expanded
+
+
 def nexus_build_keyword_tsquery(text: str) -> str:
     """자연어/재작성 쿼리를 prefix tsquery 문자열로 변환.
 
@@ -192,4 +235,5 @@ def nexus_build_keyword_tsquery(text: str) -> str:
         if t not in seen:
             seen.add(t)
             uniq.append(t)
+    uniq = _nexus_expand_with_synonyms(uniq)
     return " | ".join(f"{t}:*" for t in uniq)
