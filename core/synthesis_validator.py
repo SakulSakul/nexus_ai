@@ -459,15 +459,27 @@ def validate_and_repair_answer(
                         file=sys.stderr, flush=True,
                     )
 
-    # Repair 4: 본문 denial 표현 → soft replacement (한 번만)
+    # Repair 4 (PR #88): body denial soft replacement — ⚖️ marker 이전 영역에서만.
+    # ⚖️ 징계 기준 / 📂 사건사례 의 정상 "해당 없음" 표시 보호.
     if has_universal_sop:
+        weighted_pos = repaired.find("⚖️")
+        if weighted_pos == -1:
+            weighted_pos = repaired.find("⚖")
+        if weighted_pos == -1:
+            weighted_pos = len(repaired)
+        intro_text = repaired[:weighted_pos]
+        rest_text = repaired[weighted_pos:]
         for denial in _BODY_DENIAL_PATTERNS:
-            if denial in repaired:
+            if denial in intro_text:
                 soft = "사건사고 보고지침에 따라 다음 절차로 처리해야 합니다"
-                repaired = repaired.replace(denial, soft, 1)
-                repairs.append(f"BODY_DENIAL softened: '{denial[:30]}'")
+                new_intro = intro_text.replace(denial, soft, 1)
+                repaired = new_intro + rest_text
+                repairs.append(
+                    f"BODY_DENIAL softened (intro-scoped): '{denial[:30]}'"
+                )
                 print(
-                    "[synthesis:validator] body denial softened",
+                    f"[synthesis:validator] body denial softened "
+                    f"(scope=intro, before ⚖️ at pos={weighted_pos})",
                     file=sys.stderr, flush=True,
                 )
                 break
