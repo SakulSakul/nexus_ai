@@ -956,17 +956,28 @@ def _hotline_button(hotlines: dict[str, str]) -> None:
         st.link_button("신세계면세점 핫라인 제보하기", url, use_container_width=True)
 
 
-def _render_confidence_chip(confidence: str) -> None:
+def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None) -> None:
     """PR-C1: 답변 본문 직후에 검색 신뢰도 chip 을 caption 톤으로 노출.
 
     confidence: 'high' | 'medium' | 'low'. 그 외 값은 표시 생략.
+    contexts: 카테고리별 담당부서 매핑용. 미전달 시 일반 문구로 폴백.
     본문(ans.text) 의 [참조: ...] / 종결 멘트(💬...) 과 시각적으로 분리되되
     눈에 띄는 회색 caption + 색상 점.
     """
+    # 카테고리 → 담당부서. contexts 가 없거나 카테고리 식별 불가면 fallback 문구.
+    from core.nexus_category_owner import nexus_get_owner_dept
+    cat_label = ""
+    if contexts:
+        try:
+            from core.personality import category_visual
+            _icon, _color, cat_label = category_visual(contexts)
+        except Exception:
+            cat_label = ""
+    dept = nexus_get_owner_dept(cat_label)
     chip_map = {
         "high":   ("🟢", "높은 신뢰도", "#1f7a3a"),
-        "medium": ("🟡", "보조 참고 — 정확한 사항은 인사팀 확인", "#a07020"),
-        "low":    ("🔴", "검색 hit 부족 — 인사팀·CSR팀 확인 권장", "#a93226"),
+        "medium": ("🟡", f"보조 참고 — 정확한 사항은 {dept} 확인", "#a07020"),
+        "low":    ("🔴", f"검색 hit 부족 — {dept} 확인 권장", "#a93226"),
     }
     if confidence not in chip_map:
         return
@@ -2209,7 +2220,7 @@ def _run_ask(
             # critical 답변에도 표시 (사용자 정보 제공).
             _render_category_chip(ans.contexts)
             # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
-            _render_confidence_chip(ans.confidence)
+            _render_confidence_chip(ans.confidence, ans.contexts)
             # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
             # 지면서 setInterval 도 자동 cleanup. ans.elapsed (서버 측 perf
             # counter) 가 사용자 wall-clock 보다 정확.
@@ -2609,7 +2620,10 @@ def main():
             # PR-C1: history replay 에도 chip 노출. 기존 entry (confidence 키 없음)
             # 는 'high' default 로 회귀 안전.
             if role == "assistant" and meta.get("query_log_id") is not None:
-                _render_confidence_chip(meta.get("confidence", "high"))
+                _render_confidence_chip(
+                    meta.get("confidence", "high"),
+                    meta.get("contexts"),
+                )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
             # PR-Fun1 작업 3·5: suggestions 카드 + 격려 멘트 (replay).
