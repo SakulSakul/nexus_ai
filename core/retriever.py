@@ -68,7 +68,7 @@ def hybrid_search(
         # Tier 2 보조: 한국어 조사 제거 + prefix tsquery 빌더. RPC v3 가
         # to_tsquery('simple', …) 로 받기 때문에 plainto_tsquery 형식이 아닌
         # 정식 tsquery 표현식("토큰:* | 토큰:*") 을 넘긴다.
-        ts_query = nexus_build_keyword_tsquery(retrieval_query_text)
+        ts_query = nexus_build_keyword_tsquery(retrieval_query_text, original=question)
         match_count = top_k or s.top_k
         payload = {
             "query_embedding": retrieval_embedding,
