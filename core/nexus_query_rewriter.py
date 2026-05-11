@@ -23,7 +23,7 @@ import sys
 from .config import get_secret, settings
 
 
-_REWRITE_MODEL = get_secret("NEXUS_QUERY_REWRITE_MODEL", "gemini-2.0-flash")
+_REWRITE_MODEL = get_secret("NEXUS_QUERY_REWRITE_MODEL", "gemini-2.5-flash-lite")
 _MAX_OUTPUT_TOKENS = 128
 _REWRITE_TEMPERATURE = 0.2
 _MAX_LEN = 60
