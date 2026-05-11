@@ -4,6 +4,12 @@ retrieve_for_eval — chatbot 의 retrieval pipeline 을 한 함수로 노출.
 eval/runner.py (브라우저·CLI) 와 외부 검증 도구가 chatbot 과 동일한
 contexts 결과를 받도록 한다. chatbot.py 의 ask/ask_stream 본문은
 무수정 (호환성 유지) — 본 함수는 동일 흐름 재현이 목적.
+
+DF COMPASS Tier 1+2 (2026-05-11):
+- USE_HYBRID_SEARCH=True 일 때 검색 직전 Gemini 로 사규 용어 확장(Tier 1)
+  + 신규 RPC nexus_hybrid_search_v2 호출(Tier 2). 외부 인터페이스
+  (hybrid_search 시그니처·반환 dict 키) 무변경. False 면 즉시 기존 경로
+  롤백.
 """
 
 from __future__ import annotations
@@ -12,6 +18,31 @@ from typing import Any
 
 from .config import settings
 from .embedder import embed_one
+
+
+# Tier 1 + Tier 2 활성화 토글. False 면 즉시 기존 RPC 경로로 롤백.
+USE_HYBRID_SEARCH: bool = True
+
+
+def _normalize_v2_row(row: dict) -> dict:
+    """nexus_hybrid_search_v2 결과를 기존 hybrid_search 결과 dict 키 셋에
+    맞춰 정규화. chatbot.build_user_prompt / _balance_by_doc_kind /
+    confidence.calculate_confidence 가 같은 키 (chunk_id, doc_title,
+    doc_kind, article_no, case_no, text, score, owning_department,
+    categories) 를 그대로 사용할 수 있게 한다.
+    """
+    return {
+        "chunk_id": row.get("id"),
+        "document_id": row.get("document_id"),
+        "doc_title": row.get("doc_title"),
+        "doc_kind": row.get("doc_kind"),
+        "article_no": row.get("article_no"),
+        "case_no": None,
+        "text": row.get("text"),
+        "score": row.get("rrf_score"),
+        "owning_department": None,
+        "categories": row.get("categories") or [],
+    }
 
 
 def hybrid_search(
@@ -23,6 +54,26 @@ def hybrid_search(
     top_k: int | None = None,
 ) -> list[dict]:
     s = settings()
+    if USE_HYBRID_SEARCH:
+        # Tier 1 — 사규 용어 확장. 실패 시 원문 반환 (raise 안 함).
+        from .nexus_query_rewriter import rewrite_query_for_retrieval
+        retrieval_query_text = rewrite_query_for_retrieval(question)
+        retrieval_embedding = embed_one(
+            retrieval_query_text, task_type="RETRIEVAL_QUERY",
+        )
+        match_count = top_k or s.top_k
+        payload = {
+            "query_embedding": retrieval_embedding,
+            "query_text": retrieval_query_text,
+            "match_count": match_count,
+            "rrf_k": 60,
+            "pool_size": max(30, match_count * 6),
+        }
+        res = supabase.rpc("nexus_hybrid_search_v2", payload).execute()
+        rows = res.data or []
+        return [_normalize_v2_row(r) for r in rows]
+
+    # ── 기존 경로 (rollback safety net) ──────────────────────────
     emb = embed_one(question, task_type="RETRIEVAL_QUERY")
     payload: dict = {
         "query_text": question,
