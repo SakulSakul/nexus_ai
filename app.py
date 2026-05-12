@@ -2282,6 +2282,25 @@ def _run_ask(
                     unsafe_allow_html=True,
                 )
                 progress_bar.empty()
+                # === [PR-Fix-History-Push] X+ 답변을 session_state["history"] 에 push ===
+                # X+ 분기는 ans 객체를 만들지 않아 함수 끝의 _push_history (line 2560)
+                # 도달 불가. push 누락 시 rerun 후 history iterate (main() line 2864)
+                # 가 user 메시지만 그려 assistant chat_message 가 사라짐 → UI 빈 영역.
+                # ask_stream·verified_ask 패턴 정렬. xres 필드를 ans 구조로 매핑.
+                _push_history((
+                    "assistant", xres.rendered_markdown,
+                    {
+                        "contexts": xres.chunks,
+                        "critical": False,
+                        "kind": None,
+                        "thinking": "",
+                        "elapsed": xres.elapsed_total_ms / 1000.0,
+                        "query_log_id": None,
+                        "original_q": q,
+                        "confidence": "high",
+                    },
+                ))
+                # === [PR-Fix-History-Push] 끝 ===
                 return
             except Exception as _xerr:
                 import sys as _xsys
