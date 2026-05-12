@@ -53,17 +53,63 @@ EMERGENCY_FORCE_INCLUDE_BOOST: float = 0.40
 FORCE_INCLUDE_DOC_BOOST: float = 0.50
 
 # Layer 3 (hardcoded title-based whitelist) — RPC + direct table 둘 다 실패 시
-# 최후 안전망. 운영 중 신규 doc 추가되면 본 리스트도 업데이트 (단, Layer 1/2
-# 정상 동작 시에는 사용 안 됨).
-FALLBACK_INCIDENT_DOC_TITLES: tuple = (
-    "AEO 출입통제",
-    "매장 안전보건관리 지침",
-    "안전보건관리규정",
-    "일반 사건사고 보고지침",
-    "중대 사건사고 보고지침",
-    "중대재해 대응 지침",
-    "사건, 부적합 시정조치 지침",
-)
+# 최후 안전망. user_incident_nodes 의 도메인 분류 후 해당 whitelist 만 매칭.
+# 운영 중 신규 doc 추가되면 본 dict 업데이트 (Layer 1/2 정상 동작 시 미사용).
+# PR-Fix-L3-Domain-Split: 윤리 질문이 사건사고 SOP 만 retrieve 하는 회귀 해결.
+L3_FALLBACK_BY_DOMAIN: dict = {
+    "incident": (
+        "AEO 출입통제",
+        "매장 안전보건관리 지침",
+        "안전보건관리규정",
+        "일반 사건사고 보고지침",
+        "중대 사건사고 보고지침",
+        "중대재해 대응 지침",
+        "사건, 부적합 시정조치 지침",
+    ),
+    "ethics": (
+        "신세계그룹 CREDO",
+        "임직원 징계기준",
+        "클린뱅크 운영 지침",
+    ),
+}
+
+# user_incident_nodes (Gemini classifier AVAILABLE_INCIDENT_NODES + rule_based
+# fallback nexus_query_rewriter 노드 union) → 도메인 매핑.
+# 미정의 노드는 L3 매칭 시 양쪽 union (안전 fallback).
+INCIDENT_NODE_TO_DOMAIN: dict = {
+    # 사건사고·안전 도메인
+    "사건사고보고": "incident",
+    "인사사고": "incident",
+    "고객상해": "incident",
+    "정보유출": "incident",
+    "근로자안전": "incident",
+    "직원상해": "incident",
+    "매장사고": "incident",
+    "응급대응": "incident",
+    "안전관리": "incident",
+    "시설안전": "incident",
+    # 윤리·금품·CSR 도메인 (Gemini classifier 노드)
+    "윤리보고": "ethics",
+    "윤리위반": "ethics",
+    "비위행위": "ethics",
+    "횡령": "ethics",
+    "배임": "ethics",
+    "금전사고": "ethics",
+    "절도": "ethics",
+    "성희롱": "ethics",
+    "괴롭힘": "ethics",
+    # nexus_query_rewriter rule_based fallback 노드 (line 354~360 참고)
+    "조직관리": "ethics",
+    "횡령수수": "ethics",
+    "거래행위": "ethics",
+    "부정계산": "ethics",
+    "부정적립": "ethics",
+    "직원절취": "ethics",
+    "고객관리": "ethics",
+    "고객절취": "ethics",
+    "불공정행위": "ethics",
+    "거래관리": "ethics",
+}
 
 # 절차 키워드 — 매장 사고 응급/보고/분류 전반 (best chunk 선정용).
 # 청크가 본 키워드를 많이 포함할수록 절차 청크로 간주 → relevance-aware
@@ -358,9 +404,28 @@ def hybrid_search(
                     )
                     all_docs = docs_resp.data or []
                     matched_doc_ids = []
+                    # PR-Fix-L3-Domain-Split: user_incident_nodes 의 도메인 분류
+                    # → 해당 whitelist 만 매칭. 윤리 노드면 윤리 사규 whitelist,
+                    # 사건사고 노드면 기존 사건사고/안전 whitelist. 미매핑 노드는
+                    # 양쪽 union (안전 fallback).
+                    _domains: set = set()
+                    for _node in user_incident_nodes:
+                        _d = INCIDENT_NODE_TO_DOMAIN.get(_node)
+                        if _d:
+                            _domains.add(_d)
+                    if not _domains:
+                        _domains = set(L3_FALLBACK_BY_DOMAIN.keys())
+                    _active_titles: set = set()
+                    for _d in _domains:
+                        _active_titles |= set(L3_FALLBACK_BY_DOMAIN.get(_d, ()))
+                    print(
+                        f"[retriever:force_include:L3_HARDCODED] "
+                        f"domains={sorted(_domains)} whitelist_size={len(_active_titles)}",
+                        file=sys.stderr, flush=True,
+                    )
                     for doc in all_docs:
                         title = doc.get("title") or ""
-                        for known in FALLBACK_INCIDENT_DOC_TITLES:
+                        for known in _active_titles:
                             if known in title:
                                 matched_doc_ids.append(doc["id"])
                                 _doc_meta_enrich[doc["id"]] = doc
