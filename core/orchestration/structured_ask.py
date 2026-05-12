@@ -27,6 +27,42 @@ from core.auto.auto_classifier import auto_classify
 from core.auto.auto_golden import auto_golden
 
 
+# === [PR-Diag-1.1] structured_ask 진단 데코레이터 시작 ===
+import sys as _diag_sys
+import time as _diag_time
+import traceback as _diag_tb
+import functools as _diag_ft
+
+def _diag_structured_ask_wrap(fn):
+    @_diag_ft.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        _t0 = _diag_time.time()
+        # 두 번째 위치 인자(보통 query) 또는 'query'/'q' kwarg 추출 시도
+        _q_repr = "?"
+        try:
+            if len(args) >= 2:
+                _q_repr = repr(args[1])[:60]
+            elif "query" in kwargs:
+                _q_repr = repr(kwargs["query"])[:60]
+            elif "q" in kwargs:
+                _q_repr = repr(kwargs["q"])[:60]
+        except Exception:
+            pass
+        print(f"[structured_ask:ENTER] q={_q_repr} args_n={len(args)} kwargs={list(kwargs.keys())}", file=_diag_sys.stderr, flush=True)
+        try:
+            _result = fn(*args, **kwargs)
+            _md = getattr(_result, "rendered_markdown", None)
+            _md_len = len(_md) if isinstance(_md, str) else -1
+            print(f"[structured_ask:EXIT_OK] t+{_diag_time.time()-_t0:.2f}s rendered_md_len={_md_len} result_type={type(_result).__name__}", file=_diag_sys.stderr, flush=True)
+            return _result
+        except BaseException as _e:
+            print(f"[structured_ask:EXCEPT] t+{_diag_time.time()-_t0:.2f}s {type(_e).__name__}: {_e}", file=_diag_sys.stderr, flush=True)
+            print(_diag_tb.format_exc(), file=_diag_sys.stderr, flush=True)
+            raise
+    return _wrapped
+# === [PR-Diag-1.1] structured_ask 진단 데코레이터 끝 ===
+
+
 @dataclass
 class StructuredAskResult:
     rendered_markdown: str
@@ -40,6 +76,7 @@ class StructuredAskResult:
     elapsed_gemini_ms: int
 
 
+@_diag_structured_ask_wrap
 def structured_ask(
     supabase: Any,
     question: str,
