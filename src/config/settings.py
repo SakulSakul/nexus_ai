@@ -1,4 +1,4 @@
-"""환경 설정 통합. .streamlit/secrets.toml + env vars 양쪽 지원."""
+"""환경 설정 통합."""
 from __future__ import annotations
 
 import os
@@ -55,7 +55,7 @@ class Settings:
             supabase_service_role_key=srk,
             supabase_anon_key=ank,
             gemini_api_key=gem,
-            gemini_synth_model=_read("NEXUS_CHAT_MODEL", "gemini-2.5-pro") or "gemini-2.5-pro",
+            gemini_synth_model=_read("NEXUS_CHAT_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash",
             gemini_classify_model=_read("NEXUS_CLASSIFY_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash",
             gemini_embed_model=_read("NEXUS_EMBED_MODEL", "gemini-embedding-001") or "gemini-embedding-001",
             app_env=_read("APP_ENV", "beta") or "beta",
