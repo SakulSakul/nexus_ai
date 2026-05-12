@@ -1984,6 +1984,26 @@ def _run_ask(
     """
     import sys
     import traceback
+    # ── 진단 로그 (PR fix/run-ask-answer-display) ──
+    # STRUCTURED_SYNTHESIS_ENABLED='true' 가 Secrets 에 설정됐는데도 logs 에
+    # structured_ask 호출 흔적 zero → flag 가 settings() 에 제대로 매핑됐는지
+    # + 어느 branch 가 실제 실행되는지 stderr 로 가시화.
+    try:
+        _diag_s = settings()
+        print(
+            f"[_run_ask] structured_enabled="
+            f"{getattr(_diag_s, 'structured_synthesis_enabled', 'ATTR_MISSING')!r} "
+            f"verified_enabled="
+            f"{getattr(_diag_s, 'chatbot_use_verified_ask', 'ATTR_MISSING')!r} "
+            f"q_head={q[:60]!r}",
+            file=sys.stderr, flush=True,
+        )
+    except Exception as _diag_err:
+        print(
+            f"[_run_ask] diag settings() failed: "
+            f"{type(_diag_err).__name__}: {_diag_err}",
+            file=sys.stderr, flush=True,
+        )
     if not _check_rate_limit():
         s = settings()
         with st.chat_message("assistant"):
@@ -2178,6 +2198,7 @@ def _run_ask(
         # ─────────────────────────────────────────────────
         _s_phase75 = settings()
         if getattr(_s_phase75, "structured_synthesis_enabled", False):
+            print("[_run_ask] X+ structured_ask branch entered", file=sys.stderr, flush=True)
             try:
                 from core.orchestration.structured_ask import structured_ask
                 with st.spinner("🏛️ 답변 생성 + 검증 중... (약 30~60초 소요)"):
@@ -2236,6 +2257,7 @@ def _run_ask(
         # ─────────────────────────────────────────────────
         _s_phase4 = settings()
         if getattr(_s_phase4, "chatbot_use_verified_ask", False):
+            print("[_run_ask] verified_ask branch entered", file=sys.stderr, flush=True)
             try:
                 from core.orchestration.verified_ask import verified_ask
                 with st.spinner("🔄 답변 생성 + 검증 중... (약 30~60초 소요)"):
@@ -2283,6 +2305,10 @@ def _run_ask(
                     file=_vsys.stderr, flush=True,
                 )
 
+        print(
+            "[_run_ask] fallback ask_stream branch entered",
+            file=sys.stderr, flush=True,
+        )
         stream_buffer = ""
         for attempt in range(3):
             try:
@@ -2335,6 +2361,13 @@ def _run_ask(
             unsafe_allow_html=True,
         )
         progress_bar.empty()
+
+        print(
+            f"[_run_ask] post-stream ans_present={ans is not None} "
+            f"buffer_len={len(stream_buffer or '')} "
+            f"ans_text_len={len(getattr(ans, 'text', '') or '') if ans else 0}",
+            file=sys.stderr, flush=True,
+        )
 
         if ans is None:
             # 부분 stream 잔재 정리 — 에러 메시지로 깔끔히 대체
