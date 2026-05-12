@@ -104,7 +104,7 @@ def settings() -> Settings:
         consent_version=get_secret("NEXUS_CONSENT_VERSION", "v1"),
         anthropic_api_key=get_secret("ANTHROPIC_API_KEY"),
         chat_provider=get_secret("NEXUS_CHAT_PROVIDER", "gemini").lower(),
-        chat_fallback_provider=get_secret("NEXUS_CHAT_FALLBACK", "claude").lower(),
+        chat_fallback_provider=get_secret("NEXUS_CHAT_FALLBACK", "").lower(),
         claude_model=get_secret("NEXUS_CLAUDE_MODEL", "claude-opus-4-7"),
         claude_effort=get_secret("NEXUS_CLAUDE_EFFORT", "medium").lower(),
         confidence_high=float(get_secret("NEXUS_CONFIDENCE_HIGH", "0.025")),
