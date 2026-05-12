@@ -2205,6 +2205,47 @@ def _run_ask(
                     progress_bar.progress(0.3, text="auto_classify → retrieve → 검증 중...")
                     xres = structured_ask(sb, effective_q, audit_source="live_chat")
                     progress_bar.progress(1.0, text="✅ 검증 완료")
+                    # === [PR-Fix-Render-1] X+ 답변 렌더 안전망 시작 ===
+                    import sys as _rf_sys, traceback as _rf_tb
+                    import streamlit as _rf_st
+
+                    _rf_md = None
+                    _rf_xres_type = type(xres).__name__ if xres is not None else "None"
+                    try:
+                        _rf_md = xres.rendered_markdown if xres is not None else None
+                    except Exception as _rf_e_attr:
+                        print(f"[_run_ask:X+:RENDER] attr_error {type(_rf_e_attr).__name__}: {_rf_e_attr}", file=_rf_sys.stderr, flush=True)
+
+                    _rf_md_len = len(_rf_md) if isinstance(_rf_md, str) else -1
+                    print(f"[_run_ask:X+:RENDER] xres={_rf_xres_type} md_len={_rf_md_len}", file=_rf_sys.stderr, flush=True)
+
+                    if isinstance(_rf_md, str) and _rf_md.strip():
+                        # 1순위: 기존 placeholder 가 있으면 사용 (스트리밍 UI 와 일관성)
+                        _rf_used_placeholder = False
+                        try:
+                            _rf_ph = locals().get("answer_placeholder", None)
+                            if _rf_ph is not None and hasattr(_rf_ph, "markdown"):
+                                _rf_ph.markdown(_rf_md)
+                                _rf_used_placeholder = True
+                                print(f"[_run_ask:X+:RENDER] placeholder.markdown OK", file=_rf_sys.stderr, flush=True)
+                        except Exception as _rf_e_ph:
+                            print(f"[_run_ask:X+:RENDER] placeholder fail {type(_rf_e_ph).__name__}: {_rf_e_ph}", file=_rf_sys.stderr, flush=True)
+                            print(_rf_tb.format_exc(), file=_rf_sys.stderr, flush=True)
+                        # 2순위: placeholder 가 없거나 실패했으면 st.markdown 직접 (반드시 화면에 박힘)
+                        if not _rf_used_placeholder:
+                            try:
+                                _rf_st.markdown(_rf_md)
+                                print(f"[_run_ask:X+:RENDER] st.markdown direct OK", file=_rf_sys.stderr, flush=True)
+                            except Exception as _rf_e_st:
+                                print(f"[_run_ask:X+:RENDER] st.markdown fail {type(_rf_e_st).__name__}: {_rf_e_st}", file=_rf_sys.stderr, flush=True)
+                                print(_rf_tb.format_exc(), file=_rf_sys.stderr, flush=True)
+                    else:
+                        print(f"[_run_ask:X+:RENDER] empty/None md — showing error", file=_rf_sys.stderr, flush=True)
+                        try:
+                            _rf_st.error(f"⚠ 답변 생성은 완료되었으나 출력이 비어있습니다 (md_len={_rf_md_len}). 다시 시도하거나 관리자에게 문의하세요.")
+                        except Exception:
+                            pass
+                    # === [PR-Fix-Render-1] X+ 답변 렌더 안전망 끝 ===
                 _v = xres.verification.verdict
                 _s = xres.verification.overall_score
                 if _v == "pass":
@@ -2215,7 +2256,7 @@ def _run_ask(
                     st.error(f"❌ 답변 신뢰도 부족 (score {_s:.0f}/100)")
                 else:
                     st.error("🔥 검증 시스템 오류")
-                answer_placeholder.markdown(xres.rendered_markdown)
+                # [PR-Fix-Render-1] disabled — replaced by safety net below: answer_placeholder.markdown(xres.rendered_markdown)
                 with st.expander(
                     f"🔬 상세 검증 정보 "
                     f"(⏱️ 전체 {xres.elapsed_total_ms}ms / Gemini {xres.elapsed_gemini_ms}ms / "
@@ -2243,11 +2284,22 @@ def _run_ask(
                 return
             except Exception as _xerr:
                 import sys as _xsys
+                import traceback as _xtb
                 print(
-                    f"[app:_run_ask] structured_ask failed, fallback to next layer: "
-                    f"{type(_xerr).__name__}: {_xerr}",
+                    f"[_run_ask:X+:EXCEPT] {type(_xerr).__name__}: {_xerr}",
                     file=_xsys.stderr, flush=True,
                 )
+                print(_xtb.format_exc(), file=_xsys.stderr, flush=True)
+                # 마지막 안전망 — except 안에서도 답변 박기 시도 (xres 가 except 진입 전에 만들어졌다면)
+                try:
+                    if 'xres' in dir() and xres is not None:
+                        _emd = getattr(xres, 'rendered_markdown', None)
+                        if isinstance(_emd, str) and _emd.strip():
+                            import streamlit as _est
+                            _est.markdown(_emd)
+                            print(f"[_run_ask:X+:EXCEPT] recovered render via st.markdown", file=_xsys.stderr, flush=True)
+                except Exception:
+                    pass
 
         # ─────────────────────────────────────────────────
         # Phase 4 (PR #98): verified_ask 분기 (feature flag).
