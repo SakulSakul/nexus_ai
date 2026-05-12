@@ -16,7 +16,12 @@ from src.service.prompts import (
 )
 
 
-SIMILARITY_THRESHOLD: float = 0.55
+# ── 임계치 상수
+# SIMILARITY_THRESHOLD: nexus_hybrid_search_v2 가 RRF score 만 반환 (cosine 아님).
+# RRF score 범위 ~0.005~0.05 라 의미있는 cosine threshold 와 단위 mismatch.
+# Layer 1 (threshold) 비활성. 진짜 방어는 Layer 2 (prompt forcing) + Layer 3
+# (post-LLM citation validator) 가 담당. chunks 0 만 insufficient 강제.
+SIMILARITY_THRESHOLD: float = 0.0
 RETRIEVE_TOP_K: int = 8
 DEFAULT_CATEGORIES: tuple = ("공통",)
 
