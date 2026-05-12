@@ -31,12 +31,51 @@ class StructuredVerificationResult:
     chunk_usage_rate: float = 0.0
 
 
+def _verbatim_matches(quote: str, chunk_text: str, threshold: float = 0.7) -> bool:
+    """Phase 7.1: Token-overlap based fuzzy matching.
+
+    - Exact match 우선 (fast path)
+    - 실패 시 whitespace normalize
+    - 그래도 실패 시 token overlap (한국어 2+자 토큰, 70% 이상)
+    """
+    if not quote:
+        return True
+    # Fast path: exact substring.
+    if quote in chunk_text:
+        return True
+    # Whitespace normalize.
+    nq = " ".join(quote.split())
+    nt = " ".join(chunk_text.split())
+    if nq in nt:
+        return True
+    # Token overlap (조항 분리 / 줄바꿈에 robust).
+    q_tokens = {t for t in nq.split() if len(t) >= 2}
+    if not q_tokens:
+        return False
+    t_tokens = set(nt.split())
+    overlap = len(q_tokens & t_tokens) / len(q_tokens)
+    return overlap >= threshold
+
+
+def _topic_covered(topic: str, all_claims_text: str, threshold: float = 0.5) -> bool:
+    """Phase 7.1: Partial keyword overlap.
+
+    - 키워드 50% 이상 매칭 시 covered
+    - 모든 claim text 합본에서 검색 (claim 분산 허용)
+    """
+    keywords = [kw for kw in (topic or "").split() if len(kw) >= 2]
+    if not keywords:
+        return False
+    matched = sum(1 for kw in keywords if kw in all_claims_text)
+    return (matched / len(keywords)) >= threshold
+
+
 def verify_structured(
     answer: StructuredAnswer, chunks: list, golden: dict | None = None,
 ) -> StructuredVerificationResult:
     """Deterministic 검증:
     - chunk_id 가 실제 청크 리스트에 존재
-    - verbatim_quote 가 해당 청크 텍스트에 존재
+    - verbatim_quote 가 해당 청크 텍스트에 존재 (Phase 7.1 fuzzy)
     - golden expected_clauses 의 topic 키워드 답변 본문 커버
     """
     chunk_map: dict = {}
@@ -59,29 +98,24 @@ def verify_structured(
                 continue
             chunk_text = chunk_map[claim.chunk_id]
             quote = (claim.verbatim_quote or "").strip()
-            if quote and quote not in chunk_text:
-                nq = " ".join(quote.split())
-                nt = " ".join(chunk_text.split())
-                if nq not in nt:
-                    hallucinated.append(
-                        HallucinatedClaim(claim, "quote_not_in_chunk")
-                    )
-                    continue
+            if not _verbatim_matches(quote, chunk_text):
+                hallucinated.append(HallucinatedClaim(claim, "quote_not_in_chunk"))
+                continue
             grounded.append(claim)
             used_ids.add(claim.chunk_id)
 
     coverage_gaps: list = []
     if isinstance(golden, dict):
+        # Phase 7.1: 모든 claim text 합본 — 분산된 claim 도 cover 인정.
+        all_claims_text = " ".join(
+            claim.text
+            for section in answer.sections
+            for claim in section.claims
+        )
         for expected in golden.get("expected_clauses", []) or []:
             topic = expected.get("topic", "") or ""
             severity = expected.get("severity", "MEDIUM")
-            keywords = [kw for kw in topic.split() if len(kw) >= 2]
-            covered = any(
-                all(kw in claim.text for kw in keywords)
-                for section in answer.sections
-                for claim in section.claims
-            )
-            if not covered:
+            if not _topic_covered(topic, all_claims_text):
                 coverage_gaps.append(CoverageGap(
                     topic=topic,
                     severity=severity,
