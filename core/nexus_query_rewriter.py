@@ -600,3 +600,46 @@ def nexus_build_keyword_tsquery(text: str, original: str | None = None) -> str:
     uniq = _nexus_expand_with_synonyms(uniq)
     uniq = uniq + _nexus_expand_with_incident_taxonomy(uniq)
     return " | ".join(f"{t}:*" for t in uniq)
+
+
+def nexus_build_pgroonga_query(text: str, original: str | None = None) -> str:
+    """자연어/재작성 쿼리를 pgroonga &@~ 호환 OR query 로 변환.
+    예: '고객이 매장에 처리하나요' -> '고객 OR 매장 OR 처리'
+    pgroonga 의 &@~ 연산자는 띄어쓰기를 AND 로 해석하므로 명시적 OR
+    키워드 필요. 띄어쓰기 default 와 `||` 는 0건 매칭됨이 SQL 검증으로
+    확정 (2026-05-13). 같은 동의어 확장/incident taxonomy 적용 —
+    tsquery 빌더와 동일 토큰 풀.
+    original: 사용자 원문(rewritten 적용 전). 전달 시 원문 토큰도 dict
+    매핑에 노출되어, rewriter 가 동사("넘어졌어"/"다쳤")를 abstract
+    키워드로 치환해도 dict expansion 이 트리거된다.
+    """
+    if not text:
+        return ""
+    tokens = re.findall(r"[가-힣A-Za-z0-9]+", text)
+    cleaned: list[str] = []
+    for tok in tokens:
+        for p in _KOREAN_PARTICLES:
+            if tok.endswith(p) and len(tok) > len(p) + 1:
+                tok = tok[: -len(p)]
+                break
+        if len(tok) >= 2:
+            cleaned.append(tok)
+    if original:
+        original_tokens = re.findall(r"[가-힣A-Za-z0-9]+", original)
+        for tok in original_tokens:
+            for p in _KOREAN_PARTICLES:
+                if tok.endswith(p) and len(tok) > len(p) + 1:
+                    tok = tok[: -len(p)]
+                    break
+            if len(tok) >= 2:
+                cleaned.append(tok)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for t in cleaned:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    uniq = _nexus_expand_with_synonyms(uniq)
+    uniq = uniq + _nexus_expand_with_incident_taxonomy(uniq)
+    # pgroonga &@~ 형식 — 명시적 OR. 띄어쓰기 default 는 AND 로 해석되어 recall 처참.
+    return " OR ".join(uniq)
