@@ -1268,6 +1268,16 @@ def _render_empty_state(sb) -> None:
         pass
     _weather_line = " · ".join(_weather_parts)
 
+    # 오늘의 사규 한 줄 (silent fail) — DF COMPASS 본질 = 컴플라이언스 교육.
+    _tip_line: str = ""
+    try:
+        from core.utils.compliance_tips import get_daily_tip
+        _tip = get_daily_tip()
+        if _tip:
+            _tip_line = f'💡 오늘의 한 줄: "{_tip}"'
+    except Exception:
+        pass
+
     # Hero (empty state 일 때만) — H1 은 brand statement (안정), 동적
     # personality 인사는 chat_message 안에. 두 번 렌더링 방지.
     st.markdown(
@@ -1284,10 +1294,19 @@ def _render_empty_state(sb) -> None:
     )
 
     with st.chat_message("assistant", avatar="🧭"):
-        _greeting_block = (
-            f"오늘은 {now.strftime('%Y-%m-%d')}, 날씨는 {_weather_line} 입니다.\n\n{greeting}"
+        # 헤더 / 팁 / 인사 — 3-layer 조합 (각 layer 비어있으면 자동 skip).
+        _header = (
+            f"오늘은 {now.strftime('%Y-%m-%d')}, 날씨는 {_weather_line} 입니다."
             if _weather_line
-            else greeting
+            else f"오늘은 {now.strftime('%Y-%m-%d')}입니다."
+        )
+        _greeting_block_parts = [_header]
+        if _tip_line:
+            _greeting_block_parts.append(_tip_line)
+        _greeting_block_parts.append("")  # blank line
+        _greeting_block_parts.append(greeting)
+        _greeting_block = "  \n".join(
+            p for p in _greeting_block_parts if p is not None
         )
         st.markdown(
             f"{_greeting_block}\n\n"
