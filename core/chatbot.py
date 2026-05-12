@@ -764,9 +764,16 @@ _DOC_KIND_RATIOS: "OrderedDict[str, int]" = OrderedDict([
 # 카테고리 specific docs 누락. 5 chunks 까지 보존 — 나머지는 category 청크용.
 _UNIVERSAL_SOP_MAX_CHUNKS: int = 5
 
-# Phase 6: retriever pool 확장 — category-specific docs 가 _balance_by_doc_kind
-# 에서 universal SOP 와 경쟁할 때 더 많이 surface 되도록.
-_POOL_SIZE_MARGIN: int = 8  # 기존 3 → 8 (raw pool ~15 chunks)
+# PR-Fix-DocKind-Preserve: doc_kind=penalty/case 강제 보존 cap.
+# hybrid_search 가 한국어 kw 매칭 부족(text_tsv='simple')으로 penalty/case
+# 사규를 pool 안에 못 띄울 때, contexts_raw 안의 해당 chunks 를 universal_sop
+# 와 동등 패턴으로 추가 보존. categories 필터는 이미 적용됨.
+_FORCE_KIND_MAX: dict[str, int] = {"penalty": 2, "case": 2}
+
+# Phase 6 → PR-Fix-DocKind-Preserve: retriever pool 확장 — penalty/case 사규
+# 가 raw pool 안에 들어올 확률 증가 (vector-only ranking 에서 일반적 사규의
+# 점수가 specific 사규보다 낮은 회귀 완화).
+_POOL_SIZE_MARGIN: int = 30  # PR-Fix-DocKind-Preserve: 8 → 30 (raw pool ~37 chunks)
 
 
 def _balance_by_doc_kind(
@@ -931,6 +938,28 @@ def ask(
             f"[chatbot:ask] universal_sop_preserved={_sop_preserved}/{_UNIVERSAL_SOP_MAX_CHUNKS} "
             f"contexts_after_balance={len(contexts)}",
             file=_sys.stderr, flush=True,
+        )
+    # PR-Fix-DocKind-Preserve: doc_kind=penalty/case 도 동일 패턴으로 강제 보존.
+    # universal_sop 와 같은 흐름 — contexts_raw 안의 해당 kind chunks 를
+    # _FORCE_KIND_MAX 까지 contexts 에 추가. categories 필터는 hybrid_search 단계에서 적용됨.
+    _kind_preserved: dict[str, int] = {k: 0 for k in _FORCE_KIND_MAX}
+    for c in contexts_raw:
+        kind = c.get("doc_kind")
+        if kind not in _FORCE_KIND_MAX:
+            continue
+        if _kind_preserved[kind] >= _FORCE_KIND_MAX[kind]:
+            continue
+        cid = c.get("chunk_id")
+        if cid and cid not in _balanced_ids:
+            contexts.append(c)
+            _balanced_ids.add(cid)
+            _kind_preserved[kind] += 1
+    if any(_kind_preserved.values()):
+        import sys as _sys_fk
+        print(
+            f"[chatbot:ask] force_kind_preserved={_kind_preserved} "
+            f"contexts_after_force_kind={len(contexts)}",
+            file=_sys_fk.stderr, flush=True,
         )
     _emit("search_done", {
         "doc_titles": [c.get("doc_title", "") for c in contexts if c.get("doc_title")],
@@ -1280,6 +1309,26 @@ def ask_stream(
             f"[chatbot:ask_stream] universal_sop_preserved={_sop_preserved}/{_UNIVERSAL_SOP_MAX_CHUNKS} "
             f"contexts_after_balance={len(contexts)}",
             file=_sys.stderr, flush=True,
+        )
+    # PR-Fix-DocKind-Preserve: ask_stream 도 동일 force-kind preserve.
+    _kind_preserved: dict[str, int] = {k: 0 for k in _FORCE_KIND_MAX}
+    for c in contexts_raw:
+        kind = c.get("doc_kind")
+        if kind not in _FORCE_KIND_MAX:
+            continue
+        if _kind_preserved[kind] >= _FORCE_KIND_MAX[kind]:
+            continue
+        cid = c.get("chunk_id")
+        if cid and cid not in _balanced_ids:
+            contexts.append(c)
+            _balanced_ids.add(cid)
+            _kind_preserved[kind] += 1
+    if any(_kind_preserved.values()):
+        import sys as _sys_fk2
+        print(
+            f"[chatbot:ask_stream] force_kind_preserved={_kind_preserved} "
+            f"contexts_after_force_kind={len(contexts)}",
+            file=_sys_fk2.stderr, flush=True,
         )
     _emit("search_done", {
         "doc_titles": [c.get("doc_title", "") for c in contexts if c.get("doc_title")],
