@@ -14,14 +14,17 @@ from src.config.settings import Settings
 
 _CLASSIFY_CONFIG = {
     "temperature": 0.0,
-    "max_output_tokens": 200,
+    "max_output_tokens": 2048,
     "response_mime_type": "application/json",
 }
 
+# Gemini 2.5 Pro: thinking tokens 가 max_output_tokens 에 포함됨.
+# 1200 으로는 thinking 만으로 다 소진 → response.text 빈 값 → RuntimeError.
+# 8192 = thinking 충분 + 답변 본문 (~1500 tokens) 여유.
 _SYNTHESIS_CONFIG = {
     "temperature": 0.0,
     "top_p": 0.95,
-    "max_output_tokens": 1200,
+    "max_output_tokens": 8192,
 }
 
 _EMBED_TASK_TYPES = {
@@ -74,7 +77,16 @@ class GeminiClient(LLMClient):
         )
         text = (response.text or "").strip()
         if not text:
-            raise RuntimeError("Gemini returned empty response")
+            # finish_reason 노출 — 디버그용 (MAX_TOKENS / SAFETY / etc.)
+            finish_reason = "unknown"
+            try:
+                if response.candidates:
+                    finish_reason = str(response.candidates[0].finish_reason)
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"Gemini returned empty response (finish_reason={finish_reason})"
+            )
         return text
 
     def embed(self, text: str, task_type: str = "RETRIEVAL_QUERY") -> list[float]:
