@@ -1255,6 +1255,19 @@ def _render_empty_state(sb) -> None:
     now = _dt.now()
     greeting = _cached_dynamic_greeting(now.hour, now.weekday())
 
+    # 날씨 헤더 — 서울 + 인천 동시 표시 (silent fail, 30분 cache).
+    _weather_parts: list = []
+    try:
+        from core.utils.weather import get_all_weather
+        for _city, _w in (get_all_weather() or {}).items():
+            if _w:
+                _weather_parts.append(
+                    f"{_city} {_w['emoji']} {_w['description']} {_w['temperature']}°C"
+                )
+    except Exception:
+        pass
+    _weather_line = " · ".join(_weather_parts)
+
     # Hero (empty state 일 때만) — H1 은 brand statement (안정), 동적
     # personality 인사는 chat_message 안에. 두 번 렌더링 방지.
     st.markdown(
@@ -1271,8 +1284,13 @@ def _render_empty_state(sb) -> None:
     )
 
     with st.chat_message("assistant", avatar="🧭"):
+        _greeting_block = (
+            f"오늘은 {now.strftime('%Y-%m-%d')}, 날씨는 {_weather_line} 입니다.\n\n{greeting}"
+            if _weather_line
+            else greeting
+        )
         st.markdown(
-            f"{greeting}\n\n"
+            f"{_greeting_block}\n\n"
             "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
         )
         # PR-Fun1.4 작업 4: PR-3 의 답변 예시 expander 복구.
