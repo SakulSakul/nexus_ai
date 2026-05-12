@@ -2126,6 +2126,64 @@ def _run_ask(
                 progress_bar.progress(1.0, text="✅ 답변 완료")
 
         # ─────────────────────────────────────────────────
+        # Phase 7.5 (PR #108): X+ structured_ask 분기 (최우선).
+        # STRUCTURED_SYNTHESIS_ENABLED=True 시 auto_classify → retrieve →
+        # auto_golden → structured synthesis (헌법적 제약) → deterministic verify.
+        # 기본 False — 라이브 chat 영향 zero.
+        # ─────────────────────────────────────────────────
+        _s_phase75 = settings()
+        if getattr(_s_phase75, "structured_synthesis_enabled", False):
+            try:
+                from core.orchestration.structured_ask import structured_ask
+                with st.spinner("🏛️ 답변 생성 + 검증 중... (약 30~60초 소요)"):
+                    progress_bar.progress(0.3, text="auto_classify → retrieve → 검증 중...")
+                    xres = structured_ask(sb, effective_q, audit_source="live_chat")
+                    progress_bar.progress(1.0, text="✅ 검증 완료")
+                _v = xres.verification.verdict
+                _s = xres.verification.overall_score
+                if _v == "pass":
+                    st.success(f"✅ 검증 완료 (score {_s:.0f}/100)")
+                elif _v == "warn":
+                    st.warning(f"⚠️ 검증 결과 주의 (score {_s:.0f}/100)")
+                elif _v == "fail":
+                    st.error(f"❌ 답변 신뢰도 부족 (score {_s:.0f}/100)")
+                else:
+                    st.error("🔥 검증 시스템 오류")
+                answer_placeholder.markdown(xres.rendered_markdown)
+                with st.expander(
+                    f"🔬 상세 검증 정보 "
+                    f"(⏱️ 전체 {xres.elapsed_total_ms}ms / Gemini {xres.elapsed_gemini_ms}ms / "
+                    f"classifier `{xres.classifier_source}` / golden `{xres.golden_source}`)"
+                ):
+                    if xres.verification.coverage_gaps:
+                        st.markdown("**Coverage gaps:**")
+                        for gap in xres.verification.coverage_gaps:
+                            emoji = (
+                                "🔴" if gap.severity == "HIGH"
+                                else "🟡" if gap.severity == "MEDIUM"
+                                else "🟢"
+                            )
+                            st.markdown(f"{emoji} [{gap.severity}] {gap.topic}")
+                    if xres.verification.hallucinated_details:
+                        st.markdown("**Hallucinated:**")
+                        for h in xres.verification.hallucinated_details:
+                            st.markdown(f"- {h.reason}: {h.claim.text[:80]}")
+                    st.markdown(f"**Incident nodes:** `{xres.incident_nodes}`")
+                progress_placeholder.markdown(
+                    "<div style='height:0;overflow:hidden'></div>",
+                    unsafe_allow_html=True,
+                )
+                progress_bar.empty()
+                return
+            except Exception as _xerr:
+                import sys as _xsys
+                print(
+                    f"[app:_run_ask] structured_ask failed, fallback to next layer: "
+                    f"{type(_xerr).__name__}: {_xerr}",
+                    file=_xsys.stderr, flush=True,
+                )
+
+        # ─────────────────────────────────────────────────
         # Phase 4 (PR #98): verified_ask 분기 (feature flag).
         # CHATBOT_USE_VERIFIED_ASK=True 시 Gemini 답변 + Claude judge 검증
         # 통합 흐름. block-until-verified — 컴플라이언스 신뢰성 우선.
