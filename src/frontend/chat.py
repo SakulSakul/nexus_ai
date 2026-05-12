@@ -57,6 +57,11 @@ def _render_answer(answer: Answer) -> None:
         unsafe_allow_html=True,
     )
 
+    # 디버그 — error 시 실제 stack trace 노출 (베타 단계 한정)
+    if answer.status == AnswerStatus.ERROR and answer.error_message:
+        with st.expander("🔍 디버그 정보 (개발자용)"):
+            st.code(answer.error_message, language="text")
+
     meta_parts = []
     if answer.elapsed_ms:
         meta_parts.append(f"⏱ {answer.elapsed_ms}ms")
