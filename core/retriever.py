@@ -277,6 +277,19 @@ def hybrid_search(
         # to_tsquery('simple', …) 로 받기 때문에 plainto_tsquery 형식이 아닌
         # 정식 tsquery 표현식("토큰:* | 토큰:*") 을 넘긴다.
         ts_query = nexus_build_keyword_tsquery(retrieval_query_text, original=question)
+        # ── pgroonga variant 분기 (2026-05-13 추가)
+        # NEXUS_HYBRID_SEARCH_VARIANT 환경변수로 v2/v3 토글.
+        # - "v2" (기본): 기존 tsvector + to_tsquery 경로
+        # - "v3_pgroonga": pgroonga &@~ TokenMecab 한국어 형태소 매칭
+        from .config import get_secret
+        _hs_variant = (get_secret("NEXUS_HYBRID_SEARCH_VARIANT", "v2") or "v2").lower().strip()
+        if _hs_variant == "v3_pgroonga":
+            from .nexus_query_rewriter import nexus_build_pgroonga_query
+            _kw_query = nexus_build_pgroonga_query(retrieval_query_text, original=question)
+            _rpc_name = "nexus_hybrid_search_v3_pgroonga"
+        else:
+            _kw_query = ts_query
+            _rpc_name = "nexus_hybrid_search_v2"
         match_count = top_k or s.top_k
         # Incident-aware rerank: 사용자 질문 + rewritten 양쪽에서 incident
         # 노드 분류 후 RPC top-15 로 풀을 확대해 receive → meta.incident_nodes
@@ -284,12 +297,12 @@ def hybrid_search(
         rpc_match_count = max(match_count, 15)
         payload = {
             "query_embedding": retrieval_embedding,
-            "query_text": ts_query,
+            "query_text": _kw_query,
             "match_count": rpc_match_count,
             "rrf_k": 60,
             "pool_size": max(30, rpc_match_count * 6),
         }
-        res = supabase.rpc("nexus_hybrid_search_v2", payload).execute()
+        res = supabase.rpc(_rpc_name, payload).execute()
         raw_chunks = res.data or []
 
         # 1) 사용자 입력 incident 분류 — 원본 + rewritten 합쳐 노드 추출.
