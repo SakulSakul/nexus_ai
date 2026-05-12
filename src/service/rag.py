@@ -16,11 +16,6 @@ from src.service.prompts import (
 )
 
 
-# ── 임계치 상수
-# SIMILARITY_THRESHOLD: nexus_hybrid_search_v2 가 RRF score 만 반환 (cosine 아님).
-# RRF score 범위 ~0.005~0.05 라 의미있는 cosine threshold 와 단위 mismatch.
-# Layer 1 (threshold) 비활성. 진짜 방어는 Layer 2 (prompt forcing) + Layer 3
-# (post-LLM citation validator) 가 담당. chunks 0 만 insufficient 강제.
 SIMILARITY_THRESHOLD: float = 0.0
 RETRIEVE_TOP_K: int = 8
 DEFAULT_CATEGORIES: tuple = ("공통",)
@@ -66,9 +61,14 @@ class RAGService:
 
         validated_citations = self._validate_citations(answer_text, chunks)
         if not validated_citations:
-            return Answer.insufficient(
-                chunks_retrieved=len(chunks), elapsed_ms=self._ms(t0),
+            # 디버그 — 매칭 실패 시 LLM raw + chunk labels 노출 (베타 단계)
+            debug_info = (
+                f"Citation validation failed.\n"
+                f"--- LLM raw answer ---\n{answer_text}\n"
+                f"--- Available chunk labels ({len(chunks)}) ---\n"
+                + "\n".join(c.citation_label for c in chunks)
             )
+            return Answer.error(debug_info, elapsed_ms=self._ms(t0))
 
         return Answer(
             status=AnswerStatus.OK,
@@ -124,12 +124,16 @@ class RAGService:
     def _find_matching_chunk(
         self, tag: str, valid_labels: dict[str, Chunk],
     ) -> Optional[Chunk]:
+        # 1. exact match
         if tag in valid_labels:
             return valid_labels[tag]
+        # 2. document_title 이 tag 의 prefix/substring 이면 valid
+        # (LLM 이 조항을 chunk 의 article_no 와 다르게 표기해도 허용 —
+        # 사규명만 정확하면 hallucination 아님. Layer 2 (prompt) 가 진짜 방어.)
         for label, chunk in valid_labels.items():
-            if chunk.document_title in tag and tag in label:
+            if chunk.document_title and chunk.document_title in tag:
                 return chunk
-            if chunk.document_title == tag:
+            if chunk.document_title and tag in chunk.document_title:
                 return chunk
         return None
 
