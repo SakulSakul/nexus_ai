@@ -20,6 +20,12 @@ import re
 import sys
 from typing import Optional
 
+# PR-Fix-Domain-Synth: retriever 의 도메인 매핑 import (단방향 dependency,
+# retriever 는 synthesis_validator import 안 함 — cycle 없음).
+# STRUCTURED_INJECT 가 사건사고 SOP 4단계 구조를 ethics 도메인 질문에
+# 무차별 주입하는 회귀 차단.
+from core.retriever import INCIDENT_NODE_TO_DOMAIN
+
 
 # ──────────────────────────────────────────────────────────
 # 사건사고 카테고리 — 일반 사건사고 보고지침 3.1조 13개 대분류
@@ -97,6 +103,24 @@ _BODY_DENIAL_PATTERNS: tuple = (
     "확인되지 않습니다",
     "확인하기 어렵습니다",
 )
+
+
+# ──────────────────────────────────────────────────────────
+# Domain check (PR-Fix-Domain-Synth)
+# ──────────────────────────────────────────────────────────
+def _has_incident_domain(user_incident_nodes: Optional[list]) -> bool:
+    """user_incident_nodes 중 incident 도메인 노드가 하나라도 있으면 True.
+
+    PR-Fix-Domain-Synth: STRUCTURED_INJECT (Repair 3) 의 발동 조건.
+    universal_sop chunks 가 있어도 ethics 단독 도메인이면 사건사고 SOP
+    4단계 강제 주입 안 함 → LLM 의 원래 답변 (CREDO/징계기준 인용 포함) 보존.
+    """
+    if not user_incident_nodes:
+        return False
+    for _node in user_incident_nodes:
+        if INCIDENT_NODE_TO_DOMAIN.get(_node) == "incident":
+            return True
+    return False
 
 
 # ──────────────────────────────────────────────────────────
@@ -493,7 +517,8 @@ def validate_and_repair_answer(
     #   universal SOP 청크 있고 사규 기준 섹션이 미완성이면 → 강제 구조화 주입.
     #   denial pattern 유무와 무관하게 4단계 절대 보장 (LLM 자율 prune 차단).
     #   ⚖️ / 📂 / 권장 행동 / [참조] 영역은 절대 미수정.
-    if has_universal_sop:
+    # PR-Fix-Domain-Synth: ethics 단독 도메인은 STRUCTURED_INJECT SKIP — LLM 자유 답변 보존.
+    if has_universal_sop and _has_incident_domain(user_incident_nodes):
         structured = _build_structured_regulation_section(
             chunks, user_incident_nodes
         )
