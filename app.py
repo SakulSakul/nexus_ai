@@ -2256,7 +2256,8 @@ def _run_ask(
                     st.error(f"❌ 답변 신뢰도 부족 (score {_s:.0f}/100)")
                 else:
                     st.error("🔥 검증 시스템 오류")
-                # [PR-Fix-Render-1] disabled — replaced by safety net below: answer_placeholder.markdown(xres.rendered_markdown)
+                # [PR-Fix-Render-Final] re-enabled — safety net 은 spinner 안이라 collapsed. spinner-외부 호출 필요.
+                answer_placeholder.markdown(xres.rendered_markdown)
                 with st.expander(
                     f"🔬 상세 검증 정보 "
                     f"(⏱️ 전체 {xres.elapsed_total_ms}ms / Gemini {xres.elapsed_gemini_ms}ms / "
