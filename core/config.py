@@ -78,6 +78,10 @@ class Settings:
     # True 면 ask() 대신 verified_ask() 사용 — Gemini 답변 후 Claude 검증.
     # 기본 False (regression 위험 zero, 기존 streaming UX 보존).
     chatbot_use_verified_ask: bool
+    # Phase 7 X+ (PR #105): Fully Automated Constitution-Driven RAG flags.
+    structured_synthesis_enabled: bool
+    auto_classifier_enabled: bool
+    auto_golden_enabled: bool
 
 
 @lru_cache(maxsize=1)
@@ -107,6 +111,15 @@ def settings() -> Settings:
         confidence_medium=float(get_secret("NEXUS_CONFIDENCE_MEDIUM", "0.015")),
         chatbot_use_verified_ask=get_secret(
             "CHATBOT_USE_VERIFIED_ASK", "false",
+        ).strip().lower() in ("1", "true", "yes", "y"),
+        structured_synthesis_enabled=get_secret(
+            "STRUCTURED_SYNTHESIS_ENABLED", "false",
+        ).strip().lower() in ("1", "true", "yes", "y"),
+        auto_classifier_enabled=get_secret(
+            "AUTO_CLASSIFIER_ENABLED", "false",
+        ).strip().lower() in ("1", "true", "yes", "y"),
+        auto_golden_enabled=get_secret(
+            "AUTO_GOLDEN_ENABLED", "false",
         ).strip().lower() in ("1", "true", "yes", "y"),
     )
 

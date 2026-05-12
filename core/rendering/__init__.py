@@ -1,0 +1,1 @@
+"""Rendering — structured answer → markdown."""
