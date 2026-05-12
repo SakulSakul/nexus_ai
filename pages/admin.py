@@ -2780,6 +2780,100 @@ def _tab_search_compare(sb):
                     st.error(f"error: {selected.error}")
 
     # ── Audit log 조회 (Phase 3) ─────────────────────────
+    # ── X+ Fully Automated 테스트 (Phase 7) ──────────────
+    with st.expander("🏛️ X+ Fully Automated 테스트 (Phase 7)", expanded=False):
+        st.markdown(
+            "**Fully Automated Constitution-Driven RAG**  \n"
+            "auto_classify (Gemini Flash) → retrieve → auto_golden (Claude) → "
+            "structured synthesis (Gemini Pro) → deterministic verify."
+        )
+        xplus_q = st.text_input(
+            "테스트 query",
+            value="회사 돈을 훔치면 어떻게 됨?",
+            key="xplus_query",
+        )
+        if st.button("🏛️ X+ 실행", key="xplus_run"):
+            if sb is None:
+                st.error("Supabase 미설정 — 실행 불가.")
+            else:
+                from core.orchestration.structured_ask import structured_ask
+                with st.spinner("실행 중... (cache miss 시 30-60s)"):
+                    xres = structured_ask(sb, xplus_q, audit_source="admin_xplus_test")
+                col_x1, col_x2, col_x3, col_x4 = st.columns(4)
+                col_x1.metric("Verdict", xres.verification.verdict.upper())
+                col_x2.metric("Score", f"{xres.verification.overall_score:.0f}")
+                col_x3.metric("Grounded", xres.verification.grounded_count)
+                col_x4.metric("Halluc", xres.verification.hallucinated_count)
+                col_x5, col_x6, col_x7 = st.columns(3)
+                col_x5.metric("Classifier", xres.classifier_source)
+                col_x6.metric("Golden", xres.golden_source)
+                col_x7.metric("Latency", f"{xres.elapsed_total_ms}ms")
+                st.markdown("---")
+                st.markdown("### 📝 사용자 답변")
+                st.markdown(xres.rendered_markdown)
+                st.markdown(f"**Incident nodes:** `{xres.incident_nodes}`")
+                if xres.verification.coverage_gaps:
+                    st.markdown("### 🕳️ Coverage gaps")
+                    for g in xres.verification.coverage_gaps:
+                        emoji = "🔴" if g.severity == "HIGH" else "🟡"
+                        st.markdown(f"{emoji} **[{g.severity}]** {g.topic}")
+                if xres.verification.hallucinated_details:
+                    st.markdown("### ❌ Hallucinated")
+                    for h in xres.verification.hallucinated_details:
+                        st.markdown(f"- {h.reason}: {h.claim.text}")
+                with st.expander("🔧 Structured JSON"):
+                    st.json(xres.structured_answer.to_dict())
+
+    # ── Auto-tag all docs (Phase 7) ─────────────────────
+    with st.expander("🤖 Auto-tag all docs (Claude batch)", expanded=False):
+        st.markdown(
+            "Claude Opus 가 모든 active doc 의 incident_nodes + doc_kind "
+            "자동 추출. dry_run 먼저 권장."
+        )
+        tagger_dry_run = st.checkbox(
+            "dry_run (제안만)", value=True, key="tagger_dry_run",
+        )
+        if st.button("🤖 모든 doc 재태깅", key="tagger_run"):
+            from core.auto.auto_tagger import auto_tag_all_docs
+            tagger_progress = st.progress(0, text="시작...")
+
+            def _tagger_cb(i, total, title):
+                tagger_progress.progress(
+                    i / max(total, 1),
+                    text=f"{i}/{total}: {(title or '')[:40]}",
+                )
+
+            with st.spinner("Claude 호출 중... (active doc 1개당 ~5s)"):
+                tag_result = auto_tag_all_docs(
+                    dry_run=tagger_dry_run, progress_callback=_tagger_cb,
+                )
+            tagger_progress.progress(1.0, text="✅ 완료")
+            if "error" in tag_result:
+                st.error(f"실패: {tag_result['error']}")
+            else:
+                st.success(
+                    f"{tag_result['total']} docs "
+                    f"{'분석' if tagger_dry_run else '갱신'} 완료"
+                )
+                rows = []
+                for r in tag_result["results"]:
+                    rows.append({
+                        "doc": (r["title"] or "")[:40],
+                        "기존": len(r["existing_nodes"]),
+                        "Claude 추천": len(r["claude_proposed"]),
+                        "merged": len(r["merged"]),
+                        "추가": ", ".join(
+                            sorted(set(r["claude_proposed"]) - set(r["existing_nodes"]))
+                        )[:50],
+                        "doc_kind": (
+                            f"{r['doc_kind_current']} → {r['doc_kind_proposed']}"
+                            if r.get("doc_kind_proposed")
+                            else (r.get("doc_kind_current") or "")
+                        ),
+                        "applied": r.get("applied", "—"),
+                    })
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+
     with st.expander("📚 Audit log 조회 (Phase 3)", expanded=False):
         st.markdown(
             "Dual-LLM query/verification 영구 저장 기록 조회.  \n"
