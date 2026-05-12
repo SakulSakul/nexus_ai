@@ -83,7 +83,10 @@ class GeminiClient(LLMClient):
         response = self._client.models.embed_content(
             model=self._settings.gemini_embed_model,
             contents=text,
-            config=types.EmbedContentConfig(task_type=task_type),
+            config=types.EmbedContentConfig(
+                task_type=task_type,
+                output_dimensionality=768,
+            ),
         )
         if not response.embeddings:
             raise RuntimeError("Gemini returned no embedding")
