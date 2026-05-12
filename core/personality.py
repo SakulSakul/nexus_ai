@@ -17,6 +17,12 @@ import random
 from datetime import datetime
 from typing import Any
 
+try:
+    from zoneinfo import ZoneInfo
+    _KST = ZoneInfo("Asia/Seoul")
+except Exception:
+    _KST = None
+
 
 # ── 답변 후 격려 멘트 random pool ──────────────────────────
 NORMAL_CLOSING_POOL: tuple[str, ...] = (
@@ -91,7 +97,7 @@ _GREETINGS: dict = {
 
 def fallback_greeting(now: datetime | None = None) -> str:
     """Bucket 선택 후 해당 풀에서 랜덤 1문장. KST 기준 (호출자가 KST datetime 전달 권장)."""
-    n = now or datetime.now()
+    n = now or (datetime.now(_KST) if _KST is not None else datetime.now())
     weekday = n.weekday()        # 0=Mon ... 6=Sun
     hour = n.hour
 
@@ -115,7 +121,15 @@ def fallback_greeting(now: datetime | None = None) -> str:
         bucket = "evening"
     else:
         bucket = "night"
-    return random.choice(_GREETINGS[bucket])
+    greeting = random.choice(_GREETINGS[bucket])
+    # 진단용 임시 stderr 로그 (PR-Fix-Timezone-Greeting — 다음 PR 에서 제거 예정).
+    import sys as _tz_sys
+    print(
+        f"[hero_greeting:tz] hour_kst={hour} weekday={weekday} "
+        f"bucket={bucket} greeting={greeting!r}",
+        file=_tz_sys.stderr, flush=True,
+    )
+    return greeting
 
 
 # ── 동적 인사 LLM prompt builder ────────────────────────────
@@ -135,7 +149,7 @@ GREETING_SYSTEM_PROMPT = (
 
 
 def build_greeting_user_prompt(now: datetime | None = None) -> str:
-    n = now or datetime.now()
+    n = now or (datetime.now(_KST) if _KST is not None else datetime.now())
     weekday_kr = ("월", "화", "수", "목", "금", "토", "일")[n.weekday()]
     hour = n.hour
     if 5 <= hour < 12:    period = "오전"
