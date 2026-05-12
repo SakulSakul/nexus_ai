@@ -96,8 +96,9 @@ INCIDENT_NODE_TO_DOMAIN: dict = {
     "배임": "ethics",
     "금전사고": "ethics",
     "절도": "ethics",
-    "성희롱": "ethics",
-    "괴롭힘": "ethics",
+    # PR-Fix-Domain-Synth: 성희롱/괴롭힘 은 사건사고 보고 절차 (일반/중대 사건사고 보고지침) 적용 대상.
+    "성희롱": "incident",
+    "괴롭힘": "incident",
     # nexus_query_rewriter rule_based fallback 노드 (line 354~360 참고)
     "조직관리": "ethics",
     "횡령수수": "ethics",
