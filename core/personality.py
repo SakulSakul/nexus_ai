@@ -43,8 +43,54 @@ def closing_remark(*, is_critical: bool) -> str:
 
 
 # ── empty-state 인사 fallback (LLM 다운 시) ─────────────────
-# 시간대·요일 반영 hardcoded pool. LLM 호출 실패해도 personality 살림.
+# 시간대·요일 반영 rotation pool. LLM 호출 실패해도 personality 살림.
+# PR #111: 각 bucket 별 3+ 문장 random rotation (반복 노출 시 다양성).
+_GREETINGS: dict = {
+    "weekend": [
+        "주말에도 수고 많으십니다. 무엇을 도와드릴까요?",
+        "주말 출근하신 분들, 컴플라이언스 질문 편하게 주세요.",
+        "주말이라도 사규는 같이 봅니다. 무엇을 도와드릴까요?",
+    ],
+    "friday_pm": [
+        "주말 앞두고 잘 정리하세요. 사규 관련 질문은 언제든 환영입니다.",
+        "금요일 오후, 한 주 마무리 잘 하세요. 도와드릴 일 있으면 알려주세요.",
+        "주말 들어가시기 전에 정리할 사규 있으면 같이 보겠습니다.",
+    ],
+    "monday_am": [
+        "한 주 시작 좋습니다. 사규·윤리 관련 궁금한 점 편하게 물어보세요.",
+        "월요일 아침, 좋은 한 주 되세요. 컴플라이언스 도움 필요하면 알려주세요.",
+        "이번 주도 시작합니다. 사규 관련 궁금증 풀어드릴게요.",
+    ],
+    "morning": [
+        "안녕하세요. DF COMPASS 입니다. 좋은 아침입니다.",
+        "좋은 아침입니다. 오늘도 함께 사규를 확인해보겠습니다.",
+        "안녕하세요. 오늘 하루도 컴플라이언스로 든든하게 시작해요.",
+    ],
+    "noon": [
+        "점심 시간 수고 많으십니다. 답변이 필요하면 편하게 질문해 주세요.",
+        "점심 잘 드셨나요? 사규 질문도 식후로 부담 없이 던져 주세요.",
+        "한낮의 컴플라이언스 시간입니다. 무엇을 도와드릴까요?",
+    ],
+    "afternoon": [
+        "수고 많으십니다. 무엇을 도와드릴까요?",
+        "오후 업무 도중 사규 확인이 필요하면 바로 물어봐 주세요.",
+        "한창 바쁘실 시간이지만, 사규 질문은 빠르게 답해드립니다.",
+    ],
+    "evening": [
+        "오늘 하루도 고생 많으셨습니다. 마무리 전에 답변이 필요하면 도와드릴게요.",
+        "퇴근 전 마지막 정리하실 사규 있으면 같이 봅니다.",
+        "오늘 하루 마무리 잘 하시고, 사규 관련 궁금증 정리하고 가세요.",
+    ],
+    "night": [
+        "야간에도 수고 많으십니다. 사규 관련 질문은 언제든 환영입니다.",
+        "늦게까지 수고하시네요. 도움이 필요하면 편하게 물어봐 주세요.",
+        "야간 근무 중에도 컴플라이언스 함께 확인합니다.",
+    ],
+}
+
+
 def fallback_greeting(now: datetime | None = None) -> str:
+    """Bucket 선택 후 해당 풀에서 랜덤 1문장. KST 기준 (호출자가 KST datetime 전달 권장)."""
     n = now or datetime.now()
     weekday = n.weekday()        # 0=Mon ... 6=Sun
     hour = n.hour
@@ -54,20 +100,22 @@ def fallback_greeting(now: datetime | None = None) -> str:
     is_weekend = (weekday >= 5)
 
     if is_weekend:
-        return "주말에도 수고 많으십니다. 무엇을 도와드릴까요?"
-    if is_friday and hour >= 14:
-        return "주말 앞두고 잘 정리하세요. 사규 관련 질문은 언제든 환영입니다."
-    if is_monday and hour < 12:
-        return "한 주 시작 좋습니다. 사규·윤리 관련 궁금한 점 편하게 물어보세요."
-    if 5 <= hour < 12:
-        return "안녕하세요. DF COMPASS 입니다. 좋은 아침입니다."
-    if 12 <= hour < 14:
-        return "점심 시간 수고 많으십니다. 답변이 필요하면 편하게 질문해 주세요."
-    if 14 <= hour < 18:
-        return "수고 많으십니다. 무엇을 도와드릴까요?"
-    if 18 <= hour < 22:
-        return "오늘 하루도 고생 많으셨습니다. 마무리 전에 답변이 필요하면 도와드릴게요."
-    return "늦은 시간까지 수고 많으십니다. 사규 관련 질문은 언제든 환영입니다."
+        bucket = "weekend"
+    elif is_friday and hour >= 14:
+        bucket = "friday_pm"
+    elif is_monday and hour < 12:
+        bucket = "monday_am"
+    elif 5 <= hour < 12:
+        bucket = "morning"
+    elif 12 <= hour < 14:
+        bucket = "noon"
+    elif 14 <= hour < 18:
+        bucket = "afternoon"
+    elif 18 <= hour < 22:
+        bucket = "evening"
+    else:
+        bucket = "night"
+    return random.choice(_GREETINGS[bucket])
 
 
 # ── 동적 인사 LLM prompt builder ────────────────────────────

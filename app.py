@@ -1252,7 +1252,12 @@ def _render_empty_state(sb) -> None:
     core.personality 함수·변수는 보존 (미래 부활 여지).
     """
     from datetime import datetime as _dt
-    now = _dt.now()
+    # PR #111: KST timezone 명시 — 시스템 timezone 영향 zero.
+    try:
+        from zoneinfo import ZoneInfo
+        now = _dt.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        now = _dt.now()
     greeting = _cached_dynamic_greeting(now.hour, now.weekday())
 
     # 날씨 헤더 — 서울 + 인천 동시 표시 (silent fail, 30분 cache).
@@ -1295,10 +1300,13 @@ def _render_empty_state(sb) -> None:
 
     with st.chat_message("assistant", avatar="🧭"):
         # 헤더 / 팁 / 인사 — 3-layer 조합 (각 layer 비어있으면 자동 skip).
+        # PR #111: ISO date → "5월 12일 화요일" 한국어 포맷.
+        _weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
+        _date_str = f"{now.month}월 {now.day}일 {_weekday_kr}요일"
         _header = (
-            f"오늘은 {now.strftime('%Y-%m-%d')}, 날씨는 {_weather_line} 입니다."
+            f"오늘은 {_date_str}, 날씨는 {_weather_line} 입니다."
             if _weather_line
-            else f"오늘은 {now.strftime('%Y-%m-%d')}입니다."
+            else f"오늘은 {_date_str}입니다."
         )
         _greeting_block_parts = [_header]
         if _tip_line:
