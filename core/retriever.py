@@ -628,7 +628,7 @@ def hybrid_search(
         # 4) Deterministic Top-K Selection (PR #81)
         # 정렬: rrf_score 내림차순 + chunk_id 사전순 (UUID — 항상 동일 결과).
         MAX_CHUNKS_PER_DOC = 2
-        TOP_K = 5
+        TOP_K = 10
         raw_chunks.sort(
             key=lambda c: (
                 -(c.get("rrf_score") or 0.0),
