@@ -218,14 +218,20 @@ _REQUIRED_4SECTION_MARKERS: dict = {
 # Phase 1 (PR #94) — 일반 사건사고 보고 절차 섹션의 필수 조항 마커.
 # 모두 본문에 등장해야 complete 로 판정. 하나라도 누락이면 STRUCTURED_INJECT 트리거.
 # (현재 라이브 chat 흐름이 일부 조항을 자율 prune 하는 케이스 차단)
+# PR-Fix-Section-Detection-Markers: 조항 번호 marker → 절차 본문 keyword.
+# PR #133-#134 의 SystemPrompt 가 LLM 에게 조항 번호 인용 금지, PR #137
+# 의 structured SOP 본문도 조항 번호 제거 → LLM 답변에 조항 번호 등장
+# 안 함 → 기존 마커 (4.1.1 등) 매칭 0 → 매번 incomplete → 매번
+# STRUCTURED_INJECT 발동 (PR #133-#137 와 conflict). 절차 본문 의미
+# keyword 로 변경하여 LLM 답변 자연 등장 시 매칭 가능.
 _GENERAL_PROCEDURE_REQUIRED_MARKERS: tuple = (
-    r"4\.1\.1",
-    r"4\.1\.2",
-    r"4\.1\.3",
-    r"4\.1\.4",
-    r"4\.2\.1",
-    r"4\.2\.2",
-    r"4\.2\.3",
+    r"경중",                                # 4.1.1 — 경중 무관 모두 보고
+    r"즉시\s*보고|즉시\s*인지",              # 4.1.2 — 최초 인지자 즉시 보고
+    r"24시간",                              # 4.1.3-4 — 24시간 이내
+    r"유선|구두|SRMS",                     # 4.1.3 — 유선/SRMS 보고
+    r"리스크관리부서|CSR팀",                # 4.2.1 — 리스크관리부서장(CSR팀장)
+    r"본사\s*지원부서|담당임원",             # 4.2.2 — 본사 지원부서 + 담당임원
+    r"대표이사",                            # 4.2.3 — 대표이사 정식 서면
 )
 
 
