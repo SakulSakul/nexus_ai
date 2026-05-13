@@ -14,11 +14,24 @@ DF COMPASS Tier 1+2 (2026-05-11):
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import Any
 
 from .config import settings
 from .embedder import embed_one
+
+
+# PR-Fix-Domain-Bias: 문서 제목 prefix 도메인 추출 — 예 "(안전) 매장 안전보건..."
+# → "안전". per-domain cap 안전망의 단일 source of truth.
+_DOMAIN_PREFIX_RE = re.compile(r"^\s*\(([^)]+)\)")
+
+
+def _chunk_domain(chunk: dict) -> str:
+    """문서 제목 prefix 의 도메인 라벨 반환. 없으면 빈 문자열."""
+    title = chunk.get("doc_title") or ""
+    m = _DOMAIN_PREFIX_RE.match(title)
+    return m.group(1).strip() if m else ""
 
 
 # Tier 1 + Tier 2 활성화 토글. False 면 즉시 기존 RPC 경로로 롤백.
@@ -665,6 +678,10 @@ def hybrid_search(
         # 정렬: rrf_score 내림차순 + query_keyword_overlap 내림차순
         #     + procedure_keyword_count 내림차순 + chunk_id 사전순 (결정적).
         MAX_CHUNKS_PER_DOC = 2
+        # PR-Fix-Domain-Bias: 단일 도메인 (예 (안전) 26.5% chunk share) 이
+        # 비도메인 query (휴가/출장비 등) top_k 를 점유하는 bias 차단.
+        # force_include guaranteed_chunks 는 본 cap 면제 — 4-2 에서 무조건 추가.
+        MAX_CHUNKS_PER_DOMAIN = 3
         TOP_K = 10
 
         # === PR-Fix-Query-Aware-Ranking ===
@@ -740,11 +757,17 @@ def hybrid_search(
         final_rows: list = list(guaranteed_chunks)
         final_chunk_ids: set = {c.get("id") for c in final_rows if c.get("id")}
         doc_count_in_final: dict = {}
+        domain_count_in_final: dict = {}
         for c in final_rows:
             doc_id = c.get("document_id") or ""
             doc_count_in_final[doc_id] = doc_count_in_final.get(doc_id, 0) + 1
+            d = _chunk_domain(c)
+            if d:
+                domain_count_in_final[d] = domain_count_in_final.get(d, 0) + 1
 
         # 4-3) 남은 슬롯을 일반 chunk 로 채움 (diversity cap 적용).
+        # PR-Fix-Domain-Bias: per-domain cap (MAX_CHUNKS_PER_DOMAIN) 추가.
+        # 단일 도메인 over-saturation 방지 — guaranteed_chunks 는 cap 면제.
         for chunk in raw_chunks:
             if len(final_rows) >= TOP_K:
                 break
@@ -753,9 +776,14 @@ def hybrid_search(
             doc_id = chunk.get("document_id") or ""
             if doc_count_in_final.get(doc_id, 0) >= MAX_CHUNKS_PER_DOC:
                 continue
+            domain = _chunk_domain(chunk)
+            if domain and domain_count_in_final.get(domain, 0) >= MAX_CHUNKS_PER_DOMAIN:
+                continue
             final_rows.append(chunk)
             final_chunk_ids.add(chunk.get("id"))
             doc_count_in_final[doc_id] = doc_count_in_final.get(doc_id, 0) + 1
+            if domain:
+                domain_count_in_final[domain] = domain_count_in_final.get(domain, 0) + 1
 
         # 4-3.5) PR-Fix-Penalty-All-Chunks: penalty doc 청크 강제 보존.
         # 사규 답변 quality 보장 위해 임직원 징계기준 같은 penalty doc 의 모든
