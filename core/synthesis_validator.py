@@ -286,7 +286,7 @@ def _extract_classification(
     if not major:
         return None
 
-    lines = ["▼ 사건 분류", f"- 대분류: {major}"]
+    lines = ["**🗂️ 사건 분류**", "", f"* 대분류: {major}"]
     if minor:
         definition = None
         for chunk in general_chunks:
@@ -299,10 +299,11 @@ def _extract_classification(
                 definition = m.group(1).strip()
                 break
         if definition:
-            lines.append(f"- 중분류: {minor} ({definition})")
+            lines.append(f"* 중분류: {minor} ({definition})")
         else:
-            lines.append(f"- 중분류: {minor}")
-    lines.append("출처: (공통) 일반 사건사고 보고지침 3.1조")
+            lines.append(f"* 중분류: {minor}")
+    lines.append("")
+    lines.append("📎 ((공통) 일반 사건사고 보고지침)")
     return "\n".join(lines)
 
 
@@ -334,12 +335,17 @@ def _extract_severity_criteria(severe_chunks: list) -> Optional[str]:
                 matched.append(label)
     if not matched:
         return None
-    lines = ["▼ 일반 vs 중대 사건사고 판단",
-             "다음 중 하나라도 해당하면 중대 사건사고로 분류:"]
+    lines = [
+        "**⚖️ 일반 vs 중대 사건사고 판단**",
+        "",
+        "다음 중 하나라도 해당하면 중대 사건사고로 분류:",
+    ]
     for c in matched:
-        lines.append(f"- {c}")
+        lines.append(f"* {c}")
+    lines.append("")
     lines.append("위 조건 미해당 시 → 일반 사건사고로 처리")
-    lines.append("출처: (공통) 중대 사건사고 보고지침 3.1조")
+    lines.append("")
+    lines.append("📎 ((공통) 중대 사건사고 보고지침)")
     return "\n".join(lines)
 
 
@@ -348,19 +354,19 @@ def _extract_severity_criteria(severe_chunks: list) -> Optional[str]:
 # ──────────────────────────────────────────────────────────
 _GENERAL_PROCEDURE_PATTERNS: tuple = (
     (r"4\.1\.1[^\n]*경중[^\n]*",
-     "일반 사건사고는 경중 무관 모두 보고 (4.1.1조)"),
+     "일반 사건사고는 경중 무관 모두 보고"),
     (r"4\.1\.2[^\n]*최초\s*인지자[^\n]*즉시\s*보고[^\n]*",
-     "최초 인지자 즉시 보고 (4.1.2조)"),
+     "최초 인지자 즉시 보고"),
     (r"4\.1\.3[^\n]*24시간[^\n]*유선[^\n]*SRMS[^\n]*",
-     "24시간 이내 유선(구두) + SRMS 모두 이용하여 보고 (4.1.3조)"),
+     "24시간 이내 유선(구두) + SRMS 모두 이용하여 보고"),
     (r"4\.1\.4[^\n]*24시간[^\n]*정식\s*서면[^\n]*",
-     "24시간 이내 정식 서면 보고 (4.1.4조)"),
+     "24시간 이내 정식 서면 보고"),
     (r"4\.2\.1[^\n]*점장[^\n]*",
-     "최초 인지자 → 리스크관리부서장(CSR팀장) + 점장(점포)/해당팀장(본사) 즉시 보고 (4.2.1조)"),
+     "최초 인지자 → 리스크관리부서장(CSR팀장) + 점장(점포)/해당팀장(본사) 즉시 보고"),
     (r"4\.2\.2[^\n]*CSR팀[^\n]*",
-     "점장/팀장 → 본사 지원부서 팀장(CSR팀·인사팀·총무팀·경영관리팀) 병렬 + 담당임원 (4.2.2조)"),
+     "점장/팀장 → 본사 지원부서 팀장(CSR팀·인사팀·총무팀·경영관리팀) 병렬 + 담당임원"),
     (r"4\.2\.3[^\n]*대표이사[^\n]*",
-     "담당임원 보고 후 24시간 이내 대표이사까지 정식 서면 (4.2.3조)"),
+     "담당임원 보고 후 24시간 이내 대표이사까지 정식 서면"),
 )
 
 
@@ -375,10 +381,11 @@ def _extract_general_procedure(general_chunks: list) -> Optional[str]:
                 matched.append(label)
     if not matched:
         return None
-    lines = ["▼ 일반 사건사고 보고 절차"]
+    lines = ["**📋 일반 사건사고 보고 절차**", ""]
     for m in matched:
-        lines.append(f"- {m}")
-    lines.append("출처: (공통) 일반 사건사고 보고지침")
+        lines.append(f"* {m}")
+    lines.append("")
+    lines.append("📎 ((공통) 일반 사건사고 보고지침)")
     return "\n".join(lines)
 
 
@@ -406,10 +413,11 @@ def _extract_severe_procedure(severe_chunks: list) -> Optional[str]:
                 matched.append(label)
     if not matched:
         return None
-    lines = ["▼ 중대 사건사고 보고 절차"]
+    lines = ["**🚨 중대 사건사고 보고 절차**", ""]
     for m in matched:
-        lines.append(f"- {m}")
-    lines.append("출처: (공통) 중대 사건사고 보고지침 4.2조")
+        lines.append(f"* {m}")
+    lines.append("")
+    lines.append("📎 ((공통) 중대 사건사고 보고지침)")
     return "\n".join(lines)
 
 
