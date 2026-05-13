@@ -615,7 +615,7 @@ def validate_and_repair_answer(
         if _art:
             _doc_articles[_title].add(str(_art).strip())
 
-    _CITATION_RE = re.compile(r'📎\s*\(\(([^)]+?)\)\)')
+    _CITATION_RE = re.compile(r'📎\s*\(\(([^📎\n]+)\)')
     _hallucinated_refs: list = []
 
     def _validate_citation(match):
@@ -662,7 +662,7 @@ def validate_and_repair_answer(
         _hallucinated_refs.append(
             f"{matched_title} 제{','.join(invalid_cited)}조"
         )
-        return f"📎 (({matched_title}))"
+        return f"📎 ({matched_title})"
 
     _new_repaired = _CITATION_RE.sub(_validate_citation, repaired)
     if _new_repaired != repaired:
