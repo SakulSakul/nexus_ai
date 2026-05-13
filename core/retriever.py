@@ -742,6 +742,26 @@ def hybrid_search(
             final_chunk_ids.add(chunk.get("id"))
             doc_count_in_final[doc_id] = doc_count_in_final.get(doc_id, 0) + 1
 
+        # 4-3.5) PR-Fix-Penalty-All-Chunks: penalty doc 청크 강제 보존.
+        # 사규 답변 quality 보장 위해 임직원 징계기준 같은 penalty doc 의 모든
+        # 청크 (도입부 + 구체 부정행위 표) 가 LLM 컨텍스트에 들어가야 함.
+        # F-G8 (query keyword overlap) 만으론 도입부가 일반 어휘 ('회사',
+        # '징계') 매칭 多 로 우선되어 구체 표 청크 (예: chunk_idx=5 의 14번
+        # 회사 공금 횡령) 누락. TOP_K + MAX_CHUNKS_PER_DOC cap 무시하여
+        # penalty force_include 청크 전부 추가. input tokens +~1500 추정
+        # (Gemini 200K context 의 1% 미만, 무시 가능).
+        for chunk in raw_chunks:
+            if chunk.get("id") in final_chunk_ids:
+                continue
+            if (chunk.get("doc_kind") or "") != "penalty":
+                continue
+            if not chunk.get("force_included_by_intent"):
+                continue
+            final_rows.append(chunk)
+            final_chunk_ids.add(chunk.get("id"))
+            doc_id = chunk.get("document_id") or ""
+            doc_count_in_final[doc_id] = doc_count_in_final.get(doc_id, 0) + 1
+
         # 4-4) 안전망 — 여전히 부족하면 cap 무시 채움.
         for chunk in raw_chunks:
             if len(final_rows) >= TOP_K:
