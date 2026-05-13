@@ -386,7 +386,7 @@ _CONFIDENCE_PREFIX = (
     "[NOTE — 시스템 운영 신호]\n"
     "이 질문에 대한 사규 검색의 신뢰도가 낮다고 판정되었습니다. "
     "[신뢰도 가이드] 섹션을 활성화하여 답변하세요. 단호 어휘 대신 "
-    "추정형 표현을 쓰고, 답변 끝에 \"정확한 사항은 인사팀·CSR팀에 "
+    "추정형 표현을 쓰고, 답변 끝에 \"정확한 사항은 인사교육팀·CSR팀에 "
     "확인 바랍니다\" 한 줄을 추가하세요. 인라인 인용 (📎 + 볼드) 형식과 "
     "[참조: ...] 통합 출처 표기는 그대로 유지합니다.\n\n"
 )
@@ -418,7 +418,7 @@ def _maybe_prefix_system_prompt(
 
     medium 은 chip (🟡) 만 표시하고 본문 톤은 단호하게 유지 — 사용자가
     "보조 참고" 신호로 자체 판단할 수 있게. low 일 때만 추정형 톤 +
-    인사팀·CSR팀 안내 prefix 가 LLM system_instruction 에 prepend.
+    인사교육팀·CSR팀 안내 prefix 가 LLM system_instruction 에 prepend.
 
     critical 트리거 시는 [Critical Mode 답변 가이드] 가 우선이므로
     톤 완화 prefix 를 활성하지 않는다 (회사 보호 차원의 단호한 신고
