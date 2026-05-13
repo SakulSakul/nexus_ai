@@ -268,7 +268,21 @@ def _is_section_incomplete(section_text: str) -> tuple:
                 missing.append(
                     f"general_procedure_clauses(matched={matched_count}/{total}, missing={missing_clauses})"
                 )
-    return (len(missing) > 0, missing)
+    # PR-Fix-Section-Detection-Full: 4 sub-section 의 절반 이상 매칭 시
+    # OK 로 완화. PR #139 (general_procedure markers 절반 매칭) 의 자연
+    # 연장 — 4 sub-section 자체 매칭도 같은 절반 정책 적용.
+    #
+    # 직장 내 괴롭힘 query: LLM 답변에 classification + general_procedure
+    # 매칭, severity_criteria + severe_procedure 미매칭 (universal SOP 전용
+    # 키워드라 도메인 specific query 답변에 자연 등장 어려움). 기존 strict
+    # logic (len(missing) > 0) 매번 발동 → universal SOP 본문 강제 주입 →
+    # 도메인 mismatch (사망/중상/5인/1차 보고 등 직장 내 괴롭힘 무관 정보).
+    #
+    # 변경: 2 sub-section 이상 매칭 (4//2=2) 시 OK. LLM 답변에 절차 본문
+    # 일부 있으면 강제 주입 SKIP. 4 sub-section 모두 미매칭 (또는 3 미매칭)
+    # 시는 여전히 발동 — 안전망 유지.
+    MAX_ALLOWED_MISSING = len(_REQUIRED_4SECTION_MARKERS) // 2  # 4//2 = 2
+    return (len(missing) > MAX_ALLOWED_MISSING, missing)
 
 
 # ──────────────────────────────────────────────────────────
