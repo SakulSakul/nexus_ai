@@ -248,15 +248,25 @@ def _is_section_incomplete(section_text: str) -> tuple:
         if not any(kw in section_text for kw in keywords):
             missing.append(section_key)
             continue
-        # general_procedure 는 keyword 통과해도 필수 조항 마커 7개 모두 확인.
+        # general_procedure 는 keyword 통과해도 절차 본문 markers 검사.
+        # PR-Fix-Section-Detection-Threshold: 모든 markers 필수 → 절반
+        # (4개) 이상 매칭으로 완화. PR #138 (markers 절차 본문 keyword 변경)
+        # 후속 — '직장 내 괴롭힘' 같이 4/7 매칭 case 에서 매번 STRUCTURED_INJECT
+        # 발동되는 회귀 fix. LLM 답변 variability 허용.
         if section_key == "general_procedure":
-            missing_clauses = [
-                m for m in _GENERAL_PROCEDURE_REQUIRED_MARKERS
-                if not re.search(m, section_text)
-            ]
-            if missing_clauses:
+            matched_count = sum(
+                1 for m in _GENERAL_PROCEDURE_REQUIRED_MARKERS
+                if re.search(m, section_text)
+            )
+            total = len(_GENERAL_PROCEDURE_REQUIRED_MARKERS)
+            min_required = total // 2 + 1  # 7//2+1 = 4 (절반 이상)
+            if matched_count < min_required:
+                missing_clauses = [
+                    m for m in _GENERAL_PROCEDURE_REQUIRED_MARKERS
+                    if not re.search(m, section_text)
+                ]
                 missing.append(
-                    f"general_procedure_clauses(missing={missing_clauses})"
+                    f"general_procedure_clauses(matched={matched_count}/{total}, missing={missing_clauses})"
                 )
     return (len(missing) > 0, missing)
 
