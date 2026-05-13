@@ -799,7 +799,13 @@ def _balance_by_doc_kind(
             by_kind[kind].append(c)
     result: list[dict] = []
     for kind, n in ratios.items():
-        result.extend(by_kind[kind][:n])
+        # PR-Fix-Penalty-All-Chunks: penalty 는 cap 무시 — retriever 단계에서
+        # 강제 보존한 임직원 징계기준 등 모든 penalty 청크가 LLM 컨텍스트에
+        # 그대로 전달되어야 답변 ⚖️ 징계 기준 섹션의 구체 표 인용 보장.
+        if kind == "penalty":
+            result.extend(by_kind[kind])
+        else:
+            result.extend(by_kind[kind][:n])
     return result
 
 
