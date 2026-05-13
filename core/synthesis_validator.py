@@ -594,6 +594,89 @@ def validate_and_repair_answer(
                 )
                 break
 
+    # Repair 5 (PR-Fix-Citation-Grounding): 가짜 조문 번호 인용 검출 + 제거.
+    # LLM 이 청크 본문의 항목 번호 (예: '14. 회사 공금 횡령') 또는 sub-section
+    # 번호 (예: '3.1 신고/조사') 를 '제38조', '제3.1조' 등 가짜 조문번호로
+    # 변환 hallucinate 하는 회귀 차단. 사규 doc 의 청크 article_no 와
+    # cross-reference 후 매칭 안 되는 조문번호 → 인용 라벨에서 제거하고
+    # doc_title 만 보존. 답변 본문 내용은 청크에서 정확 인용된 상태이므로 유지.
+    #
+    # 데이터 근거 (2026-05-13 진단 SQL):
+    # - 임직원 징계기준 13 청크 article_no 전부 null → '제38조,39,40' hallucination
+    # - 일반 사건사고 보고지침 4 청크 article_no 전부 null → '제3.1조,4.1.1조' hallucination
+    # - 중대 사건사고 보고지침 1 청크 article_no='제8조' → 그것만 정상
+    _doc_articles: dict = {}
+    for _c in chunks or []:
+        _title = (_c.get("doc_title") or "").strip()
+        _art = _c.get("article_no")
+        if not _title:
+            continue
+        _doc_articles.setdefault(_title, set())
+        if _art:
+            _doc_articles[_title].add(str(_art).strip())
+
+    _CITATION_RE = re.compile(r'📎\s*\(\(([^)]+?)\)\)')
+    _hallucinated_refs: list = []
+
+    def _validate_citation(match):
+        inner = match.group(1).strip()
+        article_matches = list(re.finditer(r'제([\d\.]+)조[^,)\(]*', inner))
+        if not article_matches:
+            return match.group(0)  # 조문번호 없는 정상 인용
+        first_art_start = article_matches[0].start()
+        doc_title_candidate = inner[:first_art_start].rstrip().rstrip(",").strip()
+        # doc_title 정확 또는 partial match
+        matched_title = None
+        if doc_title_candidate in _doc_articles:
+            matched_title = doc_title_candidate
+        else:
+            for _dt in _doc_articles:
+                if _dt and (_dt in doc_title_candidate or doc_title_candidate in _dt):
+                    matched_title = _dt
+                    break
+        if not matched_title:
+            return match.group(0)  # 알 수 없는 doc — 변경 없음
+        valid_arts = _doc_articles.get(matched_title, set())
+        cited_arts = [m.group(1) for m in article_matches]
+        invalid_cited: list = []
+        for _cited in cited_arts:
+            _cited_norms = {
+                _cited,
+                f"제{_cited}조",
+                _cited.lstrip("제").rstrip("조"),
+            }
+            _is_valid = False
+            for _valid in valid_arts:
+                _valid_norms = {
+                    _valid,
+                    f"제{_valid}조",
+                    _valid.lstrip("제").rstrip("조"),
+                }
+                if _cited_norms & _valid_norms:
+                    _is_valid = True
+                    break
+            if not _is_valid:
+                invalid_cited.append(_cited)
+        if not invalid_cited:
+            return match.group(0)  # 모두 valid — 정상 인용
+        _hallucinated_refs.append(
+            f"{matched_title} 제{','.join(invalid_cited)}조"
+        )
+        return f"📎 (({matched_title}))"
+
+    _new_repaired = _CITATION_RE.sub(_validate_citation, repaired)
+    if _new_repaired != repaired:
+        repaired = _new_repaired
+        repairs.append(
+            f"CITATION_GROUNDING: {len(_hallucinated_refs)} hallucinated article refs removed"
+        )
+        print(
+            f"[synthesis:validator] CITATION_GROUNDING — removed "
+            f"{len(_hallucinated_refs)} hallucinated article refs: "
+            f"{_hallucinated_refs[:3]}",
+            file=sys.stderr, flush=True,
+        )
+
     # 종료 로그 — repair 수 / regex miss 진단.
     if not repairs:
         print(
