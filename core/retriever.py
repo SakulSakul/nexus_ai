@@ -662,12 +662,36 @@ def hybrid_search(
                 )
 
         # 4) Deterministic Top-K Selection (PR #81)
-        # 정렬: rrf_score 내림차순 + chunk_id 사전순 (UUID — 항상 동일 결과).
+        # 정렬: rrf_score 내림차순 + query_keyword_overlap 내림차순
+        #     + procedure_keyword_count 내림차순 + chunk_id 사전순 (결정적).
         MAX_CHUNKS_PER_DOC = 2
         TOP_K = 10
+
+        # === PR-Fix-Query-Aware-Ranking ===
+        # 기존 'procedure_keyword_count' tiebreaker 만으로는 도입부/총칙 청크가
+        # 구체 부정행위 표 청크보다 우선 선택되는 회귀가 있음.
+        # 예: query '팀장이 회사 돈 횡령한것 같음' 답변의 ⚖️ 징계 기준 섹션에
+        # 임직원 징계기준 chunk_idx=0 (도입부 '징계권 행사 목적') 만 인용되고
+        # chunk_idx=5 (14. 회사 공금 횡령 본문 + 단순/일회성, 고의/반복 표) 가
+        # 누락. 두 청크 모두 rrf_score 동률 (force_include) 인 상태에서
+        # procedure_keyword_count 가 chunk_idx=0 에 유리하기 때문.
+        # query 어휘 일치 횟수를 정렬 키에 추가하여 의미 가까운 청크 우선.
+        import re as _re_qk
+        _q_str = (question or "") + " " + (retrieval_query_text or "")
+        _q_tokens = {
+            _t for _t in _re_qk.findall(r"[가-힣A-Za-z0-9]+", _q_str.lower())
+            if len(_t) >= 2  # 1-char 토큰 노이즈 제거
+        }
+        for _c in raw_chunks:
+            _txt_lower = (_c.get("text") or "").lower()
+            _c["_query_keyword_overlap"] = sum(
+                1 for _t in _q_tokens if _t and _t in _txt_lower
+            )
+
         raw_chunks.sort(
             key=lambda c: (
                 -(c.get("rrf_score") or 0.0),
+                -(c.get("_query_keyword_overlap") or 0),
                 -(c.get("procedure_keyword_count") or 0),
                 str(c.get("id") or ""),
             )
@@ -685,10 +709,11 @@ def hybrid_search(
 
         matched_doc_count = len(best_chunk_per_doc)
         guaranteed_chunks = list(best_chunk_per_doc.values())
-        # guaranteed_chunks 도 결정적 정렬 (rrf desc + chunk_id asc).
+        # guaranteed_chunks 도 동일 결정적 정렬.
         guaranteed_chunks.sort(
             key=lambda c: (
                 -(c.get("rrf_score") or 0.0),
+                -(c.get("_query_keyword_overlap") or 0),
                 -(c.get("procedure_keyword_count") or 0),
                 str(c.get("id") or ""),
             )
