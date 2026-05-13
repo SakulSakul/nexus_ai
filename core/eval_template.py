@@ -50,6 +50,6 @@ REVIEW_CSV_EXAMPLE_ROWS = [
         "expected_critical": "true",
         "expected_critical_kind": "harassment",
         "forbidden_keywords": "",
-        "notes": "심각 사안 응답 모드(harassment) 발동 + 인사팀 라우팅 안내 포함 기대",
+        "notes": "심각 사안 응답 모드(harassment) 발동 + 인사교육팀 라우팅 안내 포함 기대",
     },
 ]

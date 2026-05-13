@@ -470,7 +470,7 @@ def _tab_upload(sb):
             dept = st.text_input(
                 "관리부서",
                 value="",
-                placeholder="예: 인사팀, 윤리경영팀, 컴플라이언스팀",
+                placeholder="예: 인사교육팀, 윤리경영팀, 컴플라이언스팀",
                 help="사규 본문에 명시된 관리부서명을 그대로 입력. "
                      "비워두면 챗봇이 일반 안내문구 사용.",
                 key=f"ul_dept_{fkey}",
@@ -595,7 +595,7 @@ def _tab_versions(sb):
             new_dept = st.text_input(
                 "관리부서",
                 value=current,
-                placeholder="예: 인사팀, 윤리경영팀",
+                placeholder="예: 인사교육팀, 윤리경영팀",
                 key=f"ver_dept_{doc_id}",
                 label_visibility="collapsed",
             )

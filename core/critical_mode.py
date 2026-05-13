@@ -103,7 +103,7 @@ def _hotline_box(kind: str, hotlines: dict[str, str]) -> str:
     lines.append(f"- 사내 익명 제보채널: {hotlines.get('internal_report_url','')}")
     lines.append(f"- 외부 상담채널: {hotlines.get('external_hotline','')}")
     if kind == "harassment":
-        # 괴롭힘·성희롱은 신고·조사 → CSR팀 라우팅 (인사팀 X)
+        # 괴롭힘·성희롱은 신고·조사 → CSR팀 라우팅 (인사교육팀 X)
         lines.append("- 신고·조사 접수: CSR팀 또는 신세계면세점 핫라인")
     return "\n".join(lines)
 
@@ -140,7 +140,7 @@ def enforce_structure(
             items = [
                 "발생 일시·장소·관련자·구체적 행위를 시간순으로 메모",
                 "가능한 증거(메시지·이메일·녹취 등)를 안전한 위치에 보관",
-                "아래 핫라인 또는 인사팀에 익명/실명으로 상담 요청",
+                "아래 핫라인 또는 인사교육팀에 익명/실명으로 상담 요청",
             ]
     for i, a in enumerate(items[:3], start=1):
         parts.append(f"{i}. {a}")
