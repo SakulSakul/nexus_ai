@@ -343,6 +343,42 @@ def hybrid_search(
                     file=sys.stderr, flush=True,
                 )
 
+            # ── Layer 1.5 (PR-Fix-DocKind-Enrich): L1 RPC 결과 doc_kind 보강 ─
+            # L1 RPC schema (db/migrations/20260511_nexus_force_include_rpc_v2.sql)
+            # 가 doc_kind 미반환. L1 성공 분기에선 _doc_meta_enrich 가 비어있어
+            # union 단계의 raw_chunks 의 doc_kind 가 None 으로 채워짐.
+            # _balance_by_doc_kind 의 by_kind 분류 + _FORCE_KIND_MAX 보존
+            # 분기가 None doc_kind 를 모두 무시 → penalty 사규 누락 회귀
+            # (query '횡령' 답변의 ⚖️ 징계 기준 섹션 공란).
+            # 별도 nexus_documents query 1회로 _doc_meta_enrich 채워 정상화.
+            if force_chunks_raw and force_include_source == "rpc":
+                _enrich_doc_ids = list({
+                    fc.get("document_id") for fc in force_chunks_raw
+                    if fc.get("document_id")
+                })
+                if _enrich_doc_ids:
+                    try:
+                        _enrich_resp = (
+                            supabase.table("nexus_documents")
+                            .select("id, title, doc_kind, meta")
+                            .in_("id", _enrich_doc_ids)
+                            .execute()
+                        )
+                        for _d in (_enrich_resp.data or []):
+                            _doc_meta_enrich[_d["id"]] = _d
+                        print(
+                            f"[retriever:force_include:L1_ENRICH] "
+                            f"doc_ids={len(_enrich_doc_ids)} "
+                            f"enriched={len(_doc_meta_enrich)}",
+                            file=sys.stderr, flush=True,
+                        )
+                    except Exception as e:
+                        print(
+                            f"[retriever:force_include:L1_ENRICH] FAILED: "
+                            f"{type(e).__name__}: {e}",
+                            file=sys.stderr, flush=True,
+                        )
+
             # ── Layer 2: Direct table query ─────────────────
             if not force_chunks_raw:
                 try:
