@@ -697,6 +697,21 @@ def hybrid_search(
             )
         )
 
+        # === PR-P2A-Reranker: Gemini Flash-Lite 의미 기반 reranker ===
+        # RRF + 어휘 매칭의 구조적 한계 (도입부/총칙이 구체 정보 청크보다
+        # 우선) 를 LLM 의미 매칭으로 보완. top-N (기본 30) 만 LLM 통과.
+        # 실패 시 raw_chunks 그대로 반환 (회귀 위험 0).
+        # 입력 query 는 사용자 원문 — rewriter 출력은 키워드 확장이라 의미
+        # 평가에 부적합.
+        try:
+            from .nexus_reranker import rerank_chunks
+            raw_chunks = rerank_chunks(query=question or "", raw_chunks=raw_chunks)
+        except Exception as _rerank_e:
+            print(
+                f"[reranker] FAILED (outer): {type(_rerank_e).__name__}: {_rerank_e}",
+                file=sys.stderr, flush=True,
+            )
+
         # 4-1) 매칭 doc 별 대표 chunk (sort 후 첫 발견 = best score chunk).
         best_chunk_per_doc: dict = {}
         for chunk in raw_chunks:
