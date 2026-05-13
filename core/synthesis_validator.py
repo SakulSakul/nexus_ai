@@ -620,7 +620,9 @@ def validate_and_repair_answer(
 
     def _validate_citation(match):
         inner = match.group(1).strip()
-        article_matches = list(re.finditer(r'제([\d\.]+)조[^,)\(]*', inner))
+        # '제20조' (제 prefix 있음) + '20조' (제 prefix 없음) 두 형식 모두 매칭.
+        # LLM 답변 variability 대응. 끝 '조' 는 mandatory 라 일반 숫자 매칭 안 됨.
+        article_matches = list(re.finditer(r'제?([\d\.]+)조[^,)\(]*', inner))
         if not article_matches:
             return match.group(0)  # 조문번호 없는 정상 인용
         first_art_start = article_matches[0].start()
