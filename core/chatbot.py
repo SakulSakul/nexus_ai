@@ -922,25 +922,6 @@ def ask(
     contexts_raw = hybrid_search(
         supabase, question=masked, categories=cats, top_k=pool_size,
     )
-    # === DIAG-Penalty-Drop (TEMP): contexts_raw doc_kind 분포 측정 ===
-    # penalty 사규 (임직원 징계기준) 가 retrieval pool 누락되는 root cause 추적.
-    # query '횡령' 같은 비위 query 에서 사건사고 보고지침 (rule) 만 hit 되고
-    # penalty 청크 0개로 답변되는 회귀 진단 후 제거 예정.
-    _diag_kind_counts: dict[str, int] = {}
-    _diag_force_counts: dict[str, int] = {}
-    for _c in contexts_raw:
-        _k = _c.get("doc_kind") or "(unknown)"
-        _diag_kind_counts[_k] = _diag_kind_counts.get(_k, 0) + 1
-        if _c.get("force_included_by_intent"):
-            _diag_force_counts[_k] = _diag_force_counts.get(_k, 0) + 1
-    import sys as _sys_diag
-    print(
-        f"[chatbot:ask:DIAG-Penalty-Drop] "
-        f"contexts_raw_total={len(contexts_raw)} "
-        f"doc_kind_dist={_diag_kind_counts} "
-        f"force_included_dist={_diag_force_counts}",
-        file=_sys_diag.stderr, flush=True,
-    )
     contexts = _balance_by_doc_kind(contexts_raw)
     # Phase 1.5 (PR #95) → Phase 6 (PR #101): universal SOP 청크 보존, _UNIVERSAL_SOP_MAX_CHUNKS 까지 cap.
     # _balance_by_doc_kind 의 rule=3 cap 으로 universal SOP 가 drop 되는 회귀 차단 +
