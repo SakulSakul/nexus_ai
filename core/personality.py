@@ -14,6 +14,7 @@ LLM 호출 (cache_data 데코) 로.
 from __future__ import annotations
 
 import random
+import re
 from datetime import datetime
 from typing import Any
 
@@ -240,16 +241,56 @@ CATEGORY_VISUAL: dict[str, tuple[str, str]] = {
 _CATEGORY_DEFAULT = ("📋", "#475569")
 
 
-def category_visual(contexts: list[dict]) -> tuple[str, str, str]:
-    """contexts 의 가장 빈도 높은 카테고리 → (icon, color, label).
+# PR-Fix-Category-Citation-Based: 답변 본문 「📎 ((xxx) doc_title)」 인용
+# prefix regex — '📎' + optional '**' bold + '((' + 카테고리 prefix.
+# bold 유무 양쪽 매칭 (canonical: '📎 **((공통) ...)**', structured SOP:
+# '📎 ((공통) ...)').
+_CITATION_CATEGORY_RE = re.compile(r"📎\s*\*{0,2}\s*\(\(\s*([^)\s][^)]*?)\s*\)")
 
-    contexts[i].categories 는 list[str] (db/09 마이그 후). 평탄화 후 가장
-    많이 등장한 카테고리를 골라 시각 메타 반환. "공통" 이 1위면 2위 사용
-    (cross-cutting 카테고리는 fallback 의미라 실 도메인 우선).
+
+def _extract_categories_from_answer(answer_text: str) -> list[str]:
+    """답변 본문 안 「📎 ((xxx) doc_title)」 인용 prefix 카테고리 추출 (등장 순).
+
+    chunks.categories 빈도 기반 결정 (sloppy retrieval 영향) 보다 답변에
+    실제 인용된 doc title prefix 가 LLM 의 의도와 정확히 일치 — 카테고리
+    chip 정확도 향상.
     """
+    if not answer_text:
+        return []
+    return [m.group(1).strip() for m in _CITATION_CATEGORY_RE.finditer(answer_text)]
+
+
+def category_visual(
+    contexts: list[dict],
+    answer_text: str | None = None,
+) -> tuple[str, str, str]:
+    """카테고리 우선순위: answer_text 인용 prefix > contexts.categories 빈도.
+
+    answer_text 가 제공되면 답변 본문 「📎 ((xxx) doc_title)」 인용 prefix
+    빈도로 primary 카테고리 결정 (LLM 의 실제 인용 의도 정확 반영).
+    인용 0건이면 기존 contexts 기반 fallback. '공통' 1위면 2위 사용
+    (cross-cutting fallback 의미 → 실 도메인 우선).
+    """
+    from collections import Counter
+
+    # 1. PR-Fix-Category-Citation-Based: 답변 본문 인용 prefix 우선.
+    if answer_text:
+        cited = _extract_categories_from_answer(answer_text)
+        if cited:
+            counts = Counter(cited)
+            primary = None
+            for cat, _n in counts.most_common():
+                if cat != "공통":
+                    primary = cat
+                    break
+            if primary is None:
+                primary = "공통"
+            icon, color = CATEGORY_VISUAL.get(primary, _CATEGORY_DEFAULT)
+            return (icon, color, primary)
+
+    # 2. Fallback — 기존 contexts.categories 빈도 (backwards-compatible).
     if not contexts:
         return (*_CATEGORY_DEFAULT, "")
-    from collections import Counter
     flat: list[str] = []
     for c in contexts:
         cats = c.get("categories") or []
@@ -257,10 +298,9 @@ def category_visual(contexts: list[dict]) -> tuple[str, str, str]:
             flat.extend(str(x) for x in cats if x)
     if not flat:
         # categories 컬럼 부재 (db/09 미적용) — doc_title prefix 로 fallback
-        import re as _re
         for c in contexts:
             t = str(c.get("doc_title") or "")
-            m = _re.match(r"^\(\s*([^)\s][^)]*?)\s*\)", t)
+            m = re.match(r"^\(\s*([^)\s][^)]*?)\s*\)", t)
             if m:
                 flat.append(m.group(1).strip())
                 break
