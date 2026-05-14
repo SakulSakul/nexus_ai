@@ -84,6 +84,18 @@ L3_FALLBACK_BY_DOMAIN: dict = {
         "임직원 징계기준",
         "클린뱅크 운영 지침",
     ),
+    # PR-Fix-ForceInclude-Domain-Expand: (환경) 도메인 — 환경 사고/사건/위반·
+    # 비상시 대응 query 에 (환경) doc force_include 보장.
+    "environment": (
+        "비상시대비",   # (환경) 비상시대비대응 / 비상시대비 절차 매칭
+        "환경 사건",    # (환경) 환경 사건/시정조치 매칭
+        "환경경영",     # (환경) 환경경영매뉴얼 / 환경경영 매뉴얼 매칭
+    ),
+    # PR-Fix-ForceInclude-Domain-Expand: (총무) 도메인 — 인감·인장·도장
+    # 도용/위조 query 에 (총무) 인감 관리지침 force_include 보장.
+    "total_affairs": (
+        "인감 관리",   # (총무) 인감 관리지침 / 인감 관리 지침 매칭
+    ),
 }
 
 # user_incident_nodes (Gemini classifier AVAILABLE_INCIDENT_NODES + rule_based
@@ -123,6 +135,14 @@ INCIDENT_NODE_TO_DOMAIN: dict = {
     "고객절취": "ethics",
     "불공정행위": "ethics",
     "거래관리": "ethics",
+    # PR-Fix-ForceInclude-Domain-Expand: 환경/총무 도메인 nodes.
+    # nexus_query_rewriter._NEXUS_NL_TO_INCIDENT_NODES 의 신규 trigger 와
+    # L3_FALLBACK_BY_DOMAIN environment/total_affairs whitelist 연계.
+    "환경사고": "environment",
+    "환경위반": "environment",
+    "환경경영": "environment",
+    "비상시대비": "environment",
+    "인감관리": "total_affairs",
 }
 
 # 절차 키워드 — 매장 사고 응급/보고/분류 전반 (best chunk 선정용).
