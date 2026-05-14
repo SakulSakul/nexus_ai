@@ -990,17 +990,24 @@ def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None)
     )
 
 
-def _render_category_chip(contexts: list[dict]) -> None:
+def _render_category_chip(
+    contexts: list[dict],
+    answer_text: str | None = None,
+) -> None:
     """PR-Fun1 작업 4: 답변 본문 직전에 카테고리 chip 한 줄 노출.
 
-    contexts 가 비어있거나 카테고리 식별 불가면 표시 생략. 본문 헤더
+    PR-Fix-Category-Citation-Based: answer_text 전달 시 답변 본문 「📎 ((xxx)
+    doc_title)」 인용 prefix 빈도 기반 카테고리 결정 (sloppy retrieval 영향
+    차단). 미전달 시 contexts.categories 빈도 fallback (backwards-compat).
+
+    contexts/answer 둘 다 카테고리 식별 불가면 표시 생략. 본문 헤더
     (📋 사규 기준 / ⚖️ 징계 기준 / 📂 사건사례) 는 LLM 출력 그대로 두고
     본 chip 만 카테고리별 색·아이콘으로 동적 변경 (가독성 유지).
     """
-    if not contexts:
+    if not contexts and not answer_text:
         return
     from core.personality import category_visual
-    icon, color, label = category_visual(contexts)
+    icon, color, label = category_visual(contexts, answer_text)
     if not label:
         return
     st.markdown(
@@ -2492,7 +2499,8 @@ def _run_ask(
             answer_placeholder.markdown(ans.text)
             # PR-Fun1 작업 4: 카테고리 chip — 답변 본문 직후, confidence chip 위.
             # critical 답변에도 표시 (사용자 정보 제공).
-            _render_category_chip(ans.contexts)
+            # PR-Fix-Category-Citation-Based: ans.text 전달 → 인용 prefix 기반 결정.
+            _render_category_chip(ans.contexts, answer_text=ans.text)
             # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
             _render_confidence_chip(ans.confidence, ans.contexts)
             # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
@@ -2890,8 +2898,9 @@ def main():
                 _render_critical_banner()
             st.markdown(content)
             # PR-Fun1 작업 4: 카테고리 chip — replay 시 contexts 있으면 표시.
+            # PR-Fix-Category-Citation-Based: content (답변 본문) 전달 → 인용 prefix 기반 결정.
             if role == "assistant" and meta.get("contexts"):
-                _render_category_chip(meta["contexts"])
+                _render_category_chip(meta["contexts"], answer_text=content)
             # PR-C1: history replay 에도 chip 노출. 기존 entry (confidence 키 없음)
             # 는 'high' default 로 회귀 안전.
             if role == "assistant" and meta.get("query_log_id") is not None:
