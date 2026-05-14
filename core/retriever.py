@@ -516,11 +516,27 @@ def hybrid_search(
                     )
 
             # ── Union into raw_chunks (dedup by chunk id) ───
-            existing_chunk_ids = {c.get("id") for c in raw_chunks if c.get("id")}
+            # PR-Fix-Force-Include-Dup-Flag: chunks dict map — 중복 chunks 의
+            # force_included_by_intent flag 보장. Vector + BM25 단계에서 이미
+            # raw_chunks 에 있는 chunks (낮은 score) 가 L3 force_include 매칭
+            # 시 단순 skip 했던 bug → best_chunk_per_doc 누락 → 답변 인용
+            # 못 함 회귀 차단. 예: 거래처 명절 선물 query 의 (CSR) 클린뱅크
+            # 운영 지침 chunks 가 vector 단계에 낮은 score 로 진입 → L3 매칭
+            # 됐어도 flag update 안 돼 final top_k 진입 못 함.
+            existing_chunks_by_id: dict = {
+                c.get("id"): c for c in raw_chunks if c.get("id")
+            }
+            existing_chunk_ids = set(existing_chunks_by_id.keys())
             added_count = 0
             skipped_count = 0
             for fc in force_chunks_raw:
-                if fc.get("id") in existing_chunk_ids:
+                _fc_id = fc.get("id")
+                if _fc_id in existing_chunk_ids:
+                    # 중복 chunks 도 force_included_by_intent + source 보장
+                    _existing = existing_chunks_by_id.get(_fc_id)
+                    if _existing is not None:
+                        _existing["force_included_by_intent"] = True
+                        _existing["force_include_source"] = force_include_source
                     skipped_count += 1
                     continue
                 _doc = _doc_meta_enrich.get(fc.get("document_id"), {}) or {}
