@@ -534,6 +534,21 @@ _NEXUS_NL_TO_INCIDENT_NODES = {
     # #4 보조 — 처벌·징계 질문에 임직원 징계기준 매칭 강화
     "처벌":           [("윤리위반", None)],
     "징계 수위":       [("윤리위반", None)],
+
+    # === PR-Fix-ForceInclude-Domain-Expand: 환경/총무 도메인 trigger 보강 ===
+    # (환경) 도메인 docs (비상시대비대응 / 환경 사건·시정조치 / 환경경영매뉴얼)
+    # 와 (총무) 도메인 docs (인감 관리지침) force_include 작동 위해 trigger
+    # 노드 매핑 추가. INCIDENT_NODE_TO_DOMAIN 의 environment/total_affairs
+    # 매핑과 L3_FALLBACK_BY_DOMAIN whitelist 와 동시 작동.
+    "환경 사고":       [("환경사고", None)],
+    "환경 사건":       [("환경사고", None)],
+    "환경 위반":       [("환경위반", None)],
+    "환경경영":        [("환경경영", None)],
+    "환경 리스크":     [("환경경영", None)],
+    "비상시":          [("비상시대비", None)],
+    "인감":            [("인감관리", None)],
+    "인장":            [("인감관리", None)],
+    "도장":            [("인감관리", None)],
 }
 
 
