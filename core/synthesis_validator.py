@@ -717,6 +717,23 @@ def validate_and_repair_answer(
             file=sys.stderr, flush=True,
         )
 
+    # PR-Fix-Dept-Normalize: 신세계디에프 인사팀 → 인사교육팀 (2026-05-14).
+    # 사규 doc 자체는 회사 update 미완료 (며칠 안 됨) → DB chunk text 에
+    # historical '인사팀' 표기 유지 (SQL 진단 8 chunks / 6 docs). LLM 이
+    # chunk 인용 또는 자체 생성으로 '인사팀' 노출하는 케이스 자동 정규화.
+    # 단순 string replace — substring '(인사)' 같은 doc prefix 는 영향 없음.
+    _dept_count = repaired.count("인사팀")
+    if _dept_count > 0:
+        repaired = repaired.replace("인사팀", "인사교육팀")
+        repairs.append(
+            f"DEPT_NORMALIZE: 인사팀 → 인사교육팀 ({_dept_count} 위치)"
+        )
+        print(
+            f"[synthesis:validator] DEPT_NORMALIZE — 인사팀 → 인사교육팀 "
+            f"({_dept_count} 위치)",
+            file=sys.stderr, flush=True,
+        )
+
     # 종료 로그 — repair 수 / regex miss 진단.
     if not repairs:
         print(
