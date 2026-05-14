@@ -508,6 +508,28 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     if res is None and last_err is not None:
         raise last_err
 
+    # PR-Add-Gemini-Cache-Monitoring: implicit caching hit 율 + 비용 절감 측정.
+    # response.usage_metadata.cached_content_token_count = 캐시 hit 토큰 수.
+    # best-effort — 예외 시 답변 흐름 무영향 (logs 만 skip).
+    try:
+        _um = getattr(res, "usage_metadata", None)
+        if _um is not None:
+            _cached = getattr(_um, "cached_content_token_count", 0) or 0
+            _prompt = getattr(_um, "prompt_token_count", 0) or 0
+            _hit_rate = (100.0 * _cached / _prompt) if _prompt else 0.0
+            print(
+                f"[chatbot:gemini:cache] cached_tokens={_cached} "
+                f"prompt_tokens={_prompt} hit_rate={_hit_rate:.1f}% "
+                f"model={s.chat_model}",
+                flush=True,
+            )
+    except Exception as _cache_log_err:
+        print(
+            f"[chatbot:gemini:cache] WARN log skipped: "
+            f"{type(_cache_log_err).__name__}",
+            flush=True,
+        )
+
     text_parts: list[str] = []
     try:
         for part in res.candidates[0].content.parts:
@@ -1141,11 +1163,21 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
     )
 
     last_err: Exception | None = None
+    # PR-Add-Gemini-Cache-Monitoring: chunk 마다 usage_metadata 추적 → 종료 시 logs.
+    last_um = None
     for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
         try:
             for chunk in cli.models.generate_content_stream(
                 model=s.chat_model, contents=user, config=cfg,
             ):
+                # usage_metadata 는 stream 종료 chunk 에 최종 값. 매 chunk 추적
+                # 으로 중간 값도 cover (SDK 변경 시 안전).
+                try:
+                    _um = getattr(chunk, "usage_metadata", None)
+                    if _um is not None:
+                        last_um = _um
+                except Exception:
+                    pass
                 # thought parts drop — SYSTEM_PROMPT 가 [검색 과정] 섹션을
                 # text 본문에 포함시키므로 raw thought 는 더 이상 사용 안 함.
                 try:
@@ -1163,6 +1195,24 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
                     text = getattr(chunk, "text", None) or ""
                     if text:
                         yield text
+            # stream 정상 종료 — cache hit 로그 (best-effort).
+            try:
+                if last_um is not None:
+                    _cached = getattr(last_um, "cached_content_token_count", 0) or 0
+                    _prompt = getattr(last_um, "prompt_token_count", 0) or 0
+                    _hit_rate = (100.0 * _cached / _prompt) if _prompt else 0.0
+                    print(
+                        f"[chatbot:gemini_stream:cache] cached_tokens={_cached} "
+                        f"prompt_tokens={_prompt} hit_rate={_hit_rate:.1f}% "
+                        f"model={s.chat_model}",
+                        flush=True,
+                    )
+            except Exception as _cache_log_err:
+                print(
+                    f"[chatbot:gemini_stream:cache] WARN log skipped: "
+                    f"{type(_cache_log_err).__name__}",
+                    flush=True,
+                )
             return
         except Exception as e:
             last_err = e
