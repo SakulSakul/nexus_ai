@@ -19,6 +19,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# PR-CAG: cache pre-warming hook. NEXUS_CAG_ENABLED=false (default) 면 no-op.
+# 활성 시 첫 user request 전에 SYSTEM_PROMPT + 전체 사규 corpus 를 server-side
+# cache 로 빌드 → 매 request input token 비용 ~95% 절감.
+# Streamlit rerun 마다 호출되지만 idempotent (state singleton, TTL 체크).
+try:
+    from core.nexus_cag_manager import ensure_warm as _cag_ensure_warm
+    _cag_ensure_warm()
+except Exception:
+    pass
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Design System: Shinsegae Newsroom Editorial
 #  - Monochrome: #1A1A1A / #333 / #767 / #AEAEAE / #E0E0E0 / #F7F7F7 / #FFF

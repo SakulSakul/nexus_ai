@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import time
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Optional
 
 from .config import settings, load_hotlines
 from .critical_mode import CriticalDetection, detect, enforce_structure, load_keywords
@@ -465,11 +466,38 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     s = settings()
     cli = genai.Client(api_key=s.gemini_api_key)
 
-    cfg = types.GenerateContentConfig(
-        system_instruction=system,
-        temperature=s.temperature,
-        top_p=s.top_p,
-    )
+    # PR-CAG-Integration: Explicit Cache 활성 + canonical SYSTEM_PROMPT 일 때
+    # cached_content path. critical 모드 / low-confidence prefix 가 적용된 system
+    # (≠ SYSTEM_PROMPT) 은 cache 우회 — 안전망 100% 유지.
+    _cag_cache_name: Optional[str] = None
+    try:
+        from .nexus_cag_manager import is_cag_enabled, get_cache_name
+        if is_cag_enabled() and system == SYSTEM_PROMPT:
+            _cag_cache_name = get_cache_name()
+    except Exception as _cag_err:
+        print(
+            f"[cag] WARN integration skipped (gen): "
+            f"{type(_cag_err).__name__}: {_cag_err}",
+            file=sys.stderr, flush=True,
+        )
+
+    if _cag_cache_name:
+        # cached_content 사용 시 system_instruction 함께 못 설정 (SDK 제약).
+        cfg = types.GenerateContentConfig(
+            cached_content=_cag_cache_name,
+            temperature=s.temperature,
+            top_p=s.top_p,
+        )
+        print(
+            f"[cag] using cached_content={_cag_cache_name}",
+            file=sys.stderr, flush=True,
+        )
+    else:
+        cfg = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=s.temperature,
+            top_p=s.top_p,
+        )
 
     # Gemini SDK 는 client-level timeout 설정이 일관되지 않아 ThreadPoolExecutor
     # 로 wrap. 60초 안에 응답 없으면 RuntimeError → 사용자에게 친화 메시지.
@@ -1156,11 +1184,36 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
     from google.genai import types
     s = settings()
     cli = genai.Client(api_key=s.gemini_api_key)
-    cfg = types.GenerateContentConfig(
-        system_instruction=system,
-        temperature=s.temperature,
-        top_p=s.top_p,
-    )
+
+    # PR-CAG-Integration: stream 변형에도 동일 cached_content path 적용.
+    _cag_cache_name: Optional[str] = None
+    try:
+        from .nexus_cag_manager import is_cag_enabled, get_cache_name
+        if is_cag_enabled() and system == SYSTEM_PROMPT:
+            _cag_cache_name = get_cache_name()
+    except Exception as _cag_err:
+        print(
+            f"[cag] WARN integration skipped (stream): "
+            f"{type(_cag_err).__name__}: {_cag_err}",
+            file=sys.stderr, flush=True,
+        )
+
+    if _cag_cache_name:
+        cfg = types.GenerateContentConfig(
+            cached_content=_cag_cache_name,
+            temperature=s.temperature,
+            top_p=s.top_p,
+        )
+        print(
+            f"[cag] stream using cached_content={_cag_cache_name}",
+            file=sys.stderr, flush=True,
+        )
+    else:
+        cfg = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=s.temperature,
+            top_p=s.top_p,
+        )
 
     last_err: Exception | None = None
     # PR-Add-Gemini-Cache-Monitoring: chunk 마다 usage_metadata 추적 → 종료 시 logs.
