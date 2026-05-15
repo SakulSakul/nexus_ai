@@ -718,7 +718,12 @@ def hybrid_search(
         # 비도메인 query (휴가/출장비 등) top_k 를 점유하는 bias 차단.
         # force_include guaranteed_chunks 는 본 cap 면제 — 4-2 에서 무조건 추가.
         MAX_CHUNKS_PER_DOMAIN = 3
-        TOP_K = 10
+        # PR-Fix-TopK-Cap-Root-Cause: TOP_K=10 → 12 (matched_docs 보존 강화)
+        # 근거: 5/15 검증에서 Q2 경쟁사 가격 matched_docs=11 → 1 drop 확인.
+        # guaranteed_chunks[:TOP_K] cap 으로 (공정거래) doc drop → 답변 본문 인용 누락.
+        # TOP_K=12 로 matched_docs ≤ 12 까지 모두 보존 (1-Doc 도메인 자동 보존).
+        # 비용: chunks +20%, input tokens +4%, cost +$0.001/query (무시 가능).
+        TOP_K = 12
 
         # === PR-Fix-Query-Aware-Ranking ===
         # 기존 'procedure_keyword_count' tiebreaker 만으로는 도입부/총칙 청크가
