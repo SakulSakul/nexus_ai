@@ -1622,6 +1622,7 @@ def _render_action_buttons(
     prev_answer: str | None,
     hotlines: dict[str, str],
     contexts: list[dict] | None = None,
+    answer_text: str | None = None,
 ) -> None:
     """답변 본문 직후 두 액션: [📞 인사교육팀 문의] [🔄 다시 답변].
 
@@ -1642,12 +1643,14 @@ def _render_action_buttons(
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
     # 카테고리 → 담당부서 매핑 (직전 PR 의 nexus_get_owner_dept 재사용).
+    # PR-Fix-ActionButton-Dept-Consistency: answer_text 전달로 PR #149 의
+    # 답변 본문 인용 기반 카테고리 logic 사용 → 카테고리 chip 과 button dept 일치.
     from core.nexus_category_owner import nexus_get_owner_dept
     _cat_label = ""
     if contexts:
         try:
             from core.personality import category_visual
-            _icon, _color, _cat_label = category_visual(contexts)
+            _icon, _color, _cat_label = category_visual(contexts, answer_text=answer_text)
         except Exception:
             _cat_label = ""
     _dept = nexus_get_owner_dept(_cat_label)
@@ -2555,6 +2558,7 @@ def _run_ask(
                 prev_answer=ans.text,
                 hotlines=hotlines,
                 contexts=ans.contexts,
+                answer_text=ans.text,
             )
             # 피드백 UI — 답변마다 고유 인덱스로 위젯 키 분리.
             # PR-Fun1.5: query_log_id None 일 때 masked_question 으로
@@ -2950,6 +2954,7 @@ def main():
                     prev_answer=content,
                     hotlines=hotlines,
                     contexts=meta.get("contexts"),
+                    answer_text=content,
                 )
             # PR-Fun1.5: history replay 도 query_log_id None 케이스 처리.
             # query_log_id 또는 masked_question 둘 중 하나라도 있으면 표시.
