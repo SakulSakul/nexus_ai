@@ -1589,6 +1589,45 @@ def _check_rate_limit() -> bool:
     return True
 
 
+def _render_report_channels_panel(hotlines: dict[str, str]) -> None:
+    """신고 방법 안내 박스 — Critical mode (괴롭힘/중대재해/비리/횡령 등) 시 표시.
+
+    PR-Refactor-ActionButton-Per-Category-V2: 앱 footer (line 952-954) 의
+    routing rule '신고·조사는 CSR팀 또는 신세계면세점 핫라인' 과 일관성.
+    사용자가 사규 절차에 따라 직접 신고 — 'CSR팀 문의' label 사용 안 함.
+    """
+    ethics_hotline = (hotlines.get("ethics_hotline_url") or "").strip()
+    anon_url = (hotlines.get("internal_report_url") or "").strip()
+    ext_hotline = (hotlines.get("external_hotline") or "").strip()
+    with st.container(border=True):
+        st.markdown("**📞 신고 방법 안내**")
+        st.markdown(
+            "신고·조사 사항은 **CSR팀** 또는 **신세계면세점 핫라인**으로 "
+            "접수해 주시기 바랍니다."
+        )
+        st.markdown(
+            "**📋 1차 보고**: SRMS 시스템 즉시 등록 (인지 시점 24시간 內)"
+        )
+        if ethics_hotline:
+            st.link_button(
+                "🏢 신세계면세점 핫라인",
+                ethics_hotline,
+                use_container_width=True,
+            )
+        if anon_url:
+            st.link_button(
+                "🔒 사내 익명 제보 채널",
+                anon_url,
+                use_container_width=True,
+            )
+        if ext_hotline:
+            st.markdown(f"📞 외부 상담채널: {ext_hotline}")
+        st.caption(
+            "⚠️ 본 답변은 사규 해석 보조이며, 실제 신고는 사규 절차에 따라 "
+            "직접 진행하시기 바랍니다."
+        )
+
+
 def _render_hr_inquiry_panel(hotlines: dict[str, str]) -> None:
     """인사교육팀 문의 안내 박스 — hotline_config 4개 키 매핑, 빈 값은 렌더 생략.
     DB 스키마 변경 없이 기존 키만 사용 (`hr_contact_text`, `hr_chatbot_url`,
@@ -1623,6 +1662,8 @@ def _render_action_buttons(
     hotlines: dict[str, str],
     contexts: list[dict] | None = None,
     answer_text: str | None = None,
+    is_critical: bool = False,
+    confidence: str | None = None,
 ) -> None:
     """답변 본문 직후 두 액션: [📞 인사교육팀 문의] [🔄 다시 답변].
 
@@ -1642,19 +1683,45 @@ def _render_action_buttons(
     already_rerolled = msg_idx in rerolled
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
-    # 카테고리 → 담당부서 매핑 (직전 PR 의 nexus_get_owner_dept 재사용).
-    # PR-Fix-ActionButton-Dept-Consistency: answer_text 전달로 PR #149 의
-    # 답변 본문 인용 기반 카테고리 logic 사용 → 카테고리 chip 과 button dept 일치.
-    from core.nexus_category_owner import nexus_get_owner_dept
-    _cat_label = ""
-    if contexts:
-        try:
-            from core.personality import category_visual
-            _icon, _color, _cat_label = category_visual(contexts, answer_text=answer_text)
-        except Exception:
-            _cat_label = ""
-    _dept = nexus_get_owner_dept(_cat_label)
-    hr_label = f"📞 {_dept} 문의 닫기" if msg_idx in hr_open else f"📞 {_dept} 문의"
+
+    # PR-Refactor-ActionButton-Per-Category-V2: query 유형별 분기.
+    # - 인사 graceful (confidence=='low') → 인사교육팀 문의 panel
+    # - Critical (괴롭힘/중대재해/비리/횡령) → 신고 방법 안내 panel
+    # - 그 외 일반 query → button 자체 숨김 (답변 본문 안내 충분)
+    is_hr_graceful = (confidence == "low")
+    show_inquiry_button = is_hr_graceful or is_critical
+
+    # 일반 query — button 없이 reroll 만 표시 (full-width).
+    if not show_inquiry_button:
+        if can_reroll:
+            reroll_clicked = st.button(
+                "🔄 다시 답변",
+                key=f"reroll_btn_{msg_idx}",
+                use_container_width=True,
+            )
+            if reroll_clicked:
+                rerolled.add(msg_idx)
+                st.session_state["_pending_reroll"] = {
+                    "original_q":  original_q,
+                    "prev_answer": prev_answer,
+                }
+                st.rerun()
+        return
+
+    # Button label 결정 (분기 조건에 따라).
+    if is_hr_graceful:
+        # 인사 graceful — 휴가/평가/근태 등 인사 routing
+        hr_label = (
+            "📞 인사교육팀 문의 닫기" if msg_idx in hr_open
+            else "📞 인사교육팀 문의"
+        )
+    else:
+        # is_critical — 신고 방법 안내 (CSR팀 X)
+        hr_label = (
+            "📞 신고 방법 안내 닫기" if msg_idx in hr_open
+            else "📞 신고 방법 안내"
+        )
+
     col_a, col_b = st.columns(2)
     hr_clicked = col_a.button(
         hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True,
@@ -1691,7 +1758,11 @@ def _render_action_buttons(
         }
         st.rerun()
     if msg_idx in hr_open:
-        _render_hr_inquiry_panel(hotlines)
+        # PR-Refactor: critical → 신고 방법, 그 외 (인사 graceful) → 인사교육팀.
+        if is_critical:
+            _render_report_channels_panel(hotlines)
+        else:
+            _render_hr_inquiry_panel(hotlines)
 
 
 def _feedback_update(sb, payload: dict, *,
@@ -2559,6 +2630,8 @@ def _run_ask(
                 hotlines=hotlines,
                 contexts=ans.contexts,
                 answer_text=ans.text,
+                is_critical=ans.is_critical,
+                confidence=ans.confidence,
             )
             # 피드백 UI — 답변마다 고유 인덱스로 위젯 키 분리.
             # PR-Fun1.5: query_log_id None 일 때 masked_question 으로
@@ -2955,6 +3028,8 @@ def main():
                     hotlines=hotlines,
                     contexts=meta.get("contexts"),
                     answer_text=content,
+                    is_critical=bool(meta.get("critical", False)),
+                    confidence=meta.get("confidence"),
                 )
             # PR-Fun1.5: history replay 도 query_log_id None 케이스 처리.
             # query_log_id 또는 masked_question 둘 중 하나라도 있으면 표시.
