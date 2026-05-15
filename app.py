@@ -1684,12 +1684,30 @@ def _render_action_buttons(
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
 
-    # PR-Refactor-ActionButton-Per-Category-V2: query 유형별 분기.
+    # PR-Refactor-ActionButton-Per-Category-V2 + PR-Fix-Report-Button-Keyword-Detect:
+    # query 유형별 분기.
     # - 인사 graceful (confidence=='low') → 인사교육팀 문의 panel
-    # - Critical (괴롭힘/중대재해/비리/횡령) → 신고 방법 안내 panel
+    # - Critical OR 답변 본문에 신고 keyword 매칭 → 신고 방법 안내 panel
     # - 그 외 일반 query → button 자체 숨김 (답변 본문 안내 충분)
     is_hr_graceful = (confidence == "low")
-    show_inquiry_button = is_hr_graceful or is_critical
+
+    # PR-Fix-Report-Button-Keyword-Detect: is_critical 만으로 부족.
+    # Critical mode = 좁은 case (괴롭힘/중대재해) 만 detect.
+    # 일반 query (인장 도용/경쟁사 가격/명절 선물 등) 답변에 신고 절차
+    # 안내가 있어도 button 미표시 → 사쿨 지적 (5/15).
+    # 답변 본문 keyword 매칭 logic 으로 보강.
+    REPORT_KEYWORDS = (
+        "신고·조사",
+        "SRMS",
+        "신세계면세점 핫라인",
+        "클린신고",
+        "일반 사건사고 보고지침",
+        "중대 사건사고 보고지침",
+    )
+    _at = (answer_text or "")
+    is_report_related = is_critical or any(kw in _at for kw in REPORT_KEYWORDS)
+
+    show_inquiry_button = is_hr_graceful or is_report_related
 
     # 일반 query — button 없이 reroll 만 표시 (full-width).
     if not show_inquiry_button:
@@ -1716,7 +1734,7 @@ def _render_action_buttons(
             else "📞 인사교육팀 문의"
         )
     else:
-        # is_critical — 신고 방법 안내 (CSR팀 X)
+        # is_report_related — 신고 방법 안내 (CSR팀 X)
         hr_label = (
             "📞 신고 방법 안내 닫기" if msg_idx in hr_open
             else "📞 신고 방법 안내"
@@ -1758,8 +1776,9 @@ def _render_action_buttons(
         }
         st.rerun()
     if msg_idx in hr_open:
-        # PR-Refactor: critical → 신고 방법, 그 외 (인사 graceful) → 인사교육팀.
-        if is_critical:
+        # PR-Refactor + PR-Fix-Keyword: critical OR 신고 keyword 매칭 →
+        # 신고 방법, 그 외 (인사 graceful) → 인사교육팀.
+        if is_report_related:
             _render_report_channels_panel(hotlines)
         else:
             _render_hr_inquiry_panel(hotlines)
