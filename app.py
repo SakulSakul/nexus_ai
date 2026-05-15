@@ -966,21 +966,26 @@ def _hotline_button(hotlines: dict[str, str]) -> None:
         st.link_button("신세계면세점 핫라인 제보하기", url, use_container_width=True)
 
 
-def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None) -> None:
+def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None, answer_text: str | None = None) -> None:
     """PR-C1: 답변 본문 직후에 검색 신뢰도 chip 을 caption 톤으로 노출.
 
     confidence: 'high' | 'medium' | 'low'. 그 외 값은 표시 생략.
     contexts: 카테고리별 담당부서 매핑용. 미전달 시 일반 문구로 폴백.
+    answer_text: PR-Fix-Confidence-Chip-Dept-Consistency — 답변 본문 인용
+        prefix 기반 카테고리 결정 (PR #149 logic). 카테고리 chip 과 dept
+        일치 보장.
     본문(ans.text) 의 [참조: ...] / 종결 멘트(💬...) 과 시각적으로 분리되되
     눈에 띄는 회색 caption + 색상 점.
     """
     # 카테고리 → 담당부서. contexts 가 없거나 카테고리 식별 불가면 fallback 문구.
+    # PR-Fix-Confidence-Chip-Dept-Consistency: answer_text 전달로 PR #149 의
+    # 답변 본문 인용 기반 카테고리 logic 사용 → 카테고리 chip 과 dept 일치.
     from core.nexus_category_owner import nexus_get_owner_dept
     cat_label = ""
     if contexts:
         try:
             from core.personality import category_visual
-            _icon, _color, cat_label = category_visual(contexts)
+            _icon, _color, cat_label = category_visual(contexts, answer_text=answer_text)
         except Exception:
             cat_label = ""
     dept = nexus_get_owner_dept(cat_label)
@@ -2512,7 +2517,7 @@ def _run_ask(
             # PR-Fix-Category-Citation-Based: ans.text 전달 → 인용 prefix 기반 결정.
             _render_category_chip(ans.contexts, answer_text=ans.text)
             # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
-            _render_confidence_chip(ans.confidence, ans.contexts)
+            _render_confidence_chip(ans.confidence, ans.contexts, answer_text=ans.text)
             # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
             # 지면서 setInterval 도 자동 cleanup. ans.elapsed (서버 측 perf
             # counter) 가 사용자 wall-clock 보다 정확.
@@ -2917,6 +2922,7 @@ def main():
                 _render_confidence_chip(
                     meta.get("confidence", "high"),
                     meta.get("contexts"),
+                    answer_text=content,
                 )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
