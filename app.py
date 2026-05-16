@@ -1684,12 +1684,25 @@ def _render_action_buttons(
     can_reroll = (original_q is not None and prev_answer is not None
                   and not already_rerolled)
 
-    # PR-Refactor-ActionButton-Per-Category-V2 + PR-Fix-Report-Button-Keyword-Detect:
+    # PR-Refactor-ActionButton-Per-Category-V2 + PR-Fix-Report-Button-Keyword-Detect
+    # + PR-Fix-Button-Branch-Strengthen:
     # query 유형별 분기.
-    # - 인사 graceful (confidence=='low') → 인사교육팀 문의 panel
+    # - 인사 graceful (confidence='low' OR 답변 본문 'X인사교육팀에 문의' 매칭)
+    #   → 인사교육팀 문의 panel
     # - Critical OR 답변 본문에 신고 keyword 매칭 → 신고 방법 안내 panel
     # - 그 외 일반 query → button 자체 숨김 (답변 본문 안내 충분)
-    is_hr_graceful = (confidence == "low")
+    #
+    # HR_GRACEFUL_KEYWORDS — Synthesizer 의 graceful 답변에 confidence=medium
+    # 인 경우에도 button 표시 보장.
+    HR_GRACEFUL_KEYWORDS = (
+        "인사 규정·복리후생 등 인사 행정 사항은 인사교육팀에 문의",
+        "인사교육팀에 문의해 주시기 바랍니다",
+    )
+    _at_hr = (answer_text or "")
+    is_hr_graceful = (
+        (confidence == "low")
+        or any(kw in _at_hr for kw in HR_GRACEFUL_KEYWORDS)
+    )
 
     # PR-Fix-Report-Button-Keyword-Detect: is_critical 만으로 부족.
     # Critical mode = 좁은 case (괴롭힘/중대재해) 만 detect.
@@ -1697,12 +1710,18 @@ def _render_action_buttons(
     # 안내가 있어도 button 미표시 → 사쿨 지적 (5/15).
     # 답변 본문 keyword 매칭 logic 으로 보강.
     REPORT_KEYWORDS = (
+        # 기존 6개 (PR #157)
         "신고·조사",
         "SRMS",
         "신세계면세점 핫라인",
         "클린신고",
         "일반 사건사고 보고지침",
         "중대 사건사고 보고지침",
+        # PR-Fix-Button-Branch-Strengthen — 공정거래/위반행위 답변 cover
+        "공정거래법 위반",
+        "공정거래를 저해",
+        "위변조 또는 허위작성",
+        "부정/부실행위",
     )
     _at = (answer_text or "")
     is_report_related = is_critical or any(kw in _at for kw in REPORT_KEYWORDS)
