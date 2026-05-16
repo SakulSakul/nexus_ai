@@ -823,7 +823,7 @@ _FORCE_KIND_MAX: dict[str, int] = {"penalty": 2, "case": 2}
 # Phase 6 → PR-Fix-DocKind-Preserve: retriever pool 확장 — penalty/case 사규
 # 가 raw pool 안에 들어올 확률 증가 (vector-only ranking 에서 일반적 사규의
 # 점수가 specific 사규보다 낮은 회귀 완화).
-_POOL_SIZE_MARGIN: int = 30  # PR-Fix-DocKind-Preserve: 8 → 30 (raw pool ~37 chunks)
+_POOL_SIZE_MARGIN: int = 60  # PR-A-Expand-Pool-Size: 30 → 60 (raw pool ~67 chunks, Q13 type recall ↑)
 
 
 def _balance_by_doc_kind(
