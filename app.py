@@ -914,6 +914,54 @@ def _admin_panel(sb, hotlines: dict) -> None:
         if st.button("▶  Admin 대시보드 열기", use_container_width=True, key="admin_dashboard_link"):
             st.switch_page("pages/admin.py")
 
+        # PR-Add-Validation-Automation: 검증 자동화 mode
+        st.markdown("---")
+        st.markdown("**🛠️ Validation Mode (자동 검증)**")
+        st.caption(
+            "미리 등록된 8 query 순차 실행 → 답변 + 카테고리 + Button 종합 표 + "
+            "Markdown export. 새 PR 머지 후 회귀 검증용. ~10분 소요, ~$0.24/실행."
+        )
+        if st.button("▶ 검증 실행 (8 query)", key="validation_run_btn"):
+            from core.nexus_validation import run_validation
+            results: list = []
+            progress_bar = st.progress(0, text="검증 시작…")
+            status_text = st.empty()
+
+            def _on_progress(idx: int, total: int, query: str) -> None:
+                progress_bar.progress(
+                    idx / total, text=f"Q{idx}/{total}: {query[:40]}…"
+                )
+                status_text.caption(f"진행 중: Q{idx}/{total}")
+
+            try:
+                results = run_validation(sb, on_progress=_on_progress)
+                progress_bar.progress(1.0, text="검증 완료!")
+                status_text.success(f"✅ {len(results)} query 완료")
+            except Exception as e:
+                st.error(f"검증 실행 실패: {e}")
+            st.session_state["_validation_results"] = results
+
+        _val_results = st.session_state.get("_validation_results") or []
+        if _val_results:
+            from core.nexus_validation import results_to_markdown
+            st.markdown("**검증 결과:**")
+            try:
+                import pandas as pd
+                df = pd.DataFrame([r.to_summary_row() for r in _val_results])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            except Exception:
+                pass
+
+            md = results_to_markdown(_val_results)
+            st.download_button(
+                "📥 Markdown 다운로드",
+                md,
+                file_name="df_compass_validation.md",
+                key="validation_download_btn",
+            )
+            with st.expander("📋 Markdown 전체 보기 (copy 용)", expanded=False):
+                st.code(md, language="markdown")
+
 
 def _sidebar(sb, hotlines: dict) -> str:
     with st.sidebar:
