@@ -918,10 +918,91 @@ def _admin_panel(sb, hotlines: dict) -> None:
         st.markdown("---")
         st.markdown("**🛠️ Validation Mode (자동 검증)**")
         st.caption(
-            "미리 등록된 8 query 순차 실행 → 답변 + 카테고리 + Button 종합 표 + "
+            "DB 에 등록된 active query 순차 실행 → 답변 + 카테고리 + Button 종합 표 + "
             "Markdown export. 새 PR 머지 후 회귀 검증용. ~10분 소요, ~$0.24/실행."
         )
-        if st.button("▶ 검증 실행 (8 query)", key="validation_run_btn"):
+
+        # PR-DB-Based-Validation-Queries: query 관리 UI
+        with st.expander("📋 검증 Queries 관리", expanded=False):
+            from core.nexus_validation import (
+                list_all_queries,
+                add_query,
+                set_query_active,
+                delete_query,
+            )
+
+            st.markdown("**➕ 새 query 추가**")
+            new_q = st.text_input("Query text:", key="new_query_text")
+            _cols_new = st.columns(3)
+            with _cols_new[0]:
+                new_cat = st.text_input("Category (선택):", key="new_query_cat")
+            with _cols_new[1]:
+                new_btn = st.selectbox(
+                    "Expected button:",
+                    options=["(미정)", "report", "hr_inquiry", "hidden"],
+                    key="new_query_btn",
+                )
+            with _cols_new[2]:
+                new_note = st.text_input("Note (선택):", key="new_query_note")
+            if st.button("+ 저장", key="add_query_btn"):
+                if new_q.strip():
+                    _expected = None if new_btn == "(미정)" else new_btn
+                    _result = add_query(
+                        sb,
+                        new_q.strip(),
+                        category=(new_cat.strip() or None),
+                        expected_button=_expected,
+                        note=(new_note.strip() or None),
+                    )
+                    if _result:
+                        st.success(f"✅ 추가 완료: ID {_result.get('id')}")
+                        st.rerun()
+                    else:
+                        st.error("저장 실패 (DB 에러)")
+
+            st.markdown("---")
+            st.markdown("**📋 등록된 Queries**")
+            _all_queries = list_all_queries(sb)
+            if _all_queries:
+                _active_count = sum(
+                    1 for q in _all_queries if q.get("is_active")
+                )
+                st.caption(
+                    f"전체 {len(_all_queries)}개 (활성 {_active_count}개)"
+                )
+                for q in _all_queries:
+                    _qid = q.get("id")
+                    _is_active = q.get("is_active", False)
+                    _status = "✅" if _is_active else "⏸️"
+                    _qtext = q.get("query_text", "")
+                    _cat = q.get("category") or "-"
+                    _exp_btn = q.get("expected_button") or "-"
+                    _cols = st.columns([1, 5, 1, 1])
+                    with _cols[0]:
+                        st.write(f"{_status} #{_qid}")
+                    with _cols[1]:
+                        _suffix = "…" if len(_qtext) > 60 else ""
+                        st.caption(
+                            f"[{_cat} | {_exp_btn}] {_qtext[:60]}{_suffix}"
+                        )
+                    with _cols[2]:
+                        if st.button(
+                            "🔄",
+                            key=f"toggle_{_qid}",
+                            help="활성/비활성 toggle",
+                        ):
+                            set_query_active(sb, _qid, not _is_active)
+                            st.rerun()
+                    with _cols[3]:
+                        if st.button("🗑️", key=f"del_{_qid}", help="삭제"):
+                            delete_query(sb, _qid)
+                            st.rerun()
+            else:
+                st.caption(
+                    "(DB 에 등록된 query 없음 — hardcoded fallback 사용)"
+                )
+
+        if st.button("▶ 검증 실행", key="validation_run_btn"):
             from core.nexus_validation import run_validation
             results: list = []
             progress_bar = st.progress(0, text="검증 시작…")
