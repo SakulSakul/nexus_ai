@@ -1485,7 +1485,7 @@ def _render_empty_state(sb) -> None:
         for _city, _w in (get_all_weather() or {}).items():
             if _w:
                 _weather_parts.append(
-                    f"{_city} {_w['emoji']} {_w['description']} {_w['temperature']}°C"
+                    f"**{_city}** {_w['emoji']} {_w['description']} :grey[{_w['temperature']}°C]"
                 )
     except Exception:
         pass
@@ -1497,7 +1497,7 @@ def _render_empty_state(sb) -> None:
         from core.utils.compliance_tips import get_daily_tip
         _tip = get_daily_tip()
         if _tip:
-            _tip_line = f'💡 오늘의 한 줄: "{_tip}"'
+            _tip_line = f'💡 **오늘의 한 줄:** :violet[*"{_tip}"*]'
     except Exception:
         pass
 
@@ -1536,7 +1536,7 @@ def _render_empty_state(sb) -> None:
         )
         st.markdown(
             f"{_greeting_block}\n\n"
-            "💡 답변에는 항상 **출처 사규** 가 함께 표시됩니다."
+            "💡 답변에는 항상 :orange[**출처 사규**] 가 함께 표시됩니다."
         )
         # PR-Fun1.4 작업 4: PR-3 의 답변 예시 expander 복구.
         with st.expander("💡 답변이 어떻게 나오는지 미리 보기", expanded=False):
