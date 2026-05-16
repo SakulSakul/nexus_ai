@@ -59,6 +59,7 @@ ANSWER_REPORT_KEYWORDS: tuple[str, ...] = (
     "클린신고",
     "일반 사건사고 보고지침",
     "중대 사건사고 보고지침",
+    "사건사고 보고지침",  # PR-Add-Generic-Report-Keyword: Q25 fail (LLM variability)
     "공정거래법 위반",
     "공정거래를 저해",
     "위변조 또는 허위작성",
