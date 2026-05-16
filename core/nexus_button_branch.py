@@ -40,9 +40,12 @@ QUERY_REPORT_INTENT_KEYWORDS: tuple[str, ...] = (
 # ── Signal 2: Doc domain categories ─────────────────────────────────────
 # Retrieval 결과 의 도메인 — 답변 본문 variability 영향 X.
 
+# PR-Narrow-Report-Doc-Domains: 9 → 1
+# Q13 협력사 지정 (공정거래) — query intent 매칭 X, contexts 만 의도된 단독 case.
+# 다른 정상 report case 는 query intent / answer keyword 로 cover.
+# (Q5 재무, Q2 환경/안전 의 over-trigger 방지)
 REPORT_DOC_DOMAINS: frozenset[str] = frozenset({
-    "공통", "공정거래", "정보보안", "안전", "환경",
-    "재무", "총무", "영업", "CSR",
+    "공정거래",
 })
 HR_ONLY_DOMAINS: frozenset[str] = frozenset({"인사"})
 
