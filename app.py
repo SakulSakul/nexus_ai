@@ -1015,12 +1015,79 @@ def _admin_panel(sb, hotlines: dict) -> None:
                 status_text.caption(f"진행 중: Q{idx}/{total}")
 
             try:
-                results = run_validation(sb, on_progress=_on_progress)
+                _run_id, results = run_validation(
+                    sb, on_progress=_on_progress, persist=True
+                )
                 progress_bar.progress(1.0, text="검증 완료!")
-                status_text.success(f"✅ {len(results)} query 완료")
+                if _run_id is not None:
+                    status_text.success(
+                        f"✅ {len(results)} query 완료 "
+                        f"(run #{_run_id} DB 저장됨)"
+                    )
+                else:
+                    status_text.warning(
+                        f"⚠️ {len(results)} query 완료 "
+                        f"(DB 영속화 실패, in-memory only)"
+                    )
             except Exception as e:
                 st.error(f"검증 실행 실패: {e}")
             st.session_state["_validation_results"] = results
+
+        # PR-Validation-Results-Persistence: 이전 검증 결과 조회
+        with st.expander("📋 이전 검증 결과 조회 (DB)", expanded=False):
+            from core.nexus_validation import (
+                list_validation_runs,
+                fetch_run_results,
+                db_row_to_validation_result,
+            )
+
+            _runs = list_validation_runs(sb, limit=20)
+            if not _runs:
+                st.caption(
+                    "(이전 검증 기록 없음 — 다음 검증부터 자동 저장)"
+                )
+            else:
+                st.caption(f"최근 {len(_runs)}개 검증 history")
+                _run_options: dict[str, int] = {}
+                for r in _runs:
+                    _started = (r.get("started_at") or "")[:19].replace("T", " ")
+                    _completed = r.get("completed_queries", 0)
+                    _total = r.get("total_queries", 0)
+                    _status = r.get("status", "")
+                    _label = (
+                        f"#{r['id']} | {_started} | "
+                        f"{_completed}/{_total} | {_status}"
+                    )
+                    _run_options[_label] = r["id"]
+
+                _selected_label = st.selectbox(
+                    "조회할 검증 run 선택:",
+                    options=list(_run_options.keys()),
+                    key="validation_run_select",
+                )
+
+                if _selected_label and st.button(
+                    "📋 결과 조회", key="fetch_run_btn"
+                ):
+                    _selected_run_id = _run_options[_selected_label]
+                    with st.spinner(
+                        f"Run #{_selected_run_id} 결과 조회 중..."
+                    ):
+                        _rows = fetch_run_results(sb, _selected_run_id)
+                        if _rows:
+                            _fetched = [
+                                db_row_to_validation_result(r) for r in _rows
+                            ]
+                            st.session_state["_validation_results"] = _fetched
+                            st.success(
+                                f"✅ Run #{_selected_run_id} 의 "
+                                f"{len(_fetched)} 결과 로드 완료"
+                            )
+                            st.rerun()
+                        else:
+                            st.warning(
+                                f"Run #{_selected_run_id} 결과 없음"
+                            )
 
         _val_results = st.session_state.get("_validation_results") or []
         if _val_results:

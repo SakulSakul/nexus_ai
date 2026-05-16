@@ -250,7 +250,8 @@ def run_validation(
     *,
     queries: tuple[str, ...] | None = None,
     on_progress: Any = None,
-) -> list[ValidationResult]:
+    persist: bool = True,
+) -> tuple[int | None, list[ValidationResult]]:
     """검증 query 순차 자동 실행.
 
     Args:
@@ -258,9 +259,12 @@ def run_validation(
         queries: 검증 query list. None 시 DB 의 active queries 자동 조회
                  (DB 실패 시 DEFAULT_VALIDATION_QUERIES fallback).
         on_progress: callback(idx, total, query_text) — progress bar 용.
+        persist: PR-Validation-Results-Persistence — True 시 각 query 결과
+                 즉시 DB INSERT (session 손실 방지). False 시 in-memory only.
 
     Returns:
-        list[ValidationResult] — 모든 query 의 결과 (error 포함).
+        (run_id, results) — run_id 는 persist=True 성공 시 BIGINT id,
+        실패/disabled 시 None.
     """
     from .chatbot import ask
 
@@ -271,6 +275,11 @@ def run_validation(
         qs = queries
     results: list[ValidationResult] = []
     total = len(qs)
+
+    # PR-Validation-Results-Persistence: run 생성
+    run_id: int | None = None
+    if persist:
+        run_id = create_validation_run(supabase, total)
 
     for idx, query in enumerate(qs, 1):
         if on_progress:
@@ -323,7 +332,17 @@ def run_validation(
                 )
             )
 
-    return results
+        # PR-Validation-Results-Persistence: 즉시 DB INSERT (손실 방지)
+        if run_id is not None:
+            insert_validation_result(supabase, run_id, results[-1])
+            if (idx % 5 == 0) or (idx == total):
+                update_run_progress(supabase, run_id, idx)
+
+    # PR-Validation-Results-Persistence: run 종료
+    if run_id is not None:
+        finalize_validation_run(supabase, run_id, "completed")
+
+    return (run_id, results)
 
 
 def results_to_markdown(results: list[ValidationResult]) -> str:
@@ -351,3 +370,154 @@ def results_to_markdown(results: list[ValidationResult]) -> str:
         lines.append(r.to_markdown())
         lines.append("")
     return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PR-Validation-Results-Persistence: DB 영속화
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def create_validation_run(
+    supabase: Any, total_queries: int, note: str | None = None
+) -> int | None:
+    """검증 run 시작 → run_id 반환. 실패 시 None (in-memory only mode)."""
+    try:
+        result = (
+            supabase.table("nexus_validation_runs")
+            .insert({
+                "total_queries": total_queries,
+                "status": "running",
+                "note": note,
+            })
+            .execute()
+        )
+        if result.data:
+            run_id = result.data[0]["id"]
+            print(
+                f"[validation] Created run #{run_id} ({total_queries} queries)",
+                file=sys.stderr, flush=True,
+            )
+            return run_id
+    except Exception as e:
+        print(
+            f"[validation] create_run failed: {e}",
+            file=sys.stderr, flush=True,
+        )
+    return None
+
+
+def insert_validation_result(
+    supabase: Any, run_id: int, result: "ValidationResult"
+) -> bool:
+    """단일 query 결과 DB 즉시 INSERT (각 query 후 호출 → 손실 방지)."""
+    try:
+        supabase.table("nexus_validation_results").insert({
+            "run_id": run_id,
+            "query_idx": result.idx,
+            "query_text": result.query,
+            "answer_text": result.answer_text,
+            "answer_chars": result.answer_chars,
+            "elapsed_seconds": result.elapsed_seconds,
+            "is_critical": result.is_critical,
+            "confidence": result.confidence,
+            "matched_doc_count": result.matched_doc_count,
+            "cited_docs": result.cited_docs,
+            "button_type": result.button_type,
+            "error": result.error,
+        }).execute()
+        return True
+    except Exception as e:
+        print(
+            f"[validation] insert_result Q{result.idx} failed: {e}",
+            file=sys.stderr, flush=True,
+        )
+        return False
+
+
+def update_run_progress(supabase: Any, run_id: int, completed: int) -> bool:
+    """run 의 completed_queries 갱신."""
+    try:
+        supabase.table("nexus_validation_runs").update({
+            "completed_queries": completed,
+        }).eq("id", run_id).execute()
+        return True
+    except Exception:
+        return False
+
+
+def finalize_validation_run(
+    supabase: Any, run_id: int, status: str = "completed"
+) -> bool:
+    """run 완료 mark + completed_at 갱신."""
+    try:
+        from datetime import datetime, timezone
+        supabase.table("nexus_validation_runs").update({
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+        }).eq("id", run_id).execute()
+        return True
+    except Exception as e:
+        print(
+            f"[validation] finalize_run failed: {e}",
+            file=sys.stderr, flush=True,
+        )
+        return False
+
+
+def list_validation_runs(supabase: Any, limit: int = 20) -> list[dict]:
+    """최근 검증 runs 조회 (시계열 desc)."""
+    try:
+        result = (
+            supabase.table("nexus_validation_runs")
+            .select(
+                "id, started_at, completed_at, total_queries, "
+                "completed_queries, status, note"
+            )
+            .order("started_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception:
+        return []
+
+
+def fetch_run_results(supabase: Any, run_id: int) -> list[dict]:
+    """특정 run 의 모든 결과 조회 (query_idx 순)."""
+    try:
+        result = (
+            supabase.table("nexus_validation_results")
+            .select("*")
+            .eq("run_id", run_id)
+            .order("query_idx", desc=False)
+            .execute()
+        )
+        return result.data or []
+    except Exception:
+        return []
+
+
+def db_row_to_validation_result(row: dict) -> "ValidationResult":
+    """DB row → ValidationResult 변환 (display 용)."""
+    import json
+    cited = row.get("cited_docs")
+    if isinstance(cited, str):
+        try:
+            cited = json.loads(cited)
+        except Exception:
+            cited = []
+    if not isinstance(cited, list):
+        cited = []
+    return ValidationResult(
+        idx=row.get("query_idx", 0),
+        query=row.get("query_text", ""),
+        answer_text=row.get("answer_text", "") or "",
+        answer_chars=row.get("answer_chars", 0) or 0,
+        elapsed_seconds=row.get("elapsed_seconds", 0.0) or 0.0,
+        is_critical=row.get("is_critical", False),
+        confidence=row.get("confidence", "") or "",
+        matched_doc_count=row.get("matched_doc_count", 0) or 0,
+        cited_docs=cited,
+        button_type=row.get("button_type", "") or "",
+        error=row.get("error"),
+    )
