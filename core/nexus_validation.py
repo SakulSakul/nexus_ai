@@ -34,24 +34,8 @@ DEFAULT_VALIDATION_QUERIES: tuple[str, ...] = (
 )
 
 
-# Button 분기 keyword (app.py:_render_action_buttons 와 동일 — PR #158)
-_REPORT_KEYWORDS: tuple[str, ...] = (
-    "신고·조사",
-    "SRMS",
-    "신세계면세점 핫라인",
-    "클린신고",
-    "일반 사건사고 보고지침",
-    "중대 사건사고 보고지침",
-    "공정거래법 위반",
-    "공정거래를 저해",
-    "위변조 또는 허위작성",
-    "부정/부실행위",
-)
-
-_HR_GRACEFUL_KEYWORDS: tuple[str, ...] = (
-    "인사 규정·복리후생 등 인사 행정 사항은 인사교육팀에 문의",
-    "인사교육팀에 문의해 주시기 바랍니다",
-)
+# Button 분기 keyword: PR-Multi-Signal-Button-Branch-Refactor 로
+# core/nexus_button_branch.py 의 classify_button 으로 통일됨.
 
 
 # === PR-DB-Based-Validation-Queries: DB CRUD ===
@@ -208,20 +192,29 @@ class ValidationResult:
         )
 
 
-def _classify_button(answer_text: str, is_critical: bool, confidence: str) -> str:
-    """app.py:_render_action_buttons 와 동일한 분기 logic — button label 만 추출.
+def _classify_button(
+    query: str,
+    answer_text: str,
+    contexts: list[dict] | None,
+    is_critical: bool,
+    confidence: str,
+) -> str:
+    """Multi-signal 분기 (core/nexus_button_branch.classify_button 와 동일 logic).
 
-    PR #158 의 logic 재현:
-    - is_critical OR REPORT_KEYWORDS 매칭 → 신고 방법 안내
-    - confidence=='low' OR HR_GRACEFUL_KEYWORDS 매칭 → 인사교육팀 문의
-    - 그 외 → 숨김
+    PR-Multi-Signal-Button-Branch-Refactor: UI ↔ Validation 통일.
     """
-    at = answer_text or ""
-    is_report = is_critical or any(kw in at for kw in _REPORT_KEYWORDS)
-    is_hr = (confidence == "low") or any(kw in at for kw in _HR_GRACEFUL_KEYWORDS)
-    if is_report:
+    from .nexus_button_branch import classify_button
+
+    decision = classify_button(
+        query=query,
+        answer_text=answer_text,
+        contexts=contexts,
+        is_critical=is_critical,
+        confidence=confidence,
+    )
+    if decision == "report":
         return "📞 신고 방법 안내"
-    if is_hr:
+    if decision == "hr_inquiry":
         return "📞 인사교육팀 문의"
     return "(숨김)"
 
@@ -305,7 +298,11 @@ def run_validation(
                     matched_doc_count=len(ans.contexts or []),
                     cited_docs=_extract_cited_docs(ans.text or ""),
                     button_type=_classify_button(
-                        ans.text or "", bool(ans.is_critical), ans.confidence
+                        query=query,
+                        answer_text=ans.text or "",
+                        contexts=ans.contexts,
+                        is_critical=bool(ans.is_critical),
+                        confidence=ans.confidence,
                     ),
                 )
             )
