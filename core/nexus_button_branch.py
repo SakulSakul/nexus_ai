@@ -72,14 +72,19 @@ ANSWER_HR_GRACEFUL_KEYWORDS: tuple[str, ...] = (
 
 
 def _extract_context_domains(contexts: list[dict] | None) -> set[str]:
-    """contexts 의 title 에서 (도메인) 추출. PR #149 의 카테고리 chip logic 과 동일 패턴."""
+    """contexts 의 doc_title / title 에서 (도메인) 추출.
+
+    PR-Fix-Context-Domain-Key-Mismatch: retrieval contexts 의 표준 key 는
+    'doc_title' (chatbot.py / personality.py / nexus_reranker.py 와 일관).
+    'title' 은 fallback (legacy 호환).
+    """
     if not contexts:
         return set()
     domains: set[str] = set()
     for ctx in contexts:
         if not isinstance(ctx, dict):
             continue
-        title = ctx.get("title")
+        title = ctx.get("doc_title") or ctx.get("title")
         if not title:
             continue
         m = re.match(r"\(([^)]+)\)", title)
