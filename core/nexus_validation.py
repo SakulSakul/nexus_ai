@@ -54,6 +54,110 @@ _HR_GRACEFUL_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# === PR-DB-Based-Validation-Queries: DB CRUD ===
+
+def fetch_active_queries(supabase: Any) -> tuple[str, ...]:
+    """DB 의 active validation queries 조회.
+
+    DB 조회 실패 시 (table 없음/permission 등) 안전 fallback —
+    hardcoded DEFAULT_VALIDATION_QUERIES 사용.
+
+    Returns:
+        tuple[str, ...] — active query_text 순서대로.
+    """
+    try:
+        result = (
+            supabase.table("nexus_validation_queries")
+            .select("query_text, category, expected_button")
+            .eq("is_active", True)
+            .order("id", desc=False)
+            .execute()
+        )
+        if result.data:
+            queries = tuple(
+                row["query_text"] for row in result.data if row.get("query_text")
+            )
+            if queries:
+                print(
+                    f"[validation] DB fetched {len(queries)} active queries",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return queries
+    except Exception as e:
+        print(
+            f"[validation] DB fetch failed, using hardcoded fallback: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+    return DEFAULT_VALIDATION_QUERIES
+
+
+def add_query(
+    supabase: Any,
+    query_text: str,
+    *,
+    category: str | None = None,
+    expected_button: str | None = None,
+    note: str | None = None,
+) -> dict | None:
+    """새 validation query 추가."""
+    try:
+        result = (
+            supabase.table("nexus_validation_queries")
+            .insert(
+                {
+                    "query_text": query_text,
+                    "category": category,
+                    "expected_button": expected_button,
+                    "note": note,
+                    "is_active": True,
+                }
+            )
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"[validation] add_query failed: {e}", file=sys.stderr, flush=True)
+        return None
+
+
+def list_all_queries(supabase: Any) -> list[dict]:
+    """모든 validation query 조회 (active + inactive)."""
+    try:
+        result = (
+            supabase.table("nexus_validation_queries")
+            .select("*")
+            .order("id", desc=False)
+            .execute()
+        )
+        return result.data or []
+    except Exception:
+        return []
+
+
+def set_query_active(supabase: Any, query_id: int, is_active: bool) -> bool:
+    """query 활성/비활성 toggle."""
+    try:
+        supabase.table("nexus_validation_queries").update(
+            {"is_active": is_active}
+        ).eq("id", query_id).execute()
+        return True
+    except Exception:
+        return False
+
+
+def delete_query(supabase: Any, query_id: int) -> bool:
+    """query 삭제."""
+    try:
+        supabase.table("nexus_validation_queries").delete().eq(
+            "id", query_id
+        ).execute()
+        return True
+    except Exception:
+        return False
+
+
 @dataclass
 class ValidationResult:
     """단일 query 검증 결과."""
@@ -151,7 +255,8 @@ def run_validation(
 
     Args:
         supabase: chatbot.ask 의 supabase client.
-        queries: 검증 query list (None 시 DEFAULT_VALIDATION_QUERIES).
+        queries: 검증 query list. None 시 DB 의 active queries 자동 조회
+                 (DB 실패 시 DEFAULT_VALIDATION_QUERIES fallback).
         on_progress: callback(idx, total, query_text) — progress bar 용.
 
     Returns:
@@ -159,7 +264,11 @@ def run_validation(
     """
     from .chatbot import ask
 
-    qs = queries if queries is not None else DEFAULT_VALIDATION_QUERIES
+    if queries is None:
+        # PR-DB-Based-Validation-Queries: DB 의 active queries 우선
+        qs = fetch_active_queries(supabase)
+    else:
+        qs = queries
     results: list[ValidationResult] = []
     total = len(qs)
 
