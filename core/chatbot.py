@@ -972,8 +972,10 @@ def ask(
     # doc_kind 분산: 큰 풀에서 검색 후 비율로 잘라냄. 한 doc_kind 가 풀에서
     # 우세할 때 다른 kind 가 풀에서 빠질 위험 완화 위해 합계 + 여유분 _POOL_SIZE_MARGIN.
     pool_size = sum(_DOC_KIND_RATIOS.values()) + _POOL_SIZE_MARGIN
+    # PR-UI-Sub-Stage-Visualization: hybrid_search 의 sub-stage emit pass.
     contexts_raw = hybrid_search(
         supabase, question=masked, categories=cats, top_k=pool_size,
+        progress_callback=progress_callback,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
     # Phase 1.5 (PR #95) → Phase 6 (PR #101): universal SOP 청크 보존, _UNIVERSAL_SOP_MAX_CHUNKS 까지 cap.
@@ -1398,8 +1400,10 @@ def ask_stream(
     t0 = time.perf_counter()
     _emit("search_start")
     pool_size = sum(_DOC_KIND_RATIOS.values()) + _POOL_SIZE_MARGIN
+    # PR-UI-Sub-Stage-Visualization: hybrid_search 의 sub-stage emit pass.
     contexts_raw = hybrid_search(
         supabase, question=masked, categories=cats, top_k=pool_size,
+        progress_callback=progress_callback,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
     # Phase 1.5 → Phase 6: universal SOP 청크 ratio cap 우회 보존 + max cap.
