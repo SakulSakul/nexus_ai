@@ -1110,6 +1110,85 @@ def _admin_panel(sb, hotlines: dict) -> None:
             with st.expander("📋 Markdown 전체 보기 (copy 용)", expanded=False):
                 st.code(md, language="markdown")
 
+        # PR-Critical-Mode-LLM-Expansion-Day2: 핫라인 관리 panel
+        st.markdown("---")
+        st.subheader("🚨 핫라인 관리")
+        st.caption(
+            "Critical mode 답변 끝에 자동 표시되는 핫라인 URL/번호를 관리합니다. "
+            "변경 즉시 다음 답변부터 적용됩니다 (Reboot 불필요)."
+        )
+
+        try:
+            _ht_res = (
+                sb.table("hotline_config")
+                .select("key,value")
+                .order("key")
+                .execute()
+            )
+            _ht_rows = _ht_res.data or []
+        except Exception as _ht_err:
+            st.error(f"핫라인 조회 실패: {_ht_err}")
+            _ht_rows = []
+
+        if _ht_rows:
+            with st.form("hotline_edit_form"):
+                _ht_edits: dict[str, str] = {}
+                _first_key = _ht_rows[0].get("key") if _ht_rows else None
+                for _row in _ht_rows:
+                    _key = _row.get("key", "")
+                    _val = _row.get("value", "") or ""
+                    _new_val = st.text_input(
+                        f"`{_key}`",
+                        value=_val,
+                        key=f"hotline_{_key}",
+                        help=(
+                            "internal_report_url: 사내 익명 제보 URL · "
+                            "external_hotline: 외부 상담 · "
+                            "ethics_hotline_url: 윤리 핫라인 · "
+                            "hr_chatbot_url: 인사교육팀 챗봇 URL · "
+                            "hr_contact_text: 인사교육팀 안내 텍스트"
+                        ) if _key == _first_key else None,
+                    )
+                    if _new_val != _val:
+                        _ht_edits[_key] = _new_val
+
+                _submit = st.form_submit_button("💾 변경 사항 저장")
+                if _submit:
+                    if not _ht_edits:
+                        st.info("변경된 항목이 없습니다.")
+                    else:
+                        import sys as _sys_admin
+                        _success_count = 0
+                        _fail_keys: list[str] = []
+                        for _k, _v in _ht_edits.items():
+                            try:
+                                sb.table("hotline_config").update(
+                                    {"value": _v}
+                                ).eq("key", _k).execute()
+                                _success_count += 1
+                            except Exception as _upd_err:
+                                _fail_keys.append(_k)
+                                print(
+                                    f"[admin:hotline] update failed "
+                                    f"key={_k}: {_upd_err}",
+                                    file=_sys_admin.stderr, flush=True,
+                                )
+                        if _success_count:
+                            st.success(
+                                f"✅ {_success_count} 항목 업데이트 완료. "
+                                "다음 답변부터 즉시 반영됩니다."
+                            )
+                        if _fail_keys:
+                            st.error(
+                                f"❌ 다음 항목 업데이트 실패: "
+                                f"{', '.join(_fail_keys)}"
+                            )
+        else:
+            st.warning(
+                "핫라인 설정이 없습니다. db/04_seed.sql 또는 "
+                "db/06_seed_hotlines.sql 의 INSERT 가 적용되었는지 확인하세요."
+            )
+
 
 def _sidebar(sb, hotlines: dict) -> str:
     with st.sidebar:
