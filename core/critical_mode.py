@@ -86,6 +86,17 @@ def detect(text: str, keywords: dict[str, list[str]]) -> CriticalDetection:
                 # 정보 요청 컨텍스트(+ 사건 신호 없음) → 일반 응답.
                 return CriticalDetection(False, None, hits)
             return CriticalDetection(True, kind, hits)
+    # PR-Critical-Mode-LLM-Expansion: Keyword miss 시 Claude Opus 4.7 fallback.
+    # Self-Consistency (3 calls + majority vote) 으로 안정성 ↑.
+    # 의심 query 만 호출 (regex pre-filter) — 비용 최적.
+    try:
+        from .nexus_critical_classifier import classify_with_llm
+        llm_result = classify_with_llm(text)
+        if llm_result is not None and llm_result.is_critical and llm_result.confidence >= 0.66:
+            return CriticalDetection(True, llm_result.kind or "harassment", [])
+    except Exception as _e:
+        import sys
+        print(f"[critical_mode] LLM fallback failed: {_e}", file=sys.stderr, flush=True)
     return CriticalDetection(False, None, [])
 
 
