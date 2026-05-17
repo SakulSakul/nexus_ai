@@ -429,10 +429,10 @@ def _maybe_prefix_system_prompt(
         return base_prompt
     if confidence != "low":
         return base_prompt
-    # PR-Confidence-Prefix-Append: implicit caching hit rate 향상.
-    # prepend → append 로 변경하여 base_prompt 시작 부분 항상 동일.
-    # Gemini 의 prompt prefix matching 으로 자동 cache hit (75% 할인).
-    return base_prompt + _CONFIDENCE_PREFIX
+    # PR-Revert-Confidence-Prefix-Append: Hit rate 향상 효과 X
+    # (5/17 검증: 8.5%→14.3% 만, low query 거의 없어 변경 영역 X).
+    # 더하여 Q5/Q11/Q13 의 length 회귀 발견 → 원상 복귀.
+    return _CONFIDENCE_PREFIX + base_prompt
 
 
 _TRANSIENT_HINTS = (

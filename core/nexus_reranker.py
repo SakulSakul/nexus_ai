@@ -26,7 +26,9 @@ from .config import get_secret, settings
 
 
 _RERANK_MODEL = get_secret("NEXUS_RERANK_MODEL", "gemini-2.5-flash-lite")
-_RERANK_TOP_N = 30          # reranker 가 평가할 raw_chunks 상위 N
+# PR-Reranker-Top15: top_n 30→15 으로 reranker latency -2.4초.
+# Risk: Q13 fix (공정거래 doc) 가 top 15 안에 포함되는지 검증.
+_RERANK_TOP_N = 15          # reranker 가 평가할 raw_chunks 상위 N
 _CHUNK_PREVIEW_LEN = 400    # 청크당 LLM 에 전달할 text preview 길이 (chars)
 _MAX_OUTPUT_TOKENS = 2048   # ranked_ids 30개 + JSON overhead 충분
 _RERANK_TEMPERATURE = 0.0   # 결정적 ranking (재현성)
