@@ -2456,6 +2456,52 @@ def _run_ask(
                     unsafe_allow_html=True,
                 )
                 progress_bar.progress(0.4, text="📚 관련 사규 검색 중...")
+            elif stage == "search_rewrite_done":
+                _elapsed = payload.get("elapsed_ms", 0) / 1000
+                progress_placeholder.markdown(
+                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
+                    "⚪ 답변 작성\n\n"
+                    f"  ✅ 📝 사규 키워드로 변환 · {_elapsed:.1f}초\n"
+                    f"  🔄 🔍 의미 검색 중...",
+                    unsafe_allow_html=True,
+                )
+                progress_bar.progress(0.45, text="🔍 사규 의미 검색 중...")
+            elif stage == "search_embed_done":
+                progress_placeholder.markdown(
+                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
+                    "⚪ 답변 작성\n\n"
+                    f"  ✅ 📝 사규 키워드로 변환\n"
+                    f"  ✅ 🧮 의미 벡터 생성\n"
+                    f"  🔄 🔤 벡터 + 키워드 매칭 중...",
+                    unsafe_allow_html=True,
+                )
+                progress_bar.progress(0.5, text="🔤 벡터 + 키워드 매칭 중...")
+            elif stage == "search_rpc_done":
+                _matched = payload.get("matched", 0)
+                _elapsed = payload.get("elapsed_ms", 0) / 1000
+                progress_placeholder.markdown(
+                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
+                    "⚪ 답변 작성\n\n"
+                    f"  ✅ 📝 사규 키워드로 변환\n"
+                    f"  ✅ 🔤 {_matched}개 사규 매칭 · {_elapsed:.1f}초\n"
+                    f"  🔄 🎯 의미 재정렬 (LLM) 중...",
+                    unsafe_allow_html=True,
+                )
+                progress_bar.progress(0.6, text="🎯 LLM 의미 재정렬 중...")
+            elif stage == "search_rerank_done":
+                _elapsed = payload.get("elapsed_ms", 0) / 1000
+                _titles = payload.get("top_titles", [])[:2]
+                _title_str = ", ".join(_titles) if _titles else ""
+                progress_placeholder.markdown(
+                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
+                    "⚪ 답변 작성\n\n"
+                    f"  ✅ 📝 사규 키워드로 변환\n"
+                    f"  ✅ 🔤 사규 매칭\n"
+                    f"  ✅ 🎯 LLM 의미 재정렬 · {_elapsed:.1f}초\n"
+                    f"  🔄 ✨ 핵심 사규 선별 · {_title_str}",
+                    unsafe_allow_html=True,
+                )
+                progress_bar.progress(0.65, text="✨ 핵심 사규 선별 중...")
             elif stage == "search_done":
                 total = payload.get("total", 0)
                 if total == 0:

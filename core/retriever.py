@@ -293,7 +293,20 @@ def hybrid_search(
     categories: list[str] | None,
     doc_kinds: list[str] | None = None,
     top_k: int | None = None,
+    progress_callback=None,
 ) -> list[dict]:
+    """PR-UI-Sub-Stage-Visualization: progress_callback(stage, payload).
+    각 sub-stage 의 elapsed_ms / metadata 를 emit 하여 UI 의 sub-message
+    표시. None 인 경우 emit 무시 (회귀 안전).
+    """
+    import time as _t_subprog
+    def _emit_sub(stage: str, payload: dict | None = None) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(stage, payload or {})
+        except Exception:
+            pass
     s = settings()
     if USE_HYBRID_SEARCH:
         # Tier 1 — 사규 용어 확장. 실패 시 원문 반환 (raise 안 함).
@@ -302,10 +315,20 @@ def hybrid_search(
             nexus_build_keyword_tsquery,
             nexus_classify_to_incident_nodes,
         )
+        _t_rewrite0 = _t_subprog.perf_counter()
         retrieval_query_text = rewrite_query_for_retrieval(question)
+        _emit_sub("search_rewrite_done", {
+            "elapsed_ms": int((_t_subprog.perf_counter() - _t_rewrite0) * 1000),
+            "rewritten_preview": (retrieval_query_text or "")[:60],
+        })
+
+        _t_embed0 = _t_subprog.perf_counter()
         retrieval_embedding = embed_one(
             retrieval_query_text, task_type="RETRIEVAL_QUERY",
         )
+        _emit_sub("search_embed_done", {
+            "elapsed_ms": int((_t_subprog.perf_counter() - _t_embed0) * 1000),
+        })
         # Tier 2 보조: 한국어 조사 제거 + prefix tsquery 빌더. RPC v3 가
         # to_tsquery('simple', …) 로 받기 때문에 plainto_tsquery 형식이 아닌
         # 정식 tsquery 표현식("토큰:* | 토큰:*") 을 넘긴다.
@@ -335,8 +358,15 @@ def hybrid_search(
             "rrf_k": 60,
             "pool_size": max(30, rpc_match_count * 6),
         }
+        _t_rpc0 = _t_subprog.perf_counter()
         res = supabase.rpc(_rpc_name, payload).execute()
         raw_chunks = res.data or []
+        _emit_sub("search_rpc_done", {
+            "elapsed_ms": int((_t_subprog.perf_counter() - _t_rpc0) * 1000),
+            "matched": len(raw_chunks),
+            "variant": _hs_variant,
+        })
+
 
         # 1) 사용자 입력 incident 분류 — 원본 + rewritten 합쳐 노드 추출.
         user_incident_nodes = set(
@@ -763,7 +793,15 @@ def hybrid_search(
         # 평가에 부적합.
         try:
             from .nexus_reranker import rerank_chunks
+            _t_rerank0 = _t_subprog.perf_counter()
             raw_chunks = rerank_chunks(query=question or "", raw_chunks=raw_chunks)
+            _emit_sub("search_rerank_done", {
+                "elapsed_ms": int((_t_subprog.perf_counter() - _t_rerank0) * 1000),
+                "top_titles": [
+                    c.get("doc_title", "") for c in raw_chunks[:3]
+                    if c.get("doc_title")
+                ],
+            })
         except Exception as _rerank_e:
             print(
                 f"[reranker] FAILED (outer): {type(_rerank_e).__name__}: {_rerank_e}",
