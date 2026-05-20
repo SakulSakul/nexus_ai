@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -249,32 +250,33 @@ def run_validation(
     on_progress: Any = None,
     persist: bool = True,
     model_id: str | None = None,
+    max_workers: int = 5,
 ) -> tuple[int | None, list[ValidationResult]]:
-    """검증 query 순차 자동 실행.
+    """DB 의 active queries 순차 실행 → 답변·메타데이터 종합 list 반환.
 
     Args:
-        supabase: chatbot.ask 의 supabase client.
-        queries: 검증 query list. None 시 DB 의 active queries 자동 조회
-                 (DB 실패 시 DEFAULT_VALIDATION_QUERIES fallback).
-        on_progress: callback(idx, total, query_text) — progress bar 용.
-        persist: PR-Validation-Results-Persistence — True 시 각 query 결과
-                 즉시 DB INSERT (session 손실 방지). False 시 in-memory only.
+        supabase: Supabase client.
+        queries: None 이면 fetch_active_queries(supabase) 사용.
+        on_progress: callback(completed_idx, total, query_text).
+        persist: True 시 각 query 결과 즉시 DB INSERT (손실 방지).
+        model_id: ContextVar 기반 모델 override (PR-Validation-To-Admin).
+        max_workers: PR-3.5 — ThreadPoolExecutor worker 수 (default 5).
+                     1로 두면 sequential 동작 (회귀 검증용).
 
     Returns:
-        (run_id, results) — run_id 는 persist=True 성공 시 BIGINT id,
-        실패/disabled 시 None.
+        (run_id, results) — run_id 는 persist=True 성공 시 BIGINT id.
+        results 는 idx 순서로 정렬되어 반환됨 (병렬 처리 결과 보장).
     """
     from .chatbot import ask
 
     if queries is None:
-        # PR-DB-Based-Validation-Queries: DB 의 active queries 우선
         qs = fetch_active_queries(supabase)
     else:
         qs = queries
     results: list[ValidationResult] = []
     total = len(qs)
 
-    # PR-Validation-To-Admin: eval override token — 함수 끝에서 reset.
+    # ContextVar token (PR-Validation-To-Admin)
     from .chatbot import _EVAL_MODEL_ID
     _token = _EVAL_MODEL_ID.set(model_id) if model_id else None
     _provider: str | None = None
@@ -284,7 +286,7 @@ def run_validation(
         elif model_id.startswith("claude-"):
             _provider = "claude"
 
-    # PR-Validation-Results-Persistence: run 생성
+    # run 생성
     run_id: int | None = None
     if persist:
         run_id = create_validation_run(
@@ -292,75 +294,115 @@ def run_validation(
             model_id=model_id, provider=_provider,
         )
 
-    for idx, query in enumerate(qs, 1):
-        if on_progress:
-            try:
-                on_progress(idx, total, query)
-            except Exception:
-                pass
-
+    # PR-3.5: 단일 query 처리 함수 (병렬 worker 가 호출)
+    def _process_one(idx: int, query: str) -> ValidationResult:
         start = time.time()
         try:
             ans = ask(supabase, question=query, category=None)
             elapsed = time.time() - start
-
-            results.append(
-                ValidationResult(
-                    idx=idx,
+            return ValidationResult(
+                idx=idx,
+                query=query,
+                answer_text=ans.text,
+                answer_chars=len(ans.text or ""),
+                elapsed_seconds=elapsed,
+                is_critical=bool(ans.is_critical),
+                confidence=ans.confidence,
+                matched_doc_count=len(ans.contexts or []),
+                cited_docs=_extract_cited_docs(ans.text or ""),
+                button_type=_classify_button(
                     query=query,
-                    answer_text=ans.text,
-                    answer_chars=len(ans.text or ""),
-                    elapsed_seconds=elapsed,
+                    answer_text=ans.text or "",
+                    contexts=ans.contexts,
                     is_critical=bool(ans.is_critical),
                     confidence=ans.confidence,
-                    matched_doc_count=len(ans.contexts or []),
-                    cited_docs=_extract_cited_docs(ans.text or ""),
-                    button_type=_classify_button(
-                        query=query,
-                        answer_text=ans.text or "",
-                        contexts=ans.contexts,
-                        is_critical=bool(ans.is_critical),
-                        confidence=ans.confidence,
-                    ),
-                )
+                ),
             )
         except Exception as e:
             elapsed = time.time() - start
             print(
                 f"[validation] Q{idx} error: {e}",
-                file=sys.stderr,
-                flush=True,
+                file=sys.stderr, flush=True,
             )
-            results.append(
-                ValidationResult(
-                    idx=idx,
-                    query=query,
-                    answer_text="",
-                    answer_chars=0,
-                    elapsed_seconds=elapsed,
-                    is_critical=False,
-                    confidence="",
-                    matched_doc_count=0,
-                    cited_docs=[],
-                    button_type="(error)",
-                    error=str(e)[:200],
-                )
+            return ValidationResult(
+                idx=idx,
+                query=query,
+                answer_text="",
+                answer_chars=0,
+                elapsed_seconds=elapsed,
+                is_critical=False,
+                confidence="",
+                matched_doc_count=0,
+                cited_docs=[],
+                button_type="(error)",
+                error=str(e)[:200],
             )
 
-        # PR-Validation-Results-Persistence: 즉시 DB INSERT (손실 방지)
+    # 병렬 처리. ContextVar 는 submit 시 자동 복사 (PEP 567).
+    results_dict: dict[int, ValidationResult] = {}
+    completed = 0
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {
+                ex.submit(_process_one, idx, q): idx
+                for idx, q in enumerate(qs, 1)
+            }
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    res = fut.result()
+                except Exception as e:
+                    # 이론상 _process_one 가 모든 예외를 흡수하지만 안전망
+                    print(
+                        f"[validation] Q{idx} future error: {e}",
+                        file=sys.stderr, flush=True,
+                    )
+                    res = ValidationResult(
+                        idx=idx,
+                        query=qs[idx - 1],
+                        answer_text="",
+                        answer_chars=0,
+                        elapsed_seconds=0.0,
+                        is_critical=False,
+                        confidence="",
+                        matched_doc_count=0,
+                        cited_docs=[],
+                        button_type="(error)",
+                        error=str(e)[:200],
+                    )
+                results_dict[idx] = res
+                completed += 1
+
+                # progress callback (완료 순서)
+                if on_progress:
+                    try:
+                        on_progress(completed, total, res.query)
+                    except Exception:
+                        pass
+
+                # DB INSERT + progress update (메인 thread, supabase 직렬화)
+                if run_id is not None:
+                    try:
+                        insert_validation_result(supabase, run_id, res)
+                        if (completed % 5 == 0) or (completed == total):
+                            update_run_progress(supabase, run_id, completed)
+                    except Exception as e:
+                        print(
+                            f"[validation] DB insert failed Q{idx}: {e}",
+                            file=sys.stderr, flush=True,
+                        )
+
+        # idx 순으로 정렬해서 반환
+        for idx in sorted(results_dict.keys()):
+            results.append(results_dict[idx])
+
+        # run 종료
         if run_id is not None:
-            insert_validation_result(supabase, run_id, results[-1])
-            if (idx % 5 == 0) or (idx == total):
-                update_run_progress(supabase, run_id, idx)
-
-    # PR-Validation-Results-Persistence: run 종료
-    if run_id is not None:
-        finalize_validation_run(supabase, run_id, "completed")
-
-    # PR-Validation-To-Admin: ContextVar reset (try 없이도 안전 — exception 시
-    # 호출자가 catch 하더라도 token 은 함수 단위로 격리되므로 누수 없음).
-    if _token is not None:
-        _EVAL_MODEL_ID.reset(_token)
+            finalize_validation_run(supabase, run_id, "completed")
+    finally:
+        # ContextVar reset (예외 발생해도 누수 없음)
+        if _token is not None:
+            _EVAL_MODEL_ID.reset(_token)
 
     return (run_id, results)
 
