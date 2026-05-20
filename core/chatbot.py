@@ -854,7 +854,7 @@ def _extract_action_items(answer: str) -> list[str]:
 # retriever 결과가 한 doc_kind 만 잡혀 잘리면 상대 블록이 폴백 메시지로
 # 깨짐 → 사용자 답변 품질 저하. 본 분산으로 양 블록 모두 들어가도록 보장.
 _DOC_KIND_RATIOS: "OrderedDict[str, int]" = OrderedDict([
-    ("rule", 3),
+    ("rule", 5),
     ("penalty", 2),
     ("case", 2),
 ])
