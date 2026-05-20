@@ -519,7 +519,7 @@ def list_validation_runs(supabase: Any, limit: int = 20) -> list[dict]:
             supabase.table("nexus_validation_runs")
             .select(
                 "id, started_at, completed_at, total_queries, "
-                "completed_queries, status, note"
+                "completed_queries, status, note, model_id, provider"
             )
             .order("started_at", desc=True)
             .limit(limit)

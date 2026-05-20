@@ -2289,12 +2289,40 @@ def _tab_validation(sb):
                         _fetched = [
                             db_row_to_validation_result(r) for r in _rows
                         ]
-                        st.session_state["_validation_results"] = _fetched
                         st.success(
                             f"✅ Run #{_selected_run_id} 의 "
                             f"{len(_fetched)} 결과 로드 완료"
                         )
-                        st.rerun()
+                        # PR-A2: sub_history 안에서 inline 렌더링
+                        # 기존: session_state → rerun → sub_run 표시 코드 → sub_history 활성 시 표시 안 됨
+                        # 개선: 같은 탭 안에서 직접 dataframe + markdown export
+                        try:
+                            import pandas as pd
+                            _df_hist = pd.DataFrame(
+                                [r.to_summary_row() for r in _fetched]
+                            )
+                            st.dataframe(
+                                _df_hist,
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        except Exception as e:
+                            st.error(f"dataframe 렌더링 실패: {e}")
+                        _md_hist = results_to_markdown(_fetched)
+                        st.download_button(
+                            f"📥 Markdown 다운로드 (run #{_selected_run_id})",
+                            _md_hist,
+                            file_name=(
+                                f"df_compass_validation_run"
+                                f"{_selected_run_id}.md"
+                            ),
+                            key="val_history_md_dl",
+                        )
+                        with st.expander(
+                            "📋 Markdown 전체 보기 (copy 용)",
+                            expanded=False,
+                        ):
+                            st.code(_md_hist, language="markdown")
                     else:
                         st.warning(
                             f"Run #{_selected_run_id} 결과 없음"
