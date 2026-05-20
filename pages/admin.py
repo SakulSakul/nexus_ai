@@ -2099,8 +2099,85 @@ def _tab_validation(sb):
         "Markdown export. 새 PR 머지 후 회귀 검증용. ~10분 소요, ~$0.24/실행."
     )
 
-    # ── 검증 Queries 관리 ──────────────────────────────────────
-    with st.expander("📋 검증 Queries 관리", expanded=False):
+    sub_run, sub_queries, sub_history = st.tabs(
+        ["▶ 검증 실행", "📋 Queries 관리", "📊 이전 결과 조회"]
+    )
+
+    # ── 검증 실행 + 결과 표시 (sub_run 탭) ────────────────────
+    with sub_run:
+        # PR-Validation-To-Admin: 모델 selectbox 로 모델별 회귀 smoke test.
+        val_model_choice = st.selectbox(
+            "평가 모델",
+            options=[
+                "gemini-3.5-flash",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash-lite",
+                "claude-opus-4-7",
+                None,
+            ],
+            format_func=lambda x: (
+                "운영 설정 (NEXUS_CHAT_MODEL)" if x is None else x
+            ),
+            help="특정 모델 선택 시 fallback chain 우회 — 단일 모델 응답만 측정. "
+                 "None 선택 시 운영 설정 사용.",
+            key="val_model_choice",
+        )
+
+        if st.button("▶ 검증 실행", type="primary", key="val_run_btn"):
+            results: list = []
+            progress_bar = st.progress(0, text="검증 시작…")
+            status_text = st.empty()
+
+            def _on_progress(idx: int, total: int, query: str) -> None:
+                progress_bar.progress(
+                    idx / total, text=f"Q{idx}/{total}: {query[:40]}…"
+                )
+                status_text.caption(f"진행 중: Q{idx}/{total}")
+
+            try:
+                _run_id, results = run_validation(
+                    sb, on_progress=_on_progress, persist=True,
+                    model_id=val_model_choice,
+                )
+                progress_bar.progress(1.0, text="검증 완료!")
+                _m_label = val_model_choice or "운영 설정"
+                if _run_id is not None:
+                    status_text.success(
+                        f"✅ {len(results)} query 완료 "
+                        f"({_m_label}, run #{_run_id} DB 저장됨)"
+                    )
+                else:
+                    status_text.warning(
+                        f"⚠️ {len(results)} query 완료 "
+                        f"({_m_label}, DB 영속화 실패, in-memory only)"
+                    )
+            except Exception as e:
+                st.error(f"검증 실행 실패: {e}")
+            st.session_state["_validation_results"] = results
+
+        # ── 결과 표시 ─────────────────────────────────────────
+        _val_results = st.session_state.get("_validation_results") or []
+        if _val_results:
+            st.markdown("**검증 결과:**")
+            try:
+                import pandas as pd
+                df = pd.DataFrame([r.to_summary_row() for r in _val_results])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            except Exception:
+                pass
+
+            md = results_to_markdown(_val_results)
+            st.download_button(
+                "📥 Markdown 다운로드",
+                md,
+                file_name="df_compass_validation.md",
+                key="val_download_btn",
+            )
+            with st.expander("📋 Markdown 전체 보기 (copy 용)", expanded=False):
+                st.code(md, language="markdown")
+
+    # ── Queries 관리 (sub_queries 탭) ─────────────────────────
+    with sub_queries:
         st.markdown("**➕ 새 query 추가**")
         new_q = st.text_input("Query text:", key="val_new_query_text")
         _cols_new = st.columns(3)
@@ -2172,59 +2249,8 @@ def _tab_validation(sb):
                 "(DB 에 등록된 query 없음 — hardcoded fallback 사용)"
             )
 
-    # ── 모델 선택 + 검증 실행 ─────────────────────────────────
-    # PR-Validation-To-Admin: 모델 selectbox 로 모델별 회귀 smoke test.
-    val_model_choice = st.selectbox(
-        "평가 모델",
-        options=[
-            "gemini-3.5-flash",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash-lite",
-            "claude-opus-4-7",
-            None,
-        ],
-        format_func=lambda x: (
-            "운영 설정 (NEXUS_CHAT_MODEL)" if x is None else x
-        ),
-        help="특정 모델 선택 시 fallback chain 우회 — 단일 모델 응답만 측정. "
-             "None 선택 시 운영 설정 사용.",
-        key="val_model_choice",
-    )
-
-    if st.button("▶ 검증 실행", type="primary", key="val_run_btn"):
-        results: list = []
-        progress_bar = st.progress(0, text="검증 시작…")
-        status_text = st.empty()
-
-        def _on_progress(idx: int, total: int, query: str) -> None:
-            progress_bar.progress(
-                idx / total, text=f"Q{idx}/{total}: {query[:40]}…"
-            )
-            status_text.caption(f"진행 중: Q{idx}/{total}")
-
-        try:
-            _run_id, results = run_validation(
-                sb, on_progress=_on_progress, persist=True,
-                model_id=val_model_choice,
-            )
-            progress_bar.progress(1.0, text="검증 완료!")
-            _m_label = val_model_choice or "운영 설정"
-            if _run_id is not None:
-                status_text.success(
-                    f"✅ {len(results)} query 완료 "
-                    f"({_m_label}, run #{_run_id} DB 저장됨)"
-                )
-            else:
-                status_text.warning(
-                    f"⚠️ {len(results)} query 완료 "
-                    f"({_m_label}, DB 영속화 실패, in-memory only)"
-                )
-        except Exception as e:
-            st.error(f"검증 실행 실패: {e}")
-        st.session_state["_validation_results"] = results
-
-    # ── 이전 검증 결과 조회 ───────────────────────────────────
-    with st.expander("📋 이전 검증 결과 조회 (DB)", expanded=False):
+    # ── 이전 검증 결과 조회 (sub_history 탭) ──────────────────
+    with sub_history:
         _runs = list_validation_runs(sb, limit=20)
         if not _runs:
             st.caption(
@@ -2273,27 +2299,6 @@ def _tab_validation(sb):
                         st.warning(
                             f"Run #{_selected_run_id} 결과 없음"
                         )
-
-    # ── 결과 표시 ─────────────────────────────────────────────
-    _val_results = st.session_state.get("_validation_results") or []
-    if _val_results:
-        st.markdown("**검증 결과:**")
-        try:
-            import pandas as pd
-            df = pd.DataFrame([r.to_summary_row() for r in _val_results])
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        except Exception:
-            pass
-
-        md = results_to_markdown(_val_results)
-        st.download_button(
-            "📥 Markdown 다운로드",
-            md,
-            file_name="df_compass_validation.md",
-            key="val_download_btn",
-        )
-        with st.expander("📋 Markdown 전체 보기 (copy 용)", expanded=False):
-            st.code(md, language="markdown")
 
 
 def _tab_search_compare(sb):

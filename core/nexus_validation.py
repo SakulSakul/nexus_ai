@@ -222,11 +222,15 @@ def _classify_button(
 def _extract_cited_docs(answer_text: str) -> list[str]:
     """답변 본문에서 「📎 ((도메인) doc명))」 형식 추출 (중복 제거).
 
-    PR #149 의 카테고리 chip logic 과 동일 패턴.
+    PR-Validation-Stabilization-A: 마크다운 볼드(**), 가변 닫는 괄호,
+    그리고 「 」 wrapper 모두 허용하도록 정규식 보강.
+    기존: 「📎 ((..))」 만 매칭 → 0% 추출률
+    개선: 「📎 **((..))**」, 「📎 ((..)))」, 「📎 ((..))」 모두 매칭.
     """
     if not answer_text:
         return []
-    pattern = r"📎\s*\(\(([^)]+)\)\s+([^)]+)\)?\)?"
+    # 📎 와 (( 사이에 ** 등 마크다운/공백 허용, 닫는 괄호 1~3개 허용
+    pattern = r"📎[\s*]*\(\(([^)]+)\)\s+([^)]+?)\)+[\s*」\]]*"
     matches = re.findall(pattern, answer_text)
     seen = set()
     result = []
