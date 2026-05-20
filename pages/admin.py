@@ -2074,6 +2074,228 @@ def _tab_model_test(sb):
                 st.dataframe(_summary, use_container_width=True, hide_index=True)
 
 
+def _tab_validation(sb):
+    """🛠 Validation — 사이드바에서 이전 (PR-Validation-To-Admin).
+
+    DB active query 순차 실행 → 답변 + 카테고리 + Button 종합 표 + Markdown
+    export. 모델 selectbox 로 모델별 회귀 smoke test 가능 (운영 설정 / 특정
+    모델 override). 새 PR 머지 후 회귀 검증용. ~10분 소요, ~$0.24/실행.
+    """
+    from core.nexus_validation import (
+        list_all_queries,
+        add_query,
+        set_query_active,
+        delete_query,
+        run_validation,
+        list_validation_runs,
+        fetch_run_results,
+        db_row_to_validation_result,
+        results_to_markdown,
+    )
+
+    st.subheader("🛠 Validation Mode (자동 검증)")
+    st.caption(
+        "DB 에 등록된 active query 순차 실행 → 답변 + 카테고리 + Button 종합 표 + "
+        "Markdown export. 새 PR 머지 후 회귀 검증용. ~10분 소요, ~$0.24/실행."
+    )
+
+    # ── 검증 Queries 관리 ──────────────────────────────────────
+    with st.expander("📋 검증 Queries 관리", expanded=False):
+        st.markdown("**➕ 새 query 추가**")
+        new_q = st.text_input("Query text:", key="val_new_query_text")
+        _cols_new = st.columns(3)
+        with _cols_new[0]:
+            new_cat = st.text_input("Category (선택):", key="val_new_query_cat")
+        with _cols_new[1]:
+            new_btn = st.selectbox(
+                "Expected button:",
+                options=["(미정)", "report", "hr_inquiry", "hidden"],
+                key="val_new_query_btn",
+            )
+        with _cols_new[2]:
+            new_note = st.text_input("Note (선택):", key="val_new_query_note")
+        if st.button("+ 저장", key="val_add_query_btn"):
+            if new_q.strip():
+                _expected = None if new_btn == "(미정)" else new_btn
+                _result = add_query(
+                    sb,
+                    new_q.strip(),
+                    category=(new_cat.strip() or None),
+                    expected_button=_expected,
+                    note=(new_note.strip() or None),
+                )
+                if _result:
+                    st.success(f"✅ 추가 완료: ID {_result.get('id')}")
+                    st.rerun()
+                else:
+                    st.error("저장 실패 (DB 에러)")
+
+        st.markdown("---")
+        st.markdown("**📋 등록된 Queries**")
+        _all_queries = list_all_queries(sb)
+        if _all_queries:
+            _active_count = sum(
+                1 for q in _all_queries if q.get("is_active")
+            )
+            st.caption(
+                f"전체 {len(_all_queries)}개 (활성 {_active_count}개)"
+            )
+            for q in _all_queries:
+                _qid = q.get("id")
+                _is_active = q.get("is_active", False)
+                _status = "✅" if _is_active else "⏸️"
+                _qtext = q.get("query_text", "")
+                _cat = q.get("category") or "-"
+                _exp_btn = q.get("expected_button") or "-"
+                _cols = st.columns([1, 5, 1, 1])
+                with _cols[0]:
+                    st.write(f"{_status} #{_qid}")
+                with _cols[1]:
+                    _suffix = "…" if len(_qtext) > 60 else ""
+                    st.caption(
+                        f"[{_cat} | {_exp_btn}] {_qtext[:60]}{_suffix}"
+                    )
+                with _cols[2]:
+                    if st.button(
+                        "🔄",
+                        key=f"val_toggle_{_qid}",
+                        help="활성/비활성 toggle",
+                    ):
+                        set_query_active(sb, _qid, not _is_active)
+                        st.rerun()
+                with _cols[3]:
+                    if st.button("🗑️", key=f"val_del_{_qid}", help="삭제"):
+                        delete_query(sb, _qid)
+                        st.rerun()
+        else:
+            st.caption(
+                "(DB 에 등록된 query 없음 — hardcoded fallback 사용)"
+            )
+
+    # ── 모델 선택 + 검증 실행 ─────────────────────────────────
+    # PR-Validation-To-Admin: 모델 selectbox 로 모델별 회귀 smoke test.
+    val_model_choice = st.selectbox(
+        "평가 모델",
+        options=[
+            "gemini-3.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash-lite",
+            "claude-opus-4-7",
+            None,
+        ],
+        format_func=lambda x: (
+            "운영 설정 (NEXUS_CHAT_MODEL)" if x is None else x
+        ),
+        help="특정 모델 선택 시 fallback chain 우회 — 단일 모델 응답만 측정. "
+             "None 선택 시 운영 설정 사용.",
+        key="val_model_choice",
+    )
+
+    if st.button("▶ 검증 실행", type="primary", key="val_run_btn"):
+        results: list = []
+        progress_bar = st.progress(0, text="검증 시작…")
+        status_text = st.empty()
+
+        def _on_progress(idx: int, total: int, query: str) -> None:
+            progress_bar.progress(
+                idx / total, text=f"Q{idx}/{total}: {query[:40]}…"
+            )
+            status_text.caption(f"진행 중: Q{idx}/{total}")
+
+        try:
+            _run_id, results = run_validation(
+                sb, on_progress=_on_progress, persist=True,
+                model_id=val_model_choice,
+            )
+            progress_bar.progress(1.0, text="검증 완료!")
+            _m_label = val_model_choice or "운영 설정"
+            if _run_id is not None:
+                status_text.success(
+                    f"✅ {len(results)} query 완료 "
+                    f"({_m_label}, run #{_run_id} DB 저장됨)"
+                )
+            else:
+                status_text.warning(
+                    f"⚠️ {len(results)} query 완료 "
+                    f"({_m_label}, DB 영속화 실패, in-memory only)"
+                )
+        except Exception as e:
+            st.error(f"검증 실행 실패: {e}")
+        st.session_state["_validation_results"] = results
+
+    # ── 이전 검증 결과 조회 ───────────────────────────────────
+    with st.expander("📋 이전 검증 결과 조회 (DB)", expanded=False):
+        _runs = list_validation_runs(sb, limit=20)
+        if not _runs:
+            st.caption(
+                "(이전 검증 기록 없음 — 다음 검증부터 자동 저장)"
+            )
+        else:
+            st.caption(f"최근 {len(_runs)}개 검증 history")
+            _run_options: dict[str, int] = {}
+            for r in _runs:
+                _started = (r.get("started_at") or "")[:19].replace("T", " ")
+                _completed = r.get("completed_queries", 0)
+                _total = r.get("total_queries", 0)
+                _status = r.get("status", "")
+                _model = r.get("model_id") or "운영 설정"
+                _label = (
+                    f"#{r['id']} | {_started} | {_model} | "
+                    f"{_completed}/{_total} | {_status}"
+                )
+                _run_options[_label] = r["id"]
+
+            _selected_label = st.selectbox(
+                "조회할 검증 run 선택:",
+                options=list(_run_options.keys()),
+                key="val_run_select",
+            )
+
+            if _selected_label and st.button(
+                "📋 결과 조회", key="val_fetch_run_btn"
+            ):
+                _selected_run_id = _run_options[_selected_label]
+                with st.spinner(
+                    f"Run #{_selected_run_id} 결과 조회 중..."
+                ):
+                    _rows = fetch_run_results(sb, _selected_run_id)
+                    if _rows:
+                        _fetched = [
+                            db_row_to_validation_result(r) for r in _rows
+                        ]
+                        st.session_state["_validation_results"] = _fetched
+                        st.success(
+                            f"✅ Run #{_selected_run_id} 의 "
+                            f"{len(_fetched)} 결과 로드 완료"
+                        )
+                        st.rerun()
+                    else:
+                        st.warning(
+                            f"Run #{_selected_run_id} 결과 없음"
+                        )
+
+    # ── 결과 표시 ─────────────────────────────────────────────
+    _val_results = st.session_state.get("_validation_results") or []
+    if _val_results:
+        st.markdown("**검증 결과:**")
+        try:
+            import pandas as pd
+            df = pd.DataFrame([r.to_summary_row() for r in _val_results])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        except Exception:
+            pass
+
+        md = results_to_markdown(_val_results)
+        st.download_button(
+            "📥 Markdown 다운로드",
+            md,
+            file_name="df_compass_validation.md",
+            key="val_download_btn",
+        )
+        with st.expander("📋 Markdown 전체 보기 (copy 용)", expanded=False):
+            st.code(md, language="markdown")
+
+
 def _tab_search_compare(sb):
     """🔬 검색 비교 (Old vs New) — DF COMPASS Tier 1+2 디버그.
 
@@ -3140,7 +3362,7 @@ def main():
         "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
-        "🔬 검색 비교", "🧪 모델 테스트",
+        "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3154,6 +3376,7 @@ def main():
     with tabs[9]: _tab_pii(sb)
     with tabs[10]: _tab_search_compare(sb)
     with tabs[11]: _tab_model_test(sb)
+    with tabs[12]: _tab_validation(sb)
 
 
 if __name__ == "__main__":

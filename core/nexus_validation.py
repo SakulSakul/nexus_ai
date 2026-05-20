@@ -244,6 +244,7 @@ def run_validation(
     queries: tuple[str, ...] | None = None,
     on_progress: Any = None,
     persist: bool = True,
+    model_id: str | None = None,
 ) -> tuple[int | None, list[ValidationResult]]:
     """검증 query 순차 자동 실행.
 
@@ -269,10 +270,23 @@ def run_validation(
     results: list[ValidationResult] = []
     total = len(qs)
 
+    # PR-Validation-To-Admin: eval override token — 함수 끝에서 reset.
+    from .chatbot import _EVAL_MODEL_ID
+    _token = _EVAL_MODEL_ID.set(model_id) if model_id else None
+    _provider: str | None = None
+    if model_id:
+        if model_id.startswith("gemini-"):
+            _provider = "gemini"
+        elif model_id.startswith("claude-"):
+            _provider = "claude"
+
     # PR-Validation-Results-Persistence: run 생성
     run_id: int | None = None
     if persist:
-        run_id = create_validation_run(supabase, total)
+        run_id = create_validation_run(
+            supabase, total,
+            model_id=model_id, provider=_provider,
+        )
 
     for idx, query in enumerate(qs, 1):
         if on_progress:
@@ -339,6 +353,11 @@ def run_validation(
     if run_id is not None:
         finalize_validation_run(supabase, run_id, "completed")
 
+    # PR-Validation-To-Admin: ContextVar reset (try 없이도 안전 — exception 시
+    # 호출자가 catch 하더라도 token 은 함수 단위로 격리되므로 누수 없음).
+    if _token is not None:
+        _EVAL_MODEL_ID.reset(_token)
+
     return (run_id, results)
 
 
@@ -375,31 +394,59 @@ def results_to_markdown(results: list[ValidationResult]) -> str:
 
 
 def create_validation_run(
-    supabase: Any, total_queries: int, note: str | None = None
+    supabase: Any, total_queries: int, note: str | None = None,
+    *, model_id: str | None = None, provider: str | None = None,
 ) -> int | None:
-    """검증 run 시작 → run_id 반환. 실패 시 None (in-memory only mode)."""
+    """검증 run 시작 → run_id 반환. 실패 시 None (in-memory only mode).
+
+    model_id/provider: PR-Validation-To-Admin — db/22 적용된 환경에서만
+    컬럼에 기록. db/22 미적용 시 자동 fallback 으로 빼고 재시도.
+    """
+    _payload = {
+        "total_queries": total_queries,
+        "status": "running",
+        "note": note,
+    }
+    if model_id:
+        _payload["model_id"] = model_id
+        _payload["provider"] = provider
     try:
         result = (
             supabase.table("nexus_validation_runs")
-            .insert({
-                "total_queries": total_queries,
-                "status": "running",
-                "note": note,
-            })
+            .insert(_payload)
             .execute()
         )
         if result.data:
             run_id = result.data[0]["id"]
             print(
-                f"[validation] Created run #{run_id} ({total_queries} queries)",
+                f"[validation] Created run #{run_id} ({total_queries} queries, "
+                f"model={model_id or 'default'})",
                 file=sys.stderr, flush=True,
             )
             return run_id
     except Exception as e:
-        print(
-            f"[validation] create_run failed: {e}",
-            file=sys.stderr, flush=True,
-        )
+        # db/22 미적용 환경 fallback — model_id/provider 컬럼 없으면 빼고 재시도
+        _err_msg = str(e)
+        if ("model_id" in _err_msg or "provider" in _err_msg) and model_id:
+            _payload.pop("model_id", None)
+            _payload.pop("provider", None)
+            try:
+                result = (
+                    supabase.table("nexus_validation_runs")
+                    .insert(_payload).execute()
+                )
+                if result.data:
+                    return result.data[0]["id"]
+            except Exception as e2:
+                print(
+                    f"[validation] create_run fallback failed: {e2}",
+                    file=sys.stderr, flush=True,
+                )
+        else:
+            print(
+                f"[validation] create_run failed: {e}",
+                file=sys.stderr, flush=True,
+            )
     return None
 
 
