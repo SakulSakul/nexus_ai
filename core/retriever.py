@@ -86,10 +86,13 @@ L3_FALLBACK_BY_DOMAIN: dict = {
     ),
     # PR-Fix-ForceInclude-Domain-Expand: (환경) 도메인 — 환경 사고/사건/위반·
     # 비상시 대응 query 에 (환경) doc force_include 보장.
+    # PR-Retrieval-Hunt-B: 녹색구매·환경운영관리 추가 (active rule docs 점검).
     "environment": (
-        "비상시대비",   # (환경) 비상시대비대응 / 비상시대비 절차 매칭
-        "환경 사건",    # (환경) 환경 사건/시정조치 매칭
-        "환경경영",     # (환경) 환경경영매뉴얼 / 환경경영 매뉴얼 매칭
+        "비상시대비",       # (환경) 비상시대비대응 / 비상시대비 절차 매칭
+        "환경 사건",        # (환경) 환경 사건/시정조치 매칭
+        "환경경영",         # (환경) 환경경영매뉴얼 / 환경경영 매뉴얼 매칭
+        "녹색 구매",        # (환경) 녹색 구매 지침 매칭
+        "환경운영관리",     # (환경) 환경운영관리 지침 매칭
     ),
     # PR-Fix-ForceInclude-Domain-Expand: (총무) 도메인 — 인감·인장·도장
     # 도용/위조 query 에 (총무) 인감 관리지침 force_include 보장.
