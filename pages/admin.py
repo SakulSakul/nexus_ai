@@ -1915,6 +1915,165 @@ def _tab_pii(sb):
         )
 
 
+def _tab_model_test(sb):
+    st.subheader("🧪 모델별 자가 테스트 + 진단")
+    st.caption(
+        "기존 review_samples + 5지표 자동 채점 인프라를 활용해 모델별로 "
+        "같은 질문에 대한 응답 품질·비용·속도를 비교. admin 본인 호출만 "
+        "권장 — 회차당 LLM 비용 발생."
+    )
+
+    sub_run, sub_history, sub_compare = st.tabs(
+        ["▶ 모델 회차 실행", "📊 회차 이력", "🆚 모델 비교"]
+    )
+
+    # ── 모델 회차 실행 ─────────────────────────────────────
+    with sub_run:
+        active = (
+            sb.table("review_samples").select("id,domain,question,category")
+              .eq("is_active", True).order("id").execute().data or []
+        )
+        if not active:
+            st.info("active 샘플이 없습니다 — 검수(Phase 3.5) 탭에서 등록 후 사용.")
+        else:
+            st.caption(f"활성 샘플 {len(active)}개. 비우면 전체 실행.")
+            opts = {
+                f"#{r['id']} [{r.get('domain') or '-'}] {r['question'][:60]}":
+                    r["id"] for r in active
+            }
+            chosen = st.multiselect(
+                "실행할 샘플 (비우면 전체)", list(opts.keys()),
+                key="model_test_samples",
+            )
+            triggered_by = st.text_input(
+                "실행자", value="", key="model_test_triggered_by",
+            )
+            model_choice = st.selectbox(
+                "평가 모델",
+                options=[
+                    "gemini-3.5-flash",
+                    "gemini-2.5-pro",
+                    "gemini-2.5-flash-lite",
+                    "claude-opus-4-7",
+                    None,
+                ],
+                format_func=lambda x: (
+                    "운영 설정 (NEXUS_CHAT_MODEL)" if x is None else x
+                ),
+                help="특정 모델 선택 시 fallback chain 우회 — 단일 모델 응답만 "
+                     "측정. None 선택 시 운영 설정 사용 (검수 탭과 동일).",
+                key="model_test_model_choice",
+            )
+
+            if st.button("▶ 모델 회차 실행", type="primary",
+                         key="model_test_run_btn"):
+                ids = [opts[k] for k in chosen] if chosen else None
+                bar = st.progress(0.0, text="회차 시작...")
+
+                def _on_progress(done: int, total: int) -> None:
+                    pct = (done / total) if total else 0.0
+                    bar.progress(pct, text=f"회차 진행 {done}/{total}")
+
+                try:
+                    res = run_review(
+                        sb, sample_ids=ids,
+                        triggered_by=triggered_by or None,
+                        model_id=model_choice,
+                        progress_cb=_on_progress,
+                    )
+                finally:
+                    bar.empty()
+                if not res.get("run_id"):
+                    st.warning(res.get("message"))
+                else:
+                    _m_label = res.get("model_id") or "운영 설정"
+                    st.success(
+                        f"회차 #{res['run_id']} ({_m_label}) 종료 — "
+                        f"통과 {res['passed']}/{res['total']}"
+                    )
+                    st.json(res["metrics"])
+
+    # ── 회차 이력 (모델별 필터) ────────────────────────────
+    with sub_history:
+        st.caption("최근 30 회차 — 모델별 필터링 가능.")
+        try:
+            runs = (
+                sb.table("review_runs").select("*")
+                  .order("id", desc=True).limit(30).execute().data or []
+            )
+        except Exception as e:
+            st.error(f"회차 조회 실패: {e}")
+            runs = []
+        if not runs:
+            st.info("회차 이력이 없습니다.")
+        else:
+            _models_in_history = sorted({
+                (r.get("model_id") or "운영 설정") for r in runs
+            })
+            filt = st.multiselect(
+                "모델 필터 (비우면 전체)", _models_in_history,
+                key="model_test_filter",
+            )
+            _filtered = [
+                r for r in runs
+                if (not filt) or
+                ((r.get("model_id") or "운영 설정") in filt)
+            ]
+            _rows = [{
+                "회차": r["id"],
+                "모델": r.get("model_id") or "운영 설정",
+                "provider": r.get("provider") or "-",
+                "시작": (r.get("started_at") or "")[:19],
+                "통과율": f"{(r.get('metrics') or {}).get('pass_rate', 0) * 100:.1f}%",
+                "정확도": f"{(r.get('metrics') or {}).get('accuracy_avg', 0) * 100:.1f}%",
+                "샘플": f"{r.get('passed', 0)}/{r.get('total', 0)}",
+                "상태": r.get("status") or "-",
+            } for r in _filtered]
+            st.dataframe(_rows, use_container_width=True, hide_index=True)
+
+    # ── 모델 비교 (2~4개 회차 선택해 메트릭 나란히) ────────
+    with sub_compare:
+        st.caption(
+            "회차 이력에서 2개 이상 선택해 메트릭을 나란히 비교. "
+            "PR-3 (비용/속도/4섹션 메트릭) 머지 후 정량 비교 강화 예정."
+        )
+        try:
+            runs = (
+                sb.table("review_runs").select("id,model_id,started_at,metrics")
+                  .order("id", desc=True).limit(30).execute().data or []
+            )
+        except Exception:
+            runs = []
+        if len(runs) < 2:
+            st.info("회차가 2개 이상 누적되면 비교 가능합니다.")
+        else:
+            _opts = {
+                f"#{r['id']} [{r.get('model_id') or '운영 설정'}] "
+                f"{(r.get('started_at') or '')[:19]}": r["id"]
+                for r in runs
+            }
+            selected = st.multiselect(
+                "비교할 회차 (2~4개 선택)", list(_opts.keys()),
+                max_selections=4, key="model_test_compare_runs",
+            )
+            if len(selected) >= 2:
+                _ids = [_opts[k] for k in selected]
+                _summary = []
+                for r in runs:
+                    if r["id"] not in _ids:
+                        continue
+                    m = r.get("metrics") or {}
+                    _summary.append({
+                        "회차": r["id"],
+                        "모델": r.get("model_id") or "운영 설정",
+                        "통과율": f"{m.get('pass_rate', 0) * 100:.1f}%",
+                        "정확도 평균": f"{m.get('accuracy_avg', 0) * 100:.1f}%",
+                        "citation 평균": f"{m.get('citation_avg', 0) * 100:.1f}%",
+                        "핫라인 누락": f"{m.get('hotline_missing_avg', 0) * 100:.1f}%",
+                    })
+                st.dataframe(_summary, use_container_width=True, hide_index=True)
+
+
 def _tab_search_compare(sb):
     """🔬 검색 비교 (Old vs New) — DF COMPASS Tier 1+2 디버그.
 
@@ -2981,7 +3140,7 @@ def main():
         "🔬 검수 (Phase 3.5)", "📞 핫라인", "🚨 키워드",
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
-        "🔬 검색 비교",
+        "🔬 검색 비교", "🧪 모델 테스트",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -2994,6 +3153,7 @@ def main():
     with tabs[8]: _tab_eval(sb)
     with tabs[9]: _tab_pii(sb)
     with tabs[10]: _tab_search_compare(sb)
+    with tabs[11]: _tab_model_test(sb)
 
 
 if __name__ == "__main__":

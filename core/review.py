@@ -117,6 +117,7 @@ def _evaluate(
 
 def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
                triggered_by: str | None = None,
+               model_id: str | None = None,
                progress_cb: Any = None) -> dict:
     """선택된(또는 전체 active) 샘플에 대해 검수를 실행하고 회차 메타를 반환.
     progress_cb(done, total) 가 주어지면 매 샘플 처리 후 호출 — Streamlit
@@ -135,11 +136,36 @@ def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
     if not samples:
         return {"run_id": None, "total": 0, "message": "샘플이 없습니다."}
 
-    run = supabase.table("review_runs").insert({
+    # eval override token — 함수 끝에서 reset.
+    from core.chatbot import _EVAL_MODEL_ID
+    _token = _EVAL_MODEL_ID.set(model_id) if model_id else None
+    _provider = None
+    if model_id:
+        if model_id.startswith("gemini-"):
+            _provider = "gemini"
+        elif model_id.startswith("claude-"):
+            _provider = "claude"
+
+    _run_payload = {
         "triggered_by": triggered_by,
         "total": len(samples),
         "status": "running",
-    }).execute().data[0]
+    }
+    if model_id:
+        _run_payload["model_id"] = model_id
+        _run_payload["provider"] = _provider
+    try:
+        run = supabase.table("review_runs").insert(_run_payload).execute().data[0]
+    except Exception as e:
+        # db/21 미적용 환경 대비 — model_id/provider 컬럼 없으면 빼고 재시도
+        if "model_id" in str(e) or "provider" in str(e):
+            _run_payload.pop("model_id", None)
+            _run_payload.pop("provider", None)
+            run = supabase.table("review_runs").insert(_run_payload).execute().data[0]
+        else:
+            if _token is not None:
+                _EVAL_MODEL_ID.reset(_token)
+            raise
 
     run_id = run["id"]
     threshold = run["threshold"] or {}
@@ -227,8 +253,12 @@ def run_review(supabase: Any, *, sample_ids: list[int] | None = None,
         "status": "done",
     }).eq("id", run_id).execute()
 
+    if _token is not None:
+        _EVAL_MODEL_ID.reset(_token)
+
     return {"run_id": run_id, "total": n, "passed": passed,
-            "failed": n - passed, "metrics": metrics}
+            "failed": n - passed, "metrics": metrics,
+            "model_id": model_id, "provider": _provider}
 
 
 def threshold_breached(metrics: dict, threshold: dict) -> list[str]:
