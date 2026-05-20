@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import time
+from contextvars import ContextVar
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Optional
@@ -20,6 +21,42 @@ from .critical_mode import CriticalDetection, detect, enforce_structure, load_ke
 from .pii_filter import mask_pii
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .retriever import hybrid_search
+
+
+# ── Eval Mode: 모델 override (PR-Model-Self-Test) ──────────────
+# 모델 테스트 탭에서 회차 실행 시 운영 chat_model 대신 평가 대상
+# 모델로 강제 호출. ContextVar 로 thread-safe 격리 — run_review 가
+# set/reset 토큰을 관리하며 단일 회차 스코프에서만 활성.
+# None 이면 기존 운영 경로 (s.chat_model / fallback chain) 유지.
+_EVAL_MODEL_ID: ContextVar[Optional[str]] = ContextVar(
+    "eval_model_id", default=None,
+)
+
+
+def _resolve_eval_model(expected_provider: str) -> Optional[str]:
+    """eval override 값이 expected_provider 와 매치되면 model_id 반환.
+    매치 안 되거나 override 없으면 None — 운영 모델 사용.
+    gemini-* → gemini, claude-* → claude 로 prefix 매칭."""
+    mid = _EVAL_MODEL_ID.get()
+    if not mid:
+        return None
+    if expected_provider == "gemini" and mid.startswith("gemini-"):
+        return mid
+    if expected_provider == "claude" and mid.startswith("claude-"):
+        return mid
+    return None
+
+
+def _resolve_eval_provider() -> Optional[str]:
+    """eval override 가 있으면 추론된 provider, 없으면 None."""
+    mid = _EVAL_MODEL_ID.get()
+    if not mid:
+        return None
+    if mid.startswith("gemini-"):
+        return "gemini"
+    if mid.startswith("claude-"):
+        return "claude"
+    return None
 
 
 # SYSTEM_PROMPT 가 강제하는 [검색 과정] 섹션 마커. LLM 응답에서 본문과
@@ -509,11 +546,13 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
     res = None
     last_err: Exception | None = None
+    _eval_model = _resolve_eval_model("gemini")
+    _model_to_use = _eval_model or s.chat_model
     for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
         _ex = ThreadPoolExecutor(max_workers=1)
         try:
             _fut = _ex.submit(cli.models.generate_content,
-                              model=s.chat_model, contents=user, config=cfg)
+                              model=_model_to_use, contents=user, config=cfg)
             res = _fut.result(timeout=60.0)
             break
         except _Timeout as e:
@@ -551,7 +590,7 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
             print(
                 f"[chatbot:gemini:cache] cached_tokens={_cached} "
                 f"prompt_tokens={_prompt} hit_rate={_hit_rate:.1f}% "
-                f"model={s.chat_model}",
+                f"model={_model_to_use}",
                 flush=True,
             )
     except Exception as _cache_log_err:
@@ -572,7 +611,7 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
         text_parts = [res.text or ""]
 
     text = "".join(text_parts).strip() or (res.text or "").strip()
-    return text, "", s.chat_model
+    return text, "", _model_to_use
 
 
 def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, str]:
@@ -595,8 +634,10 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     cli = anthropic.Anthropic(api_key=s.anthropic_api_key,
                               timeout=60.0, max_retries=0)
 
+    _eval_model = _resolve_eval_model("claude")
+    _model_to_use = _eval_model or s.claude_model
     kwargs: dict = {
-        "model": s.claude_model,
+        "model": _model_to_use,
         "max_tokens": 16000,
         "system": system,
         "messages": [{"role": "user", "content": user}],
@@ -638,7 +679,7 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
 
     return ("".join(text_parts).strip(),
             "",
-            s.claude_model)
+            _model_to_use)
 
 
 _PROVIDER_FUNCS = {"gemini": _gen_gemini, "claude": _gen_claude}
@@ -653,12 +694,18 @@ def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, s
     used_fallback: primary 가 transient 실패 후 fallback 분기에서 응답을 받았는지.
     """
     s = settings()
-    primary = (s.chat_provider or "gemini").lower()
-    fallback = (s.chat_fallback_provider or "").lower()
-
-    chain: list[str] = [primary]
-    if fallback and fallback != primary:
-        chain.append(fallback)
+    # eval override 가 있으면 단일 provider 만 사용 — fallback chain
+    # 우회. 평가 회차에서 모델별 순수 응답 측정 보장 (다른 모델 응답
+    # 으로 fallback 되면 회차 결과 무의미).
+    _eval_provider = _resolve_eval_provider()
+    if _eval_provider:
+        chain: list[str] = [_eval_provider]
+    else:
+        primary = (s.chat_provider or "gemini").lower()
+        fallback = (s.chat_fallback_provider or "").lower()
+        chain = [primary]
+        if fallback and fallback != primary:
+            chain.append(fallback)
 
     last_err: Exception | None = None
     used_fallback = False
