@@ -15,19 +15,22 @@ from .auto_tagger import extract_doc_full_meta
 
 
 def fetch_doc_text_sample(supabase, doc_id: str, max_chars: int = 3000) -> str:
-    """doc 의 chunks 앞부분 가져옴 (LLM 입력용)."""
+    """doc 의 chunks 앞부분 가져옴 (LLM 입력용).
+
+    PR-Stage-A-1-Hotfix: nexus_chunks 의 컬럼은 document_id / text
+    (auto_tagger.py 와 동일 스키마).
+    """
     try:
         result = (
-            supabase.table("chunks")
-            .select("content")
-            .eq("doc_id", doc_id)
-            .order("chunk_idx")
+            supabase.table("nexus_chunks")
+            .select("text")
+            .eq("document_id", doc_id)
             .limit(5)
             .execute()
         )
         text = ""
         for row in result.data or []:
-            text += (row.get("content") or "") + "\n\n"
+            text += (row.get("text") or "") + "\n\n"
             if len(text) >= max_chars:
                 break
         return text[:max_chars]
@@ -62,7 +65,7 @@ def fill_meta_all_docs(
     # active docs 조회
     try:
         docs_result = (
-            sb.table("docs")
+            sb.table("nexus_documents")
             .select("id, title, auto_keywords")
             .eq("status", "active")
             .order("id")
@@ -119,7 +122,7 @@ def fill_meta_all_docs(
         # DB UPDATE
         if not dry_run:
             try:
-                sb.table("docs").update({
+                sb.table("nexus_documents").update({
                     "auto_keywords": meta.get("auto_keywords", []),
                     "auto_summary": meta.get("auto_summary", ""),
                     "auto_query_examples": meta.get("auto_query_examples", []),
