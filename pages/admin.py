@@ -3437,7 +3437,7 @@ def _tab_auto_meta(sb):
     # 현재 상태 표시
     try:
         result = (
-            sb.table("docs")
+            sb.table("nexus_documents")
             .select("id, auto_keywords", count="exact")
             .eq("status", "active")
             .execute()
