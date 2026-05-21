@@ -1009,6 +1009,28 @@ def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None,
     )
 
 
+def _render_answer_meta(elapsed: float, model: str = "") -> None:
+    """답변 메타 가시성 (PR-Answer-Meta-Visibility).
+
+    응답 시간 + 모델명 표시. streaming 완료 + history replay 모두 일관 호출.
+    미래 메트릭 (cache hit, token count) 추가 시 본 함수에 확장.
+    """
+    parts: list[str] = []
+    if elapsed and elapsed > 0:
+        parts.append(f"⏱️ {elapsed:.1f}초")
+    if model:
+        parts.append(f"🤖 {model}")
+    if not parts:
+        return
+    line = " · ".join(parts)
+    st.markdown(
+        f"<div style='color:#888;font-size:12px;padding:6px 0;"
+        f"font-family:-apple-system,Pretendard,sans-serif;'>"
+        f"{line}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_category_chip(
     contexts: list[dict],
     answer_text: str | None = None,
@@ -2701,14 +2723,13 @@ def _run_ask(
             _render_category_chip(ans.contexts, answer_text=ans.text)
             # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
             _render_confidence_chip(ans.confidence, ans.contexts, answer_text=ans.text)
-            # Timer placeholder 를 정적 메시지로 교체 — JS 카운터 iframe 사라
-            # 지면서 setInterval 도 자동 cleanup. ans.elapsed (서버 측 perf
-            # counter) 가 사용자 wall-clock 보다 정확.
-            timer_placeholder.markdown(
-                "<div style='color:#888;font-size:12px;padding:6px 0;"
-                "font-family:-apple-system,Pretendard,sans-serif;'>"
-                f"⏱️ {ans.elapsed:.1f}초 만에 답변 완료</div>",
-                unsafe_allow_html=True,
+            # PR-Answer-Meta-Visibility: timer_placeholder 를 _render_answer_meta()
+            # 로 교체 — streaming 완료 + history replay 일관 표시. JS 카운터
+            # iframe 은 자동 cleanup (setInterval 도 함께 정리).
+            timer_placeholder.empty()
+            _render_answer_meta(
+                elapsed=ans.elapsed,
+                model=s.chat_model,
             )
             _render_contexts(ans.contexts)
             # PR-Fun1 작업 3: 후속 질문 카드 (critical 시 비활성).
@@ -3109,6 +3130,13 @@ def main():
                     meta.get("confidence", "high"),
                     meta.get("contexts"),
                     answer_text=content,
+                )
+            # PR-Answer-Meta-Visibility: history replay 에도 응답 시간 + 모델명 표시.
+            # 기존 entry (elapsed=0 또는 미저장) 는 함수 내부 가드로 표시 안 함.
+            if role == "assistant":
+                _render_answer_meta(
+                    elapsed=meta.get("elapsed", 0.0),
+                    model=s.chat_model,
                 )
             if role == "assistant" and meta.get("contexts"):
                 _render_contexts(meta["contexts"])
