@@ -1632,6 +1632,47 @@ def _render_report_channels_panel(hotlines: dict[str, str]) -> None:
         )
 
 
+def _render_clean_report_panel(hotlines: dict[str, str]) -> None:
+    """클린신고 (자진신고) 안내 박스 — 금품·향응 수수 등 본인의 비위 자진 신고.
+
+    PR-Hotline-Branch (사용자 피드백 memory #11 issue 1):
+    '신고 방법 안내' 가 사건사고용 (SRMS) 만 안내 → 클린신고 별도 panel 추가.
+    """
+    anon_url = (hotlines.get("internal_report_url") or "").strip()
+    ext_hotline = (hotlines.get("external_hotline") or "").strip()
+    with st.container(border=True):
+        st.markdown("**💼 클린신고 (자진 신고) 안내**")
+        st.markdown(
+            "금품·향응 수수 등 이해관계자와의 비위 행위는 "
+            "**SHRS**의 **클린신고신청서**를 통해 자진 신고하시기 바랍니다."
+        )
+        st.markdown(
+            "**📋 등록방법**:  \n"
+            "SHRS → **윤리경영** → **윤리실천등록** → **클린신고신청서**"
+        )
+        st.markdown(
+            "**📋 신고 기한**: 수수 확인일로부터 **3일 이내** "
+            "(7일 이내 자진 신고 시 징계 감경 가능)"
+        )
+        st.link_button(
+            "🔗 SHRS 바로가기",
+            "https://hr.shinsegae.com/index.jsp",
+            use_container_width=True,
+        )
+        if anon_url:
+            st.link_button(
+                "🔒 사내 익명 제보 채널",
+                anon_url,
+                use_container_width=True,
+            )
+        if ext_hotline:
+            st.markdown(f"📞 외부 상담채널: {ext_hotline}")
+        st.caption(
+            "⚠️ 본 답변은 사규 해석 보조이며, 실제 신고는 사규 절차에 따라 "
+            "직접 진행하시기 바랍니다."
+        )
+
+
 def _render_hr_inquiry_panel(hotlines: dict[str, str]) -> None:
     """인사교육팀 문의 안내 박스 — hotline_config 4개 키 매핑, 빈 값은 렌더 생략.
     DB 스키마 변경 없이 기존 키만 사용 (`hr_contact_text`, `hr_chatbot_url`,
@@ -1702,6 +1743,7 @@ def _render_action_buttons(
     )
     is_hr_graceful = (_decision == "hr_inquiry")
     is_report_related = (_decision == "report")
+    is_clean_report = (_decision == "clean_report")
     show_inquiry_button = (_decision != "hidden")
 
     # 일반 query — button 없이 reroll 만 표시 (full-width).
@@ -1721,15 +1763,21 @@ def _render_action_buttons(
                 st.rerun()
         return
 
-    # Button label 결정 (분기 조건에 따라).
+    # Button label 결정 (분기 조건에 따라 — 3-way).
     if is_hr_graceful:
         # 인사 graceful — 휴가/평가/근태 등 인사 routing
         hr_label = (
             "📞 인사교육팀 문의 닫기" if msg_idx in hr_open
             else "📞 인사교육팀 문의"
         )
+    elif is_clean_report:
+        # PR-Hotline-Branch: 클린신고 (자진신고) — SHRS CSR경영란
+        hr_label = (
+            "💼 클린신고 안내 닫기" if msg_idx in hr_open
+            else "💼 클린신고 안내"
+        )
     else:
-        # is_report_related — 신고 방법 안내 (CSR팀 X)
+        # is_report_related — 신고 방법 안내 (사건사고 / SRMS)
         hr_label = (
             "📞 신고 방법 안내 닫기" if msg_idx in hr_open
             else "📞 신고 방법 안내"
@@ -1771,9 +1819,10 @@ def _render_action_buttons(
         }
         st.rerun()
     if msg_idx in hr_open:
-        # PR-Refactor + PR-Fix-Keyword: critical OR 신고 keyword 매칭 →
-        # 신고 방법, 그 외 (인사 graceful) → 인사교육팀.
-        if is_report_related:
+        # PR-Hotline-Branch: 3-way 분기 (clean_report / report / hr_inquiry)
+        if is_clean_report:
+            _render_clean_report_panel(hotlines)
+        elif is_report_related:
             _render_report_channels_panel(hotlines)
         else:
             _render_hr_inquiry_panel(hotlines)
