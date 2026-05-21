@@ -3396,6 +3396,7 @@ def main():
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
+        "🧰 Auto-Meta",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3410,6 +3411,130 @@ def main():
     with tabs[10]: _tab_search_compare(sb)
     with tabs[11]: _tab_model_test(sb)
     with tabs[12]: _tab_validation(sb)
+    with tabs[13]: _tab_auto_meta(sb)
+
+
+def _tab_auto_meta(sb):
+    """PR-Stage-A-1: Auto-Meta Filler.
+
+    active docs 의 auto_keywords / auto_summary / auto_query_examples
+    Claude Opus 4.7 로 일괄 자동 채움.
+    """
+    import streamlit as st
+
+    st.subheader("🧰 Auto-Meta Filler")
+    st.caption(
+        "docs 의 auto_keywords / auto_summary / auto_query_examples 를 "
+        "Claude Opus 4.7 로 일괄 자동 추출. 비용 ~$0.09/doc, 100 docs ≈ $9."
+    )
+
+    try:
+        from core.auto.auto_meta_filler import fill_meta_all_docs
+    except ImportError as e:
+        st.error(f"auto_meta_filler import 실패: {e}")
+        return
+
+    # 현재 상태 표시
+    try:
+        result = (
+            sb.table("docs")
+            .select("id, auto_keywords", count="exact")
+            .eq("status", "active")
+            .execute()
+        )
+        all_docs = result.data or []
+        total = len(all_docs)
+        missing = sum(
+            1 for d in all_docs
+            if not d.get("auto_keywords") or len(d["auto_keywords"]) == 0
+        )
+        cols = st.columns(3)
+        cols[0].metric("Active docs", total)
+        cols[1].metric("auto_keywords 채움", total - missing)
+        cols[2].metric("미채움 (target)", missing)
+    except Exception as e:
+        st.error(f"docs 조회 실패: {e}")
+        return
+
+    if missing == 0 and total > 0:
+        st.success("✅ 모든 active docs 의 메타 채움 완료. 재실행 필요 없음.")
+
+    st.markdown("---")
+
+    # 옵션
+    only_missing = st.checkbox(
+        "미채움 doc 만 처리 (recommend)", value=True,
+        help="False 면 모든 active docs 재처리 (비용 ↑)"
+    )
+
+    col1, col2 = st.columns(2)
+
+    # Dry-run
+    with col1:
+        if st.button("🔍 Dry-run (sample 5개 미리보기)", key="meta_dryrun"):
+            with st.spinner("Claude Opus 호출 중... (~30초)"):
+                progress_bar = st.progress(0, text="시작...")
+
+                def _on_progress(idx: int, total: int, title: str) -> None:
+                    progress_bar.progress(
+                        min(idx / max(total, 1), 1.0),
+                        text=f"{idx}/{total}: {title[:40]}",
+                    )
+
+                # dry_run 으로 sample 추출만
+                result = fill_meta_all_docs(
+                    dry_run=True,
+                    progress_callback=_on_progress,
+                    only_missing=only_missing,
+                )
+                progress_bar.progress(1.0, text="완료")
+
+                st.success(
+                    f"✅ Dry-run 완료 — 처리 {result['processed']}, "
+                    f"에러 {result['errors']}"
+                )
+
+                # samples 표시
+                if result.get("samples"):
+                    st.markdown("**Sample 결과 (앞 5개):**")
+                    for s in result["samples"]:
+                        with st.expander(f"📄 {s['title']}", expanded=False):
+                            meta = s["meta"]
+                            st.markdown(f"**Summary:** {meta.get('auto_summary', '(없음)')}")
+                            st.markdown(f"**Keywords:** `{meta.get('auto_keywords', [])}`")
+                            st.markdown(f"**Incident nodes:** `{meta.get('incident_nodes', [])}`")
+                            st.markdown(f"**Doc kind:** `{meta.get('doc_kind', '?')}`")
+                            st.markdown("**Query examples:**")
+                            for q in meta.get("auto_query_examples", []):
+                                st.markdown(f"- {q}")
+
+    # 실제 실행
+    with col2:
+        st.warning("⚠️ 실제 실행은 비용 발생 + DB UPDATE")
+        if st.button("⚡ 전체 실행 (DB UPDATE)", key="meta_run", type="primary"):
+            with st.spinner(f"Claude Opus 호출 중... (~{missing * 30}초 예상)"):
+                progress_bar = st.progress(0, text="시작...")
+
+                def _on_progress(idx: int, total: int, title: str) -> None:
+                    progress_bar.progress(
+                        min(idx / max(total, 1), 1.0),
+                        text=f"{idx}/{total}: {title[:40]}",
+                    )
+
+                result = fill_meta_all_docs(
+                    dry_run=False,
+                    progress_callback=_on_progress,
+                    only_missing=only_missing,
+                )
+                progress_bar.progress(1.0, text="완료")
+
+                st.success(
+                    f"✅ 완료 — 처리 {result['processed']}, "
+                    f"DB UPDATE {result['updated']}, "
+                    f"에러 {result['errors']}"
+                )
+                st.balloons()
+                st.info("브라우저 새로고침 후 상단 카운터 갱신 확인")
 
 
 if __name__ == "__main__":

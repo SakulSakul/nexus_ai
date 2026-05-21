@@ -151,3 +151,107 @@ def auto_tag_all_docs(*, dry_run: bool = True, progress_callback=None) -> dict:
                 pass
 
     return {"dry_run": dry_run, "total": len(results), "results": results}
+
+
+# ============================================================
+# PR-Stage-A-1: Full Meta Extraction
+# ============================================================
+
+FULL_META_SYSTEM_PROMPT = """\
+사규 doc 메타데이터 추출 전문가. doc title + content 보고 strict JSON 으로 반환.
+
+사용 가능 incident_nodes: {nodes}
+
+추출 5종:
+1. incident_nodes: 사용 가능 노드 중 선택 (정확하지 않으면 빈 배열)
+2. doc_kind: "rule" | "penalty" | "case" | "policy"
+3. auto_keywords: doc title + content 의 핵심 명사 5~10개 배열. 띄어쓰기 포함 가능 (예: "녹색 구매", "클린뱅크"). 사용자가 자연어로 물어볼 때 매칭될 단어 위주.
+4. auto_summary: doc 의 한 줄 요약 (50자 이내, 명사형 평어체)
+5. auto_query_examples: 이 사규로 답변 가능한 예상 사용자 query 정확히 5개
+
+strict JSON 만:
+{{"incident_nodes": ["..."], "doc_kind": "rule|penalty|case|policy", "auto_keywords": ["..."], "auto_summary": "...", "auto_query_examples": ["...", "...", "...", "...", "..."], "rationale": "한 줄"}}
+"""
+
+
+def extract_doc_full_meta(doc_id: str, title: str, text_sample: str) -> dict:
+    """Stage A-1: doc 1개에서 5종 메타 일괄 추출 (1회 LLM 호출).
+
+    Returns dict:
+      - incident_nodes: list[str]
+      - doc_kind: str (rule/penalty/case/policy)
+      - auto_keywords: list[str]
+      - auto_summary: str
+      - auto_query_examples: list[str] (정확히 5개, 실패 시 빈 list)
+      - rationale: str
+
+    실패 시 안전 fallback (빈 list, doc_kind=rule).
+    """
+    try:
+        import anthropic
+        from core.config import settings
+    except Exception as e:
+        return {
+            "incident_nodes": [], "doc_kind": "rule",
+            "auto_keywords": [], "auto_summary": "",
+            "auto_query_examples": [],
+            "rationale": f"SDK import error: {e}",
+        }
+    s = settings()
+    if not s.anthropic_api_key:
+        return {
+            "incident_nodes": [], "doc_kind": "rule",
+            "auto_keywords": [], "auto_summary": "",
+            "auto_query_examples": [],
+            "rationale": "ANTHROPIC_API_KEY 미설정",
+        }
+    client = anthropic.Anthropic(api_key=s.anthropic_api_key)
+    system = FULL_META_SYSTEM_PROMPT.format(
+        nodes=", ".join(AVAILABLE_INCIDENT_NODES)
+    )
+    user_msg = (
+        f"title: {title}\n\n"
+        f"content (앞 3000자):\n{(text_sample or '')[:3000]}\n\n"
+        f"strict JSON."
+    )
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=1500,
+            system=system,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = response.content[0].text if response.content else "{}"
+        if "```" in raw:
+            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+            if m:
+                raw = m.group(1)
+        result = json.loads(raw)
+        # 안전 정제
+        result["incident_nodes"] = [
+            n for n in result.get("incident_nodes", []) or []
+            if n in AVAILABLE_INCIDENT_NODES
+        ]
+        result.setdefault("doc_kind", "rule")
+        result.setdefault("auto_keywords", [])
+        result.setdefault("auto_summary", "")
+        # auto_keywords: list[str] 보장, 빈 string 제거
+        result["auto_keywords"] = [
+            k.strip() for k in (result.get("auto_keywords") or [])
+            if isinstance(k, str) and k.strip()
+        ]
+        # auto_query_examples: 정확히 5개 우선 (부족하면 그대로, 초과면 5개로 cut)
+        examples = [
+            q.strip() for q in (result.get("auto_query_examples") or [])
+            if isinstance(q, str) and q.strip()
+        ]
+        result["auto_query_examples"] = examples[:5]
+        result.setdefault("rationale", "")
+        return result
+    except Exception as e:
+        return {
+            "incident_nodes": [], "doc_kind": "rule",
+            "auto_keywords": [], "auto_summary": "",
+            "auto_query_examples": [],
+            "rationale": f"error: {type(e).__name__}: {e}",
+        }
