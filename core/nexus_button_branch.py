@@ -66,6 +66,20 @@ ANSWER_REPORT_KEYWORDS: tuple[str, ...] = (
     "부정/부실행위",
 )
 
+# PR-Hotline-Branch: 클린신고 (자진신고) 안내 카테고리 신규.
+# 사용자 피드백 (memory #11 issue 1): 사건사고 신고와 클린신고 채널 분리.
+ANSWER_CLEAN_REPORT_KEYWORDS: tuple[str, ...] = (
+    "클린신고",
+    "클린뱅크",
+    "자진 신고",
+    "자진신고",
+    "클린신고서",
+    "클린신고신청서",
+    "SHRS CSR경영란",
+    "CSR경영란",
+    "윤리실천등록",
+)
+
 ANSWER_HR_GRACEFUL_KEYWORDS: tuple[str, ...] = (
     "인사 규정·복리후생 등 인사 행정 사항은 인사교육팀에 문의",
     "인사교육팀에 문의해 주시기 바랍니다",
@@ -127,6 +141,7 @@ def classify_button(
 
     answer_has_graceful = any(kw in answer_text for kw in ANSWER_HR_GRACEFUL_KEYWORDS)
     answer_has_report = any(kw in answer_text for kw in ANSWER_REPORT_KEYWORDS)
+    answer_has_clean_report = any(kw in answer_text for kw in ANSWER_CLEAN_REPORT_KEYWORDS)
 
     context_domains = _extract_context_domains(contexts)
     contexts_only_hr = bool(context_domains) and (context_domains <= HR_ONLY_DOMAINS)
@@ -141,7 +156,13 @@ def classify_button(
     if query_has_hr_intent and confidence == "low":
         return "hr_inquiry"
 
-    # ═══ 4. Report intent (query / contexts / answer) → report ═══
+    # ═══ 4. Clean Report (자진신고) — 답변에 클린신고 keyword 있으면 우선 ═══
+    # PR-Hotline-Branch (사용자 피드백 memory #11 issue 1):
+    # 클린신고 (SHRS CSR경영란) 와 사건사고 신고 (SRMS) 채널 분리.
+    if answer_has_clean_report:
+        return "clean_report"
+
+    # ═══ 5. Report intent (query / contexts / answer) → report ═══
     # Q13 협력사 지정 / Q18 자녀 추천 / Q20 채용 압력 / Q24 노트북 반출 /
     # Q35 PW 공유 등 cover (query intent 또는 contexts 기반)
     if (
