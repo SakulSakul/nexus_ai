@@ -294,6 +294,7 @@ def _ensure_universal_sop_completeness(
 # 거의 모든 사규에 공통 등장하여 매칭 신호 가치 0 (TF-IDF 의 IDF 매우 낮음).
 # 차후 PR-Stage-A-2-StopWord-Auto 에서 DF 기반 자동 검출 시스템.
 SHADOW_STOP_KEYWORDS: set[str] = {
+    # PR-Stage-A-2-Shadow-V2: 거의 모든 사규에 공통 등장하는 일반 단어
     "이해관계자",
     "CSR",
     "관리",
@@ -301,7 +302,47 @@ SHADOW_STOP_KEYWORDS: set[str] = {
     "환경",
     "안전관리",
     "리스크관리",
+    # PR-Stage-A-2-Shadow-V3: 의미 혼동 단어 ("수수" received vs "수수료" commission)
+    "수수료",
+    "판매수수료",
+    "수수료 조정",
 }
+
+
+def _score_keywords_against_query(
+    keywords: list,
+    combined_query: str,
+    query_words: set,
+    direct_weight: int,
+    partial_weight: int,
+) -> tuple:
+    """keyword list 의 매칭 score + matched list 계산.
+
+    direct_weight: 직접 매칭 (keyword in combined_query) 점수
+    partial_weight: 부분 매칭 (query word in keyword) 점수
+    3글자 미만 keyword + stop-word 제외.
+    """
+    score = 0
+    matched: list = []
+    for kw in keywords or []:
+        if not isinstance(kw, str):
+            continue
+        kw_stripped = kw.strip()
+        if len(kw_stripped) < 2 or kw_stripped in SHADOW_STOP_KEYWORDS:
+            continue
+        kw_lower = kw_stripped.lower()
+        # (a) 직접 매칭 (keyword in query)
+        if kw_lower in combined_query:
+            score += direct_weight
+            matched.append(kw_stripped)
+            continue
+        # (b) 부분 매칭 (query word in keyword)
+        for word in query_words:
+            if word in kw_lower:
+                score += partial_weight
+                matched.append(kw_stripped)
+                break
+    return score, matched
 
 
 def _shadow_log_auto_keywords_match(
@@ -310,105 +351,130 @@ def _shadow_log_auto_keywords_match(
     retrieval_query_text: str,
     log_prefix: str = "",
 ) -> None:
-    """L2.5_AUTO_KEYWORDS shadow log V2 (PR-Stage-A-2-Shadow-V2).
+    """L2.5_AUTO_KEYWORDS shadow log V3 (PR-Stage-A-2-Shadow-V3).
 
-    docs.auto_keywords 활용 시 어떤 doc 가 force_include 후보가 될지 기록.
+    docs.auto_keywords + chunks.auto_keywords (PR-Stage-A-1-Chunk) 통합 매칭.
     실제 retrieve 결과 영향 0 — log only.
-    1주일 운영 후 데이터 기반 production 결정 (PR-Stage-A-2-Production).
 
-    V2 개선 (PR-Stage-A-2-Shadow-V2):
-    - 양방향 매칭 (keyword in query OR query 단어 in keyword)
-    - 매칭 강도 측정 (점수 — 직접 2점, 부분 1점)
-    - Stop-word 제외 (이해관계자/CSR/관리/경영 등)
-    - 임계값 2점 이상만 후보 (1점 단독은 noise)
-    - 매칭 keyword + score 상세 log
+    V3 개선:
+    - chunk-level 매칭 추가 (doc-level 의 본질적 한계 해결)
+    - 점수: doc 직접 2점/부분 1점, chunk 직접 3점/부분 2점 (chunk 가 더 specific)
+    - 부분 매칭 길이 임계값 3글자 이상 (V2 의 "수수/수수료" false positive fix)
+    - 추가 stop-word (수수료/판매수수료 등 의미 혼동)
+    - 임계값 total >= 3 (정확성 ↑)
+    - log 보강 (chunk_idx + matched 상세)
     """
     try:
         if supabase is None:
             return
 
-        # active docs 의 auto_keywords 조회
-        result = (
+        # doc-level fetch
+        docs_result = (
             supabase.table("nexus_documents")
             .select("id, title, auto_keywords")
             .eq("status", "active")
             .execute()
         )
-        docs = result.data or []
+        docs = docs_result.data or []
+        docs_by_id = {d.get("id"): d for d in docs}
+
+        # chunk-level fetch (PR-Stage-A-1-Chunk 의 nexus_chunks.auto_keywords)
+        chunks_result = (
+            supabase.table("nexus_chunks")
+            .select("id, document_id, chunk_idx, auto_keywords")
+            .execute()
+        )
+        all_chunks = chunks_result.data or []
+        # active doc 의 chunk 만 필터
+        chunks = [c for c in all_chunks if c.get("document_id") in docs_by_id]
 
         # query normalization
         combined = ((question or "") + " " + (retrieval_query_text or "")).lower()
 
-        # query 의 의미 단어 추출 (2글자 이상, stop-word 제외)
-        query_words: set[str] = set()
+        # query 의 의미 단어 (3글자 이상 — V3 fix, stop-word 제외)
+        query_words: set = set()
         for token in combined.replace("?", " ").replace(".", " ").replace(",", " ").split():
-            if len(token) >= 2 and token not in SHADOW_STOP_KEYWORDS:
+            if len(token) >= 3 and token not in SHADOW_STOP_KEYWORDS:
                 query_words.add(token)
 
-        # doc 별 매칭 score 계산
-        scored: list[dict] = []
+        # doc 별 score 누적 (doc-level + chunk-level 통합)
+        doc_scores: dict = {}
         for doc in docs:
-            doc_keywords = doc.get("auto_keywords") or []
-            if not doc_keywords:
+            doc_id = doc.get("id")
+            score, matched = _score_keywords_against_query(
+                doc.get("auto_keywords") or [],
+                combined, query_words,
+                direct_weight=2, partial_weight=1,
+            )
+            doc_scores[doc_id] = {
+                "title": doc.get("title") or "",
+                "doc_score": score,
+                "doc_matched": matched,
+                "chunk_score": 0,
+                "chunk_matched": [],
+            }
+
+        # chunk-level scoring (점수 가중: doc + 1)
+        for chunk in chunks:
+            doc_id = chunk.get("document_id")
+            if doc_id not in doc_scores:
                 continue
-
-            score = 0
-            matched_kws: list[str] = []
-            for kw in doc_keywords:
-                if not isinstance(kw, str):
-                    continue
-                kw_stripped = kw.strip()
-                if len(kw_stripped) < 2:
-                    continue
-                # Stop-word 제외
-                if kw_stripped in SHADOW_STOP_KEYWORDS:
-                    continue
-
-                kw_lower = kw_stripped.lower()
-
-                # (a) keyword in combined_query — 직접 매칭 (높은 신호)
-                if kw_lower in combined:
-                    score += 2
-                    matched_kws.append(kw_stripped)
-                    continue
-
-                # (b) query 단어 in keyword — 부분 매칭 (낮은 신호)
-                # 예: "클린신고" (query 단어) in "클린신고서" (keyword)
-                for word in query_words:
-                    if word in kw_lower:
-                        score += 1
-                        matched_kws.append(kw_stripped)
-                        break
-
-            # 임계값: 2점 이상만 후보 (1점 단독은 noise)
-            if score >= 2:
-                scored.append({
-                    "id": doc.get("id"),
-                    "title": doc.get("title") or "",
+            score, matched = _score_keywords_against_query(
+                chunk.get("auto_keywords") or [],
+                combined, query_words,
+                direct_weight=3, partial_weight=2,
+            )
+            if score > 0:
+                doc_scores[doc_id]["chunk_score"] += score
+                doc_scores[doc_id]["chunk_matched"].append({
+                    "chunk_idx": chunk.get("chunk_idx"),
                     "score": score,
-                    "matched": matched_kws,
+                    "matched": matched[:3],
                 })
 
-        # score 내림차순 정렬
-        scored.sort(key=lambda d: -d["score"])
+        # 임계값: total >= 3 만 후보
+        scored: list = []
+        for doc_id, info in doc_scores.items():
+            total = info["doc_score"] + info["chunk_score"]
+            if total >= 3:
+                info["chunk_matched"].sort(key=lambda c: -c["score"])
+                scored.append({
+                    "id": doc_id,
+                    "title": info["title"],
+                    "total": total,
+                    "doc_score": info["doc_score"],
+                    "chunk_score": info["chunk_score"],
+                    "doc_matched": info["doc_matched"][:5],
+                    "top_chunks": info["chunk_matched"][:3],
+                })
 
-        # log: top-5 의 상세 정보
+        # total 내림차순 정렬
+        scored.sort(key=lambda d: -d["total"])
+
+        # log: top-5 상세
         top5 = scored[:5]
-        top5_str = ", ".join(
-            f"{{doc: '{d['title'][:30]}', score: {d['score']}, "
-            f"matched: {d['matched'][:3]}}}"
-            for d in top5
-        )
+        details = []
+        for d in top5:
+            chunk_summary = [
+                f"ch{c['chunk_idx']}({c['score']})"
+                for c in d["top_chunks"]
+            ]
+            details.append(
+                f"{{doc: '{d['title'][:30]}', "
+                f"total: {d['total']} (doc={d['doc_score']}+chunk={d['chunk_score']}), "
+                f"doc_kws: {d['doc_matched'][:3]}, "
+                f"chunks: [{','.join(chunk_summary)}]}}"
+            )
         print(
-            f"[retriever:L2.5_shadow_v2]{log_prefix} "
+            f"[retriever:L2.5_shadow_v3]{log_prefix} "
             f"q_head='{(question or '')[:50]}' "
             f"candidates={len(scored)} "
-            f"top5=[{top5_str}]",
+            f"top5=[{', '.join(details)}]",
             flush=True,
         )
     except Exception as e:
         print(
-            f"[retriever:L2.5_shadow_v2] FAILED: {type(e).__name__}: {e}",
+            f"[retriever:L2.5_shadow_v3] FAILED: {type(e).__name__}: {e}",
             file=sys.stderr, flush=True,
         )
 
