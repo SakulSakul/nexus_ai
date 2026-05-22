@@ -3705,8 +3705,15 @@ def _tab_auto_testset(sb):
 
     st.markdown("---")
 
-    if st.button("⚡ Run Auto-Testset (~5-10분)", key="testset_run", type="primary"):
-        with st.spinner("rewriter + shadow V3 매칭 자동 실행 중..."):
+    use_rewriter = st.checkbox(
+        "Rewriter 사용 (recall 정확성 ↑, 다만 Gemini 503 spike 영향 시 느림)",
+        value=False,
+        key="testset_use_rewriter",
+        help="False = 빠른 실행 (~3-5분, 안정성 우선). True = production 과 동일 (~10-15분, 503 spike 시 더 느림).",
+    )
+
+    if st.button("⚡ Run Auto-Testset", key="testset_run", type="primary"):
+        with st.spinner(f"shadow V3 매칭 자동 실행 중... (rewriter: {use_rewriter})"):
             progress_bar = st.progress(0, text="시작...")
 
             def _on_progress(idx, total, info):
@@ -3717,7 +3724,7 @@ def _tab_auto_testset(sb):
                 )
 
             result = run_full_testset(
-                use_rewriter=True,
+                use_rewriter=use_rewriter,
                 progress_callback=_on_progress,
             )
             progress_bar.progress(1.0, text="완료")
