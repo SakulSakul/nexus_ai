@@ -345,6 +345,101 @@ def _score_keywords_against_query(
     return score, matched
 
 
+def _compute_v3_matches(
+    supabase: Any,
+    question: str,
+    retrieval_query_text: str,
+) -> list:
+    """V3 매칭 candidates 계산 + return (PR-Stage-A-2-Production).
+
+    shadow log 함수와 동일 매칭 로직 — 다만 return list 만, log 없음.
+    Production force_include 에서 호출 + 별도 shadow log 함수가 모니터링 유지.
+
+    Returns: [{id, title, total, doc_score, chunk_score, top_chunk_idxs}, ...]
+    """
+    try:
+        if supabase is None:
+            return []
+
+        docs_result = (
+            supabase.table("nexus_documents")
+            .select("id, title, auto_keywords")
+            .eq("status", "active")
+            .execute()
+        )
+        docs = docs_result.data or []
+        docs_by_id = {d.get("id"): d for d in docs}
+
+        chunks_result = (
+            supabase.table("nexus_chunks")
+            .select("id, document_id, chunk_idx, auto_keywords")
+            .execute()
+        )
+        all_chunks = chunks_result.data or []
+        chunks = [c for c in all_chunks if c.get("document_id") in docs_by_id]
+
+        combined = ((question or "") + " " + (retrieval_query_text or "")).lower()
+
+        query_words: set = set()
+        for token in combined.replace("?", " ").replace(".", " ").replace(",", " ").split():
+            if len(token) >= 3 and token not in SHADOW_STOP_KEYWORDS:
+                query_words.add(token)
+
+        doc_scores: dict = {}
+        for doc in docs:
+            doc_id = doc.get("id")
+            score, _matched = _score_keywords_against_query(
+                doc.get("auto_keywords") or [],
+                combined, query_words,
+                direct_weight=2, partial_weight=1,
+            )
+            doc_scores[doc_id] = {
+                "title": doc.get("title") or "",
+                "doc_score": score,
+                "chunk_score": 0,
+                "top_chunks": [],
+            }
+
+        for chunk in chunks:
+            doc_id = chunk.get("document_id")
+            if doc_id not in doc_scores:
+                continue
+            score, _matched = _score_keywords_against_query(
+                chunk.get("auto_keywords") or [],
+                combined, query_words,
+                direct_weight=3, partial_weight=2,
+            )
+            if score > 0:
+                doc_scores[doc_id]["chunk_score"] += score
+                doc_scores[doc_id]["top_chunks"].append({
+                    "chunk_idx": chunk.get("chunk_idx"),
+                    "score": score,
+                })
+
+        scored = []
+        for doc_id, info in doc_scores.items():
+            total = info["doc_score"] + info["chunk_score"]
+            if total >= 3:
+                info["top_chunks"].sort(key=lambda c: -c["score"])
+                scored.append({
+                    "id": doc_id,
+                    "title": info["title"],
+                    "total": total,
+                    "doc_score": info["doc_score"],
+                    "chunk_score": info["chunk_score"],
+                    "top_chunk_idxs": [c["chunk_idx"] for c in info["top_chunks"]],
+                })
+
+        scored.sort(key=lambda d: -d["total"])
+        return scored
+    except Exception as e:
+        print(
+            f"[_compute_v3_matches] FAILED: {type(e).__name__}: {e}",
+            file=sys.stderr, flush=True,
+        )
+        return []
+
+
 def _shadow_log_auto_keywords_match(
     supabase: Any,
     question: str,
@@ -690,6 +785,51 @@ def hybrid_search(
                 except Exception as e:
                     print(
                         f"[retriever:force_include:L2_DIRECT] FAILED: "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr, flush=True,
+                    )
+
+            # ── Layer 2.5: Auto-keywords matching ──────────
+            # PR-Stage-A-2-Production: Shadow V3 candidates 활용.
+            # L1/L2 fail 시 fallback. chunks.auto_keywords (Auto-Fixer 보강 데이터) 활용.
+            # 회귀 안전: 임계값 total >= 5 (보수적), top 5 doc, L3_HARDCODED 안전망 유지.
+            if not force_chunks_raw:
+                try:
+                    v3_candidates = _compute_v3_matches(
+                        supabase=supabase,
+                        question=question,
+                        retrieval_query_text=retrieval_query_text,
+                    )
+                    # 보수적 임계값 + top N
+                    qualified = [c for c in v3_candidates if c.get("total", 0) >= 5][:5]
+
+                    if qualified:
+                        matched_doc_ids = [c["id"] for c in qualified]
+                        chunks_resp = (
+                            supabase.table("nexus_chunks")
+                            .select("id, document_id, chunk_idx, article_no, text")
+                            .in_("document_id", matched_doc_ids)
+                            .execute()
+                        )
+                        force_chunks_raw = chunks_resp.data or []
+                        if force_chunks_raw:
+                            force_include_source = "auto_keywords"
+                        print(
+                            f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
+                            f"qualified={len(qualified)} "
+                            f"top_titles={[c['title'][:30] for c in qualified[:3]]} "
+                            f"chunks_fetched={len(force_chunks_raw)}",
+                            file=sys.stderr, flush=True,
+                        )
+                    else:
+                        print(
+                            f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
+                            f"no candidates >= 5 (total: {len(v3_candidates)})",
+                            file=sys.stderr, flush=True,
+                        )
+                except Exception as e:
+                    print(
+                        f"[retriever:force_include:L2.5_AUTO_KEYWORDS] FAILED: "
                         f"{type(e).__name__}: {e}",
                         file=sys.stderr, flush=True,
                     )
