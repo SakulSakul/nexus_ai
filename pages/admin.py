@@ -3396,7 +3396,7 @@ def main():
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
-        "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset",
+        "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset", "🚨 Auto-Fixer",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3414,6 +3414,7 @@ def main():
     with tabs[13]: _tab_auto_meta(sb)
     with tabs[14]: _tab_chunk_meta(sb)
     with tabs[15]: _tab_auto_testset(sb)
+    with tabs[16]: _tab_auto_fixer(sb)
 
 
 def _tab_auto_meta(sb):
@@ -3748,6 +3749,164 @@ def _tab_auto_testset(sb):
                 st.success("✅ 모든 doc 의 recall >= 50%")
 
             st.balloons()
+
+
+def _tab_auto_fixer(sb):
+    """PR-Stage-C-Auto-Fixer: weak query 의 chunk keyword 자동 보강 제안."""
+    import streamlit as st
+
+    st.subheader("🚨 Auto-Fixer")
+    st.caption(
+        "Auto-Testset 의 weak query 를 Claude Opus 4.7 로 분석. "
+        "chunk 본문 검색 + keyword 보강 제안. 사쿨 vision (Self-Healing) 완성."
+    )
+
+    try:
+        from core.auto.auto_fixer import run_auto_fixer_for_run, apply_proposal, reject_proposal
+    except ImportError as e:
+        st.error(f"auto_fixer import 실패: {e}")
+        return
+
+    # 최근 testset_run fetch
+    try:
+        runs_result = (
+            sb.table("testset_runs")
+            .select("id, started_at, recall_overall")
+            .order("started_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        latest_run = runs_result.data[0] if runs_result.data else None
+    except Exception as e:
+        latest_run = None
+        st.warning(f"runs 조회 실패: {e}")
+
+    if not latest_run:
+        st.warning("Auto-Testset 먼저 실행 필요.")
+        return
+
+    run_id = latest_run["id"]
+    started = (latest_run.get("started_at") or "?")[:19]
+    recall = (latest_run.get("recall_overall") or 0) * 100
+    st.info(f"📊 최신 testset: {started} (recall {recall:.1f}%)")
+
+    # 현재 proposals 메트릭
+    try:
+        props_result = (
+            sb.table("auto_fixer_proposals")
+            .select("id, status, confidence")
+            .eq("run_id", run_id)
+            .execute()
+        )
+        all_props = props_result.data or []
+    except Exception as e:
+        all_props = []
+        st.warning(f"proposals 조회 실패: {e}")
+
+    cols = st.columns(4)
+    cols[0].metric("Pending", sum(1 for p in all_props if p.get("status") == "pending"))
+    cols[1].metric("Applied", sum(1 for p in all_props if p.get("status") == "applied"))
+    cols[2].metric("Rejected", sum(1 for p in all_props if p.get("status") == "rejected"))
+    cols[3].metric("High confidence", sum(1 for p in all_props if p.get("confidence") == "high"))
+
+    st.markdown("---")
+
+    # Run Auto-Fixer
+    if st.button("⚡ Run Auto-Fixer (~$2, ~10분)", key="fixer_run", type="primary"):
+        with st.spinner("Claude Opus 분석 중..."):
+            progress_bar = st.progress(0, text="시작...")
+
+            def _on_progress(idx, total, info):
+                progress_bar.progress(
+                    min(idx / max(total, 1), 1.0),
+                    text=f"{idx}/{total}: {info.get('query', '')[:30]} → {info.get('doc', '')[:30]}",
+                )
+
+            result = run_auto_fixer_for_run(run_id, progress_callback=_on_progress)
+            progress_bar.progress(1.0, text="완료")
+
+            if "error" in result:
+                st.error(f"실행 실패: {result['error']}")
+                return
+
+            st.success(
+                f"✅ 완료 — total weak {result.get('total_weak', 0)}, "
+                f"분석 {result['analyzed']}, "
+                f"proposals {result['proposals_created']}, "
+                f"errors {result['errors']}"
+            )
+            st.rerun()
+
+    st.markdown("---")
+
+    # Pending proposals 표시
+    try:
+        pending_result = (
+            sb.table("auto_fixer_proposals")
+            .select("*")
+            .eq("run_id", run_id)
+            .eq("status", "pending")
+            .order("confidence", desc=False)
+            .execute()
+        )
+        pending = pending_result.data or []
+    except Exception as e:
+        pending = []
+        st.warning(f"pending 조회 실패: {e}")
+
+    if not pending:
+        st.info("Pending proposals 없음.")
+        return
+
+    st.markdown(f"### 📌 Pending proposals — {len(pending)}개")
+
+    # 일괄 적용 버튼 (confidence=high)
+    high_conf_pending = [p for p in pending if p.get("confidence") == "high"]
+    if high_conf_pending:
+        if st.button(
+            f"⚡ Confidence=high 일괄 적용 ({len(high_conf_pending)}개)",
+            key="fixer_bulk_apply",
+        ):
+            applied = 0
+            failed = 0
+            for p in high_conf_pending:
+                res = apply_proposal(p["id"])
+                if res.get("applied"):
+                    applied += 1
+                else:
+                    failed += 1
+            st.success(f"✅ 적용 {applied}, 실패 {failed}")
+            st.rerun()
+
+    # 개별 표시
+    for p in pending[:30]:  # 상한 30개
+        conf = p.get("confidence", "low")
+        conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(conf, "⚪")
+        with st.expander(
+            f"{conf_emoji} \"{p['weak_query'][:50]}\" → {p['expected_doc_title']}",
+            expanded=False,
+        ):
+            st.markdown(f"**Confidence:** {conf}")
+            st.markdown(f"**Target chunk:** {p.get('target_chunk_idx', '?')}")
+            st.markdown(f"**현재 keywords:** `{p.get('current_keywords') or []}`")
+            st.markdown(f"**추가 제안:** `{p.get('suggested_keywords') or []}`")
+            st.markdown(f"**Reasoning:** {p.get('reasoning', '')}")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ 적용", key=f"apply_{p['id']}"):
+                    res = apply_proposal(p["id"])
+                    if res.get("applied"):
+                        st.success(res.get("note", "적용"))
+                        st.rerun()
+                    else:
+                        st.error(res.get("note", "실패"))
+            with c2:
+                if st.button("❌ Skip", key=f"reject_{p['id']}"):
+                    res = reject_proposal(p["id"])
+                    if res.get("rejected"):
+                        st.info("거절")
+                        st.rerun()
 
 
 if __name__ == "__main__":
