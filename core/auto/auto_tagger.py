@@ -262,3 +262,87 @@ def extract_doc_full_meta(doc_id: str, title: str, text_sample: str) -> dict:
             "auto_query_examples": [],
             "rationale": f"error: {type(e).__name__}: {e}",
         }
+
+
+# ============================================================
+# PR-Stage-A-1-Chunk: chunk 단위 keyword 추출
+# ============================================================
+
+CHUNK_KEYWORDS_SYSTEM_PROMPT = """\
+사규 chunk 메타데이터 추출 전문가. chunk 본문의 specific 내용에서 핵심 keyword 5~10개 JSON 으로 반환.
+
+부모 사규: {doc_title}
+사규 도메인: {doc_categories}
+
+조건:
+- chunk 본문의 specific 단어 위주 (parent doc 의 일반 chapter 제목과 차별)
+- 5 카테고리 우선 포함:
+  - 절차·제도 이름 (예: "지인거래 신고", "신세계페이", "클린신고", "녹색구매")
+  - 시스템·메뉴·채널 이름 (예: "SHRS", "윤리경영", "윤리실천등록", "클린신고신청서", "SRMS", "신세계면세점 핫라인")
+  - 부서명 (예: "CSR팀", "인사교육팀", "리스크관리부서", "총무팀")
+  - 시간 기한 (예: "3일 이내", "24시간 이내", "7일 이내")
+  - 도메인 용어 (예: "협력회사 식사", "각자 부담", "친인척", "이중취업", "향응 수수")
+
+- 다음 stop-word 제외 (너무 일반적):
+  - 이해관계자, CSR, 관리, 경영, 환경, 안전관리, 리스크관리
+
+- 2글자 이상의 명사 위주
+- 띄어쓰기 포함 가능
+
+strict JSON 만, 다른 설명 X:
+{{"auto_keywords": ["...", "...", ...]}}
+"""
+
+
+def extract_chunk_keywords(
+    chunk_text: str,
+    doc_title: str,
+    doc_categories: list[str] | None = None,
+) -> list[str]:
+    """Stage A-1-Chunk: chunk 1개에서 keyword 5~10개 추출.
+
+    부모 doc context (title + categories) 활용해 더 정확한 specific keyword.
+    Returns: list of keywords (실패 시 빈 list).
+    """
+    try:
+        import anthropic
+        from core.config import settings
+    except Exception as e:
+        print(f"[chunk_tagger] SDK import error: {e}", file=sys.stderr, flush=True)
+        return []
+    s = settings()
+    if not s.anthropic_api_key:
+        return []
+
+    client = anthropic.Anthropic(api_key=s.anthropic_api_key)
+
+    categories_str = ", ".join(doc_categories or []) if doc_categories else "(없음)"
+    system = CHUNK_KEYWORDS_SYSTEM_PROMPT.format(
+        doc_title=doc_title or "(미상)",
+        doc_categories=categories_str,
+    )
+    user_msg = f"chunk 본문:\n{(chunk_text or '')[:3000]}\n\nstrict JSON."
+
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=600,
+            system=system,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = response.content[0].text if response.content else "{}"
+        if "```" in raw:
+            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+            if m:
+                raw = m.group(1)
+        result = json.loads(raw)
+        keywords = result.get("auto_keywords") or []
+        # 안전 정제: str + 2글자 이상 + strip
+        clean = [
+            k.strip() for k in keywords
+            if isinstance(k, str) and len(k.strip()) >= 2
+        ]
+        return clean[:10]  # 최대 10개
+    except Exception as e:
+        print(f"[chunk_tagger] error: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        return []

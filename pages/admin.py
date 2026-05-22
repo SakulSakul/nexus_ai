@@ -3396,7 +3396,7 @@ def main():
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
-        "🧰 Auto-Meta",
+        "🧰 Auto-Meta", "🧩 Chunk-Meta",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3412,6 +3412,7 @@ def main():
     with tabs[11]: _tab_model_test(sb)
     with tabs[12]: _tab_validation(sb)
     with tabs[13]: _tab_auto_meta(sb)
+    with tabs[14]: _tab_chunk_meta(sb)
 
 
 def _tab_auto_meta(sb):
@@ -3535,6 +3536,123 @@ def _tab_auto_meta(sb):
                 )
                 st.balloons()
                 st.info("브라우저 새로고침 후 상단 카운터 갱신 확인")
+
+
+def _tab_chunk_meta(sb):
+    """PR-Stage-A-1-Chunk: chunk 단위 auto_keywords 일괄 채움.
+
+    doc-level meta 의 한계 (chapter 제목만) 보완.
+    chunk 본문의 specific 내용 keyword 추출 → Stage A-2-Shadow-V3 의 기반.
+    """
+    import streamlit as st
+
+    st.subheader("🧩 Chunk-Meta Filler")
+    st.caption(
+        "nexus_chunks 의 auto_keywords 를 Claude Opus 4.7 로 추출. "
+        "비용 ~$0.03/chunk, 600 chunks ≈ $18 (1회성)."
+    )
+
+    try:
+        from core.auto.chunk_meta_filler import fill_chunk_keywords_all
+    except ImportError as e:
+        st.error(f"chunk_meta_filler import 실패: {e}")
+        return
+
+    # 현재 상태
+    try:
+        chunks_result = (
+            sb.table("nexus_chunks")
+            .select("id, auto_keywords, nexus_documents!inner(status)")
+            .eq("nexus_documents.status", "active")
+            .execute()
+        )
+        all_chunks = chunks_result.data or []
+        total = len(all_chunks)
+        missing = sum(
+            1 for c in all_chunks
+            if not c.get("auto_keywords") or len(c["auto_keywords"]) == 0
+        )
+        cols = st.columns(3)
+        cols[0].metric("Active chunks", total)
+        cols[1].metric("auto_keywords 채움", total - missing)
+        cols[2].metric("미채움 (target)", missing)
+    except Exception as e:
+        st.error(f"chunks 조회 실패: {e}")
+        return
+
+    if missing == 0 and total > 0:
+        st.success("✅ 모든 active chunks 의 keyword 채움 완료.")
+
+    st.markdown("---")
+
+    only_missing = st.checkbox(
+        "미채움 chunk 만 처리 (recommend)", value=True,
+        help="False 면 모든 active chunks 재처리 (비용 ↑)",
+        key="chunk_meta_only_missing",
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("🔍 Dry-run (sample 5개, ~$0.15)", key="chunk_dryrun"):
+            with st.spinner("Claude Opus 호출 중... (~15초)"):
+                progress_bar = st.progress(0, text="시작...")
+
+                def _on_progress(idx, total, info):
+                    progress_bar.progress(
+                        min(idx / max(total, 1), 1.0),
+                        text=f"{idx}/{total}: {info.get('doc_title', '')[:30]} (chunk {info.get('chunk_idx', '?')})",
+                    )
+
+                result = fill_chunk_keywords_all(
+                    dry_run=True,
+                    sample_size=5,
+                    progress_callback=_on_progress,
+                    only_missing=only_missing,
+                )
+                progress_bar.progress(1.0, text="완료")
+
+                st.success(
+                    f"✅ Dry-run 완료 — 처리 {result['processed']}, "
+                    f"에러 {result['errors']}"
+                )
+
+                if result.get("samples"):
+                    st.markdown("**Sample 결과 (5개 chunk):**")
+                    for s in result["samples"]:
+                        with st.expander(
+                            f"📄 {s['doc_title']} — chunk {s['chunk_idx']}",
+                            expanded=False
+                        ):
+                            st.markdown(f"**Keywords:** `{s['keywords']}`")
+                            st.markdown(f"**본문 preview:** _{s['text_preview']}..._")
+
+    with col2:
+        st.warning(f"⚠️ 실제 실행 비용 ~${missing * 0.03:.2f}")
+        if st.button("⚡ 전체 실행 (DB UPDATE)", key="chunk_run", type="primary"):
+            with st.spinner(f"Claude Opus 호출 중... (~{missing * 5}초 예상)"):
+                progress_bar = st.progress(0, text="시작...")
+
+                def _on_progress(idx, total, info):
+                    progress_bar.progress(
+                        min(idx / max(total, 1), 1.0),
+                        text=f"{idx}/{total}: {info.get('doc_title', '')[:30]} (chunk {info.get('chunk_idx', '?')})",
+                    )
+
+                result = fill_chunk_keywords_all(
+                    dry_run=False,
+                    sample_size=None,
+                    progress_callback=_on_progress,
+                    only_missing=only_missing,
+                )
+                progress_bar.progress(1.0, text="완료")
+
+                st.success(
+                    f"✅ 완료 — 처리 {result['processed']}, "
+                    f"DB UPDATE {result['updated']}, "
+                    f"에러 {result['errors']}"
+                )
+                st.balloons()
 
 
 if __name__ == "__main__":
