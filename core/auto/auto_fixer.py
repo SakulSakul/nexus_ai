@@ -6,6 +6,7 @@ chunk 본문 검색 + keyword 보강 제안. 사쿨 vision (Self-Healing) 완성
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import sys
@@ -309,7 +310,7 @@ def apply_proposal(proposal_id: str) -> dict:
     try:
         sb.table("auto_fixer_proposals").update({
             "status": "applied",
-            "applied_at": "now()",
+            "applied_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }).eq("id", proposal_id).execute()
     except Exception as e:
         print(f"[auto_fixer] status update: {e}", file=sys.stderr, flush=True)
