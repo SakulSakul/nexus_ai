@@ -789,50 +789,65 @@ def hybrid_search(
                         file=sys.stderr, flush=True,
                     )
 
-            # ── Layer 2.5: Auto-keywords matching ──────────
-            # PR-Stage-A-2-Production: Shadow V3 candidates 활용.
-            # L1/L2 fail 시 fallback. chunks.auto_keywords (Auto-Fixer 보강 데이터) 활용.
-            # 회귀 안전: 임계값 total >= 5 (보수적), top 5 doc, L3_HARDCODED 안전망 유지.
-            if not force_chunks_raw:
-                try:
-                    v3_candidates = _compute_v3_matches(
-                        supabase=supabase,
-                        question=question,
-                        retrieval_query_text=retrieval_query_text,
-                    )
-                    # 보수적 임계값 + top N
-                    qualified = [c for c in v3_candidates if c.get("total", 0) >= 5][:5]
+            # ── Layer 2.5: Auto-keywords matching (UNION) ──────────
+            # PR-Stage-A-2-Production-Union: L1/L2 와 항상 union (회귀 안전).
+            # L1_RPC 의 incident_nodes 잘못 분류 case 보호.
+            # chunks.auto_keywords (Auto-Fixer 보강 데이터) 활용.
+            # dedup 으로 L1/L2 가 이미 잡은 doc 제외.
+            try:
+                v3_candidates = _compute_v3_matches(
+                    supabase=supabase,
+                    question=question,
+                    retrieval_query_text=retrieval_query_text,
+                )
+                # 보수적 임계값 + top N
+                qualified = [c for c in v3_candidates if c.get("total", 0) >= 5][:5]
 
-                    if qualified:
-                        matched_doc_ids = [c["id"] for c in qualified]
+                if qualified:
+                    # 기존 force_chunks_raw 의 doc_ids 와 dedup
+                    existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
+                    new_qualified = [c for c in qualified if c["id"] not in existing_doc_ids]
+                    new_doc_ids = [c["id"] for c in new_qualified]
+
+                    if new_doc_ids:
                         chunks_resp = (
                             supabase.table("nexus_chunks")
                             .select("id, document_id, chunk_idx, article_no, text")
-                            .in_("document_id", matched_doc_ids)
+                            .in_("document_id", new_doc_ids)
                             .execute()
                         )
-                        force_chunks_raw = chunks_resp.data or []
-                        if force_chunks_raw:
+                        new_chunks = chunks_resp.data or []
+                        force_chunks_raw.extend(new_chunks)
+                        # source 누적 (multi-layer 매칭 표시)
+                        if force_include_source:
+                            force_include_source = f"{force_include_source}+auto_kw"
+                        else:
                             force_include_source = "auto_keywords"
                         print(
                             f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
-                            f"qualified={len(qualified)} "
-                            f"top_titles={[c['title'][:30] for c in qualified[:3]]} "
-                            f"chunks_fetched={len(force_chunks_raw)}",
+                            f"qualified={len(qualified)} new_docs={len(new_doc_ids)} "
+                            f"top_new={[c['title'][:30] for c in new_qualified[:3]]} "
+                            f"chunks_added={len(new_chunks)}",
                             file=sys.stderr, flush=True,
                         )
                     else:
                         print(
                             f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
-                            f"no candidates >= 5 (total: {len(v3_candidates)})",
+                            f"qualified={len(qualified)} all already in force (no new)",
                             file=sys.stderr, flush=True,
                         )
-                except Exception as e:
+                else:
                     print(
-                        f"[retriever:force_include:L2.5_AUTO_KEYWORDS] FAILED: "
-                        f"{type(e).__name__}: {e}",
+                        f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
+                        f"no candidates >= 5 (total: {len(v3_candidates)})",
                         file=sys.stderr, flush=True,
                     )
+            except Exception as e:
+                print(
+                    f"[retriever:force_include:L2.5_AUTO_KEYWORDS] FAILED: "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr, flush=True,
+                )
 
             # ── Layer 3: Hardcoded title whitelist ──────────
             if not force_chunks_raw:
