@@ -3396,7 +3396,7 @@ def main():
         "🔤 vocabulary", "📜 동의",
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
-        "🧰 Auto-Meta", "🧩 Chunk-Meta",
+        "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3413,6 +3413,7 @@ def main():
     with tabs[12]: _tab_validation(sb)
     with tabs[13]: _tab_auto_meta(sb)
     with tabs[14]: _tab_chunk_meta(sb)
+    with tabs[15]: _tab_auto_testset(sb)
 
 
 def _tab_auto_meta(sb):
@@ -3653,6 +3654,100 @@ def _tab_chunk_meta(sb):
                     f"에러 {result['errors']}"
                 )
                 st.balloons()
+
+
+def _tab_auto_testset(sb):
+    """PR-Stage-B-Auto-Testset: 505 query 자가 진단."""
+    import streamlit as st
+
+    st.subheader("🧪 Auto-Testset")
+    st.caption(
+        "docs.auto_query_examples 의 505 query (101 docs × 5) 자동 실행. "
+        "shadow V3 매칭의 recall 측정. 사용자 피드백 의존 0."
+    )
+
+    try:
+        from core.auto.auto_testset import run_full_testset
+    except ImportError as e:
+        st.error(f"auto_testset import 실패: {e}")
+        return
+
+    # 최근 runs
+    try:
+        runs_result = (
+            sb.table("testset_runs")
+            .select("*")
+            .order("started_at", desc=True)
+            .limit(5)
+            .execute()
+        )
+        recent_runs = runs_result.data or []
+    except Exception as e:
+        recent_runs = []
+        st.warning(f"runs 조회 실패: {e}")
+
+    if recent_runs:
+        st.markdown("**최근 실행 결과:**")
+        for r in recent_runs[:3]:
+            started = (r.get("started_at") or "?")[:19]
+            r5 = (r.get("recall_at_5") or 0) * 100
+            r_overall = (r.get("recall_overall") or 0) * 100
+            with st.expander(
+                f"📊 {started} — Recall@5: {r5:.1f}%, Overall: {r_overall:.1f}%",
+                expanded=(r == recent_runs[0]),
+            ):
+                cols = st.columns(4)
+                cols[0].metric("Total Q", r.get("total_queries", 0))
+                cols[1].metric("Recall@1", f"{(r.get('recall_at_1') or 0)*100:.1f}%")
+                cols[2].metric("Recall@3", f"{(r.get('recall_at_3') or 0)*100:.1f}%")
+                cols[3].metric("Recall@5", f"{(r.get('recall_at_5') or 0)*100:.1f}%")
+
+    st.markdown("---")
+
+    if st.button("⚡ Run Auto-Testset (~5-10분)", key="testset_run", type="primary"):
+        with st.spinner("rewriter + shadow V3 매칭 자동 실행 중..."):
+            progress_bar = st.progress(0, text="시작...")
+
+            def _on_progress(idx, total, info):
+                progress_bar.progress(
+                    min(idx / max(total, 1), 1.0),
+                    text=f"{idx}/{total}: {info.get('doc_title', '')[:30]} "
+                         f"(rank: {info.get('rank') or 'X'})",
+                )
+
+            result = run_full_testset(
+                use_rewriter=True,
+                progress_callback=_on_progress,
+            )
+            progress_bar.progress(1.0, text="완료")
+
+            if "error" in result:
+                st.error(f"실행 실패: {result['error']}")
+                return
+
+            st.success(
+                f"✅ 완료 — {result['total_queries']} queries, "
+                f"errors {result.get('errors', 0)}"
+            )
+
+            cols = st.columns(4)
+            cols[0].metric("Recall Overall", f"{result['recall_overall']*100:.1f}%")
+            cols[1].metric("Recall@1", f"{result['recall_at_1']*100:.1f}%")
+            cols[2].metric("Recall@3", f"{result['recall_at_3']*100:.1f}%")
+            cols[3].metric("Recall@5", f"{result['recall_at_5']*100:.1f}%")
+
+            weak = result.get("weak_docs") or []
+            if weak:
+                st.markdown(f"### 🚨 Weak docs (recall < 50%) — {len(weak)}개")
+                for w in weak[:10]:
+                    st.markdown(
+                        f"- **{w['title']}** — recall {w['recall']*100:.0f}% "
+                        f"({w['matched']}/{w['total']})"
+                    )
+            else:
+                st.success("✅ 모든 doc 의 recall >= 50%")
+
+            st.balloons()
 
 
 if __name__ == "__main__":
