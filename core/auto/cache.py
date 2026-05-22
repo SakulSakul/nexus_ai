@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import sys
 from typing import Any
 
@@ -52,7 +53,7 @@ def classification_cache_get(query: str):
             try:
                 sb.table("nexus_classification_cache").update({
                     "hit_count": (row.get("hit_count") or 0) + 1,
-                    "last_used_at": "now()",
+                    "last_used_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 }).eq("id", row["id"]).execute()
             except Exception:
                 pass
@@ -94,7 +95,7 @@ def golden_cache_get(incident_nodes: list):
             try:
                 sb.table("nexus_golden_cache").update({
                     "hit_count": (row.get("hit_count") or 0) + 1,
-                    "last_used_at": "now()",
+                    "last_used_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 }).eq("id", row["id"]).execute()
             except Exception:
                 pass

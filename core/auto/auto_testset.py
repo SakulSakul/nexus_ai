@@ -6,6 +6,7 @@ docs.auto_query_examples 의 505 query 를 자동 실행 + shadow V3 매칭 분�
 
 from __future__ import annotations
 
+import datetime
 import sys
 import time
 import uuid
@@ -217,7 +218,7 @@ def run_full_testset(
 
     try:
         sb.table("testset_runs").update({
-            "completed_at": "now()",
+            "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "total_queries": total,
             "recall_at_1": recall_at_1,
             "recall_at_3": recall_at_3,
