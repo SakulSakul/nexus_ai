@@ -289,6 +289,70 @@ def _ensure_universal_sop_completeness(
     return out
 
 
+def _shadow_log_auto_keywords_match(
+    supabase: Any,
+    question: str,
+    retrieval_query_text: str,
+    log_prefix: str = "",
+) -> None:
+    """L2.5_AUTO_KEYWORDS shadow log (PR-Stage-A-2-Shadow).
+
+    docs.auto_keywords 활용 시 어떤 doc 가 force_include 후보가 될지 기록.
+    실제 retrieve 결과 영향 0 — log only.
+    1주일 운영 후 데이터 기반 production 결정 (PR-Stage-A-2-Production).
+
+    매칭: combined_query (question + rewriter 출력) 에 auto_keyword substring.
+    """
+    try:
+        if supabase is None:
+            return
+
+        # active docs 의 auto_keywords 조회
+        # shadow 단계라 캐싱 없음 — 차후 production 시 cache 도입
+        result = (
+            supabase.table("nexus_documents")
+            .select("id, title, auto_keywords")
+            .eq("status", "active")
+            .execute()
+        )
+        docs = result.data or []
+
+        # query normalization
+        combined = ((question or "") + " " + (retrieval_query_text or "")).lower()
+
+        matched: list[dict] = []
+        for doc in docs:
+            doc_keywords = doc.get("auto_keywords") or []
+            if not doc_keywords:
+                continue
+            for kw in doc_keywords:
+                if not isinstance(kw, str):
+                    continue
+                kw_stripped = kw.strip()
+                if len(kw_stripped) < 2:  # 1글자 keyword skip (false positive 위험)
+                    continue
+                if kw_stripped.lower() in combined:
+                    matched.append({
+                        "id": doc.get("id"),
+                        "title": doc.get("title") or "",
+                        "matched_keyword": kw_stripped,
+                    })
+                    break  # 한 doc 에 한 매칭만 (shadow log 단순화)
+
+        print(
+            f"[retriever:L2.5_shadow]{log_prefix} "
+            f"q_head='{(question or '')[:50]}' "
+            f"matched_docs={len(matched)} "
+            f"titles={[d['title'][:35] for d in matched[:5]]}",
+            flush=True,
+        )
+    except Exception as e:
+        print(
+            f"[retriever:L2.5_shadow] FAILED: {type(e).__name__}: {e}",
+            file=sys.stderr, flush=True,
+        )
+
+
 def hybrid_search(
     supabase: Any,
     *,
@@ -567,6 +631,20 @@ def hybrid_search(
                         f"{type(e).__name__}: {e}",
                         file=sys.stderr, flush=True,
                     )
+
+            # ═══ L2.5_AUTO_KEYWORDS shadow log ═══ (PR-Stage-A-2-Shadow)
+            # 회귀 위험 0: 실제 force_include / raw_chunks 에 영향 X.
+            # docs.auto_keywords 활용 시 어떤 doc 매칭되는지 데이터 수집.
+            # 1주일 운영 후 PR-Stage-A-2-Production 결정.
+            try:
+                _shadow_log_auto_keywords_match(
+                    supabase,
+                    question=question,
+                    retrieval_query_text=retrieval_query_text,
+                    log_prefix="",
+                )
+            except Exception:
+                pass  # shadow 실패가 retriever 정상 흐름 방해 안 함
 
             # ── Union into raw_chunks (dedup by chunk id) ───
             # PR-Fix-Force-Include-Dup-Flag: chunks dict map — 중복 chunks 의
