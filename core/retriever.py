@@ -289,26 +289,45 @@ def _ensure_universal_sop_completeness(
     return out
 
 
+# PR-Stage-A-2-Shadow-V2: 일반 단어 stop-word
+# PR-Stage-A-2-Shadow 첫 운영 검증에서 발견된 false positive 원인 단어들.
+# 거의 모든 사규에 공통 등장하여 매칭 신호 가치 0 (TF-IDF 의 IDF 매우 낮음).
+# 차후 PR-Stage-A-2-StopWord-Auto 에서 DF 기반 자동 검출 시스템.
+SHADOW_STOP_KEYWORDS: set[str] = {
+    "이해관계자",
+    "CSR",
+    "관리",
+    "경영",
+    "환경",
+    "안전관리",
+    "리스크관리",
+}
+
+
 def _shadow_log_auto_keywords_match(
     supabase: Any,
     question: str,
     retrieval_query_text: str,
     log_prefix: str = "",
 ) -> None:
-    """L2.5_AUTO_KEYWORDS shadow log (PR-Stage-A-2-Shadow).
+    """L2.5_AUTO_KEYWORDS shadow log V2 (PR-Stage-A-2-Shadow-V2).
 
     docs.auto_keywords 활용 시 어떤 doc 가 force_include 후보가 될지 기록.
     실제 retrieve 결과 영향 0 — log only.
     1주일 운영 후 데이터 기반 production 결정 (PR-Stage-A-2-Production).
 
-    매칭: combined_query (question + rewriter 출력) 에 auto_keyword substring.
+    V2 개선 (PR-Stage-A-2-Shadow-V2):
+    - 양방향 매칭 (keyword in query OR query 단어 in keyword)
+    - 매칭 강도 측정 (점수 — 직접 2점, 부분 1점)
+    - Stop-word 제외 (이해관계자/CSR/관리/경영 등)
+    - 임계값 2점 이상만 후보 (1점 단독은 noise)
+    - 매칭 keyword + score 상세 log
     """
     try:
         if supabase is None:
             return
 
         # active docs 의 auto_keywords 조회
-        # shadow 단계라 캐싱 없음 — 차후 production 시 cache 도입
         result = (
             supabase.table("nexus_documents")
             .select("id, title, auto_keywords")
@@ -320,35 +339,76 @@ def _shadow_log_auto_keywords_match(
         # query normalization
         combined = ((question or "") + " " + (retrieval_query_text or "")).lower()
 
-        matched: list[dict] = []
+        # query 의 의미 단어 추출 (2글자 이상, stop-word 제외)
+        query_words: set[str] = set()
+        for token in combined.replace("?", " ").replace(".", " ").replace(",", " ").split():
+            if len(token) >= 2 and token not in SHADOW_STOP_KEYWORDS:
+                query_words.add(token)
+
+        # doc 별 매칭 score 계산
+        scored: list[dict] = []
         for doc in docs:
             doc_keywords = doc.get("auto_keywords") or []
             if not doc_keywords:
                 continue
+
+            score = 0
+            matched_kws: list[str] = []
             for kw in doc_keywords:
                 if not isinstance(kw, str):
                     continue
                 kw_stripped = kw.strip()
-                if len(kw_stripped) < 2:  # 1글자 keyword skip (false positive 위험)
+                if len(kw_stripped) < 2:
                     continue
-                if kw_stripped.lower() in combined:
-                    matched.append({
-                        "id": doc.get("id"),
-                        "title": doc.get("title") or "",
-                        "matched_keyword": kw_stripped,
-                    })
-                    break  # 한 doc 에 한 매칭만 (shadow log 단순화)
+                # Stop-word 제외
+                if kw_stripped in SHADOW_STOP_KEYWORDS:
+                    continue
 
+                kw_lower = kw_stripped.lower()
+
+                # (a) keyword in combined_query — 직접 매칭 (높은 신호)
+                if kw_lower in combined:
+                    score += 2
+                    matched_kws.append(kw_stripped)
+                    continue
+
+                # (b) query 단어 in keyword — 부분 매칭 (낮은 신호)
+                # 예: "클린신고" (query 단어) in "클린신고서" (keyword)
+                for word in query_words:
+                    if word in kw_lower:
+                        score += 1
+                        matched_kws.append(kw_stripped)
+                        break
+
+            # 임계값: 2점 이상만 후보 (1점 단독은 noise)
+            if score >= 2:
+                scored.append({
+                    "id": doc.get("id"),
+                    "title": doc.get("title") or "",
+                    "score": score,
+                    "matched": matched_kws,
+                })
+
+        # score 내림차순 정렬
+        scored.sort(key=lambda d: -d["score"])
+
+        # log: top-5 의 상세 정보
+        top5 = scored[:5]
+        top5_str = ", ".join(
+            f"{{doc: '{d['title'][:30]}', score: {d['score']}, "
+            f"matched: {d['matched'][:3]}}}"
+            for d in top5
+        )
         print(
-            f"[retriever:L2.5_shadow]{log_prefix} "
+            f"[retriever:L2.5_shadow_v2]{log_prefix} "
             f"q_head='{(question or '')[:50]}' "
-            f"matched_docs={len(matched)} "
-            f"titles={[d['title'][:35] for d in matched[:5]]}",
+            f"candidates={len(scored)} "
+            f"top5=[{top5_str}]",
             flush=True,
         )
     except Exception as e:
         print(
-            f"[retriever:L2.5_shadow] FAILED: {type(e).__name__}: {e}",
+            f"[retriever:L2.5_shadow_v2] FAILED: {type(e).__name__}: {e}",
             file=sys.stderr, flush=True,
         )
 
