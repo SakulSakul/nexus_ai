@@ -354,19 +354,22 @@ def _title_base(title: str) -> str:
     return (m.group(2).strip() if m else title.strip())
 
 
-def _normalize_token(token: str) -> str:
-    """한국어 조사 및 종결 부호 제거 — title 매칭 정확성 ↑.
+_KOREAN_PARTICLES = ("으로", "로", "는", "은", "이", "가", "을", "를", "에", "의", "와", "과", "도", "만")
 
-    예: '관리는' → '관리', '담당?' → '담당'
+
+def _normalize_token(token: str) -> str:
+    """한국어 조사 + 종결 부호 제거. title 매칭 정확성 ↑.
+
+    예: '관리는' → '관리', '담당?' → '담당', '제도로' → '제도'.
+    조사는 longer-first 순서 ('으로' 가 '로' 보다 먼저) — '...으로' 정확 처리.
+    len(token) > len(suffix) + 1 guard 로 과도한 stripping 방지.
     """
     if not token:
         return token
-    # 종결 부호 / 구두점 제거
     token = token.rstrip("?!.,;:'\"")
-    # 한국어 조사 제거 (token 길이 > 2 일 때만 — 짧은 token 의미 보호)
     if len(token) > 2:
-        for suffix in ("는", "은", "이", "가", "을", "를", "에", "의", "와", "과", "도", "만", "로", "으로"):
-            if token.endswith(suffix):
+        for suffix in _KOREAN_PARTICLES:
+            if token.endswith(suffix) and len(token) > len(suffix) + 1:
                 token = token[:-len(suffix)]
                 break
     return token
@@ -394,7 +397,7 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
         q = question or ""
         q_compact = "".join(q.split()).lower()
         q_tokens = {_normalize_token(t.lower()) for t in q.split() if len(t.strip()) >= 2}
-        q_tokens = {t for t in q_tokens if t}  # 빈 token 제거
+        q_tokens = {t for t in q_tokens if t and len(t) >= 2}  # 빈/1글자 token 제거
 
         matched_ids: list[str] = []
         for doc in docs:
@@ -405,7 +408,7 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
             if len(t_compact) < 4:
                 continue  # 너무 짧은 사규명은 trivial 매칭 위험 — skip
             t_tokens = {_normalize_token(t.lower()) for t in base.split() if len(t.strip()) >= 2}
-            t_tokens = {t for t in t_tokens if t}
+            t_tokens = {t for t in t_tokens if t and len(t) >= 2}
 
             hit = False
             # 1. 사규명이 query 에 등장
