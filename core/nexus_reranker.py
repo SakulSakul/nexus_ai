@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 
 from .config import get_secret, settings
@@ -32,6 +33,7 @@ _RERANK_TOP_N = 15          # reranker 가 평가할 raw_chunks 상위 N
 _CHUNK_PREVIEW_LEN = 400    # 청크당 LLM 에 전달할 text preview 길이 (chars)
 _MAX_OUTPUT_TOKENS = 2048   # ranked_ids 30개 + JSON overhead 충분
 _RERANK_TEMPERATURE = 0.0   # 결정적 ranking (재현성)
+_RERANK_TIMEOUT_S = 10.0    # PR-Reranker-Timeout: Gemini Flash-Lite spike (22.8초) 회피
 
 
 _SYSTEM_TEXT = """당신은 DF COMPASS 사규 (compliance) 앱의 검색 결과 reranker 입니다.
@@ -213,8 +215,37 @@ def rerank_chunks(query: str, raw_chunks: list[dict]) -> list[dict]:
     tail = raw_chunks[_RERANK_TOP_N:]
 
     t_start = time.time()
-    ranked_ids = _call_gemini_for_rerank(query, head)
+
+    # PR-Reranker-Timeout: 10s 초과 시 fallback to original order
+    result_holder: list = [None]
+
+    def _target():
+        try:
+            result_holder[0] = _call_gemini_for_rerank(query, head)
+        except Exception as e:
+            print(
+                f"[reranker] thread exception: {type(e).__name__}: {e}",
+                file=sys.stderr, flush=True,
+            )
+            result_holder[0] = []
+
+    th = threading.Thread(target=_target, daemon=True)
+    th.start()
+    th.join(_RERANK_TIMEOUT_S)
+
     elapsed_ms = int((time.time() - t_start) * 1000)
+
+    if th.is_alive():
+        # timeout — thread 는 background 에서 계속 진행, 결과 무시
+        print(
+            f"[reranker] TIMEOUT after {elapsed_ms}ms "
+            f"(limit={int(_RERANK_TIMEOUT_S*1000)}ms), "
+            f"fallback to original order",
+            file=sys.stderr, flush=True,
+        )
+        return raw_chunks
+
+    ranked_ids = result_holder[0] or []
 
     if not ranked_ids:
         # graceful fallback — 원본 순서 유지.
