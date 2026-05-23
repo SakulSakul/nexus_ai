@@ -346,6 +346,70 @@ def _score_keywords_against_query(
     return score, matched
 
 
+def _title_base(title: str) -> str:
+    """사규명에서 도메인 prefix '(...)' 제거. '(안전) 법인카드 관리지침' → '법인카드 관리지침'."""
+    if not title:
+        return ""
+    m = re.match(r"^\(([^)]+)\)\s*(.+)$", title.strip())
+    return (m.group(2).strip() if m else title.strip())
+
+
+def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
+    """PR-Title-Direct-Match: 사규명 base 와 query 의 직접 매칭 doc id 반환.
+
+    3 매칭 방식:
+    1. title_compact in query_compact (사규명이 query 에 등장)
+    2. query_compact in title_compact (query 가 사규명에 등장)
+    3. token 공통 3개+ (사규명 token 과 query token 교집합 >= 3)
+    """
+    try:
+        if supabase is None:
+            return []
+        docs_result = (
+            supabase.table("nexus_documents")
+            .select("id, title")
+            .eq("status", "active")
+            .execute()
+        )
+        docs = docs_result.data or []
+
+        q = question or ""
+        q_compact = "".join(q.split()).lower()
+        q_tokens = {t.lower() for t in q.split() if len(t) >= 2}
+
+        matched_ids: list[str] = []
+        for doc in docs:
+            base = _title_base(doc.get("title") or "")
+            if not base:
+                continue
+            t_compact = "".join(base.split()).lower()
+            if len(t_compact) < 4:
+                continue  # 너무 짧은 사규명은 trivial 매칭 위험 — skip
+            t_tokens = {t.lower() for t in base.split() if len(t) >= 2}
+
+            hit = False
+            # 1. 사규명이 query 에 등장
+            if t_compact in q_compact:
+                hit = True
+            # 2. query 가 사규명에 등장
+            elif q_compact and q_compact in t_compact:
+                hit = True
+            # 3. token 공통 3개 이상
+            elif len(q_tokens & t_tokens) >= 3:
+                hit = True
+
+            if hit:
+                matched_ids.append(doc.get("id"))
+
+        return matched_ids
+    except Exception as e:
+        print(
+            f"[_compute_title_direct_matches] FAILED: {type(e).__name__}: {e}",
+            file=sys.stderr, flush=True,
+        )
+        return []
+
+
 def _compute_v3_matches(
     supabase: Any,
     question: str,
@@ -794,6 +858,43 @@ def hybrid_search(
                         f"{type(e).__name__}: {e}",
                         file=sys.stderr, flush=True,
                     )
+
+            # ── Layer 2.0: Title-direct matching (UNION) ──────────
+            # PR-Title-Direct-Match: 사규명 base (prefix 제거) 와 query 직접 매칭.
+            # "법인카드 관리지침 알려줘" 같이 사규명 자체가 query 에 등장하는 case.
+            # L2.5_AUTO 보다 먼저 — 사규명 직접 매칭이 가장 강한 신호.
+            # dedup 으로 L1/L2 가 이미 잡은 doc 제외.
+            try:
+                title_doc_ids = _compute_title_direct_matches(supabase, question)
+                if title_doc_ids:
+                    existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
+                    new_title_ids = [d for d in title_doc_ids if d not in existing_doc_ids]
+                    if new_title_ids:
+                        chunks_resp = (
+                            supabase.table("nexus_chunks")
+                            .select("id, document_id, chunk_idx, article_no, text")
+                            .in_("document_id", new_title_ids)
+                            .execute()
+                        )
+                        new_chunks = chunks_resp.data or []
+                        force_chunks_raw.extend(new_chunks)
+                        if force_include_source and force_include_source != "none":
+                            force_include_source = f"{force_include_source}+title_direct"
+                        else:
+                            force_include_source = "title_direct"
+                        print(
+                            f"[retriever:force_include:L2.0_TITLE_DIRECT] "
+                            f"matched_docs={len(title_doc_ids)} "
+                            f"new_docs={len(new_title_ids)} "
+                            f"chunks_added={len(new_chunks)}",
+                            file=sys.stderr, flush=True,
+                        )
+            except Exception as e:
+                print(
+                    f"[retriever:force_include:L2.0_TITLE_DIRECT] FAILED: "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr, flush=True,
+                )
 
             # ── Layer 2.5: Auto-keywords matching (UNION) ──────────
             # PR-Stage-A-2-Production-Union: L1/L2 와 항상 union (회귀 안전).
