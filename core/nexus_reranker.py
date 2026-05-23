@@ -34,6 +34,8 @@ _CHUNK_PREVIEW_LEN = 400    # 청크당 LLM 에 전달할 text preview 길이 (c
 _MAX_OUTPUT_TOKENS = 2048   # ranked_ids 30개 + JSON overhead 충분
 _RERANK_TEMPERATURE = 0.0   # 결정적 ranking (재현성)
 _RERANK_TIMEOUT_S = 10.0    # PR-Reranker-Timeout: Gemini Flash-Lite spike (22.8초) 회피
+_RERANK_MAX_RETRIES = 3       # PR-Reranker-Backoff: 503/429 재시도 횟수
+_RERANK_BACKOFF_BASE_S = 1.0  # PR-Reranker-Backoff: exponential backoff base (1s, 2s, 4s)
 
 
 _SYSTEM_TEXT = """당신은 DF COMPASS 사규 (compliance) 앱의 검색 결과 reranker 입니다.
@@ -143,6 +145,15 @@ def _extract_response_text(res: object) -> str:
     return text
 
 
+def _is_rerank_retryable_error(e: Exception) -> bool:
+    """503/429/UNAVAILABLE 같은 일시적 error 판별 (PR-Reranker-Backoff)."""
+    msg = str(e).lower()
+    return any(
+        keyword in msg
+        for keyword in ("503", "429", "unavailable", "rate limit", "high demand", "timeout")
+    )
+
+
 def _call_gemini_for_rerank(query: str, chunks: list[dict]) -> list[str]:
     """LLM 호출 → ranked_ids 리스트. 실패 시 빈 리스트."""
     try:
@@ -158,24 +169,44 @@ def _call_gemini_for_rerank(query: str, chunks: list[dict]) -> list[str]:
         return []
 
     user_text = _build_user_prompt(query, chunks)
-    try:
-        cli = genai.Client(api_key=s.gemini_api_key)
-        cfg = types.GenerateContentConfig(
-            system_instruction=_SYSTEM_TEXT,
-            temperature=_RERANK_TEMPERATURE,
-            max_output_tokens=_MAX_OUTPUT_TOKENS,
-            response_mime_type="application/json",
-        )
-        res = cli.models.generate_content(
-            model=_RERANK_MODEL,
-            contents=user_text,
-            config=cfg,
-        )
-    except Exception as e:
-        print(
-            f"[reranker] FAILED gemini call: {type(e).__name__}: {e}",
-            file=sys.stderr, flush=True,
-        )
+    cli = genai.Client(api_key=s.gemini_api_key)
+    cfg = types.GenerateContentConfig(
+        system_instruction=_SYSTEM_TEXT,
+        temperature=_RERANK_TEMPERATURE,
+        max_output_tokens=_MAX_OUTPUT_TOKENS,
+        response_mime_type="application/json",
+    )
+
+    # PR-Reranker-Backoff: 503/429 시 exponential backoff retry (PR #202 패턴)
+    res = None
+    for attempt in range(_RERANK_MAX_RETRIES):
+        try:
+            res = cli.models.generate_content(
+                model=_RERANK_MODEL,
+                contents=user_text,
+                config=cfg,
+            )
+            break  # 성공
+        except Exception as e:
+            is_last = attempt == _RERANK_MAX_RETRIES - 1
+            if not _is_rerank_retryable_error(e) or is_last:
+                print(
+                    f"[reranker] FAILED gemini call "
+                    f"(attempt {attempt+1}/{_RERANK_MAX_RETRIES}): "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr, flush=True,
+                )
+                return []
+            wait_s = _RERANK_BACKOFF_BASE_S * (2 ** attempt)
+            print(
+                f"[reranker] RETRYABLE error "
+                f"(attempt {attempt+1}/{_RERANK_MAX_RETRIES}), "
+                f"backoff {wait_s:.1f}s: {type(e).__name__}: {e}",
+                file=sys.stderr, flush=True,
+            )
+            time.sleep(wait_s)
+
+    if res is None:
         return []
 
     text = _extract_response_text(res)
