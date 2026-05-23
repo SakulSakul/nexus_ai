@@ -356,6 +356,13 @@ def _title_base(title: str) -> str:
 
 _KOREAN_PARTICLES = ("으로", "로", "는", "은", "이", "가", "을", "를", "에", "의", "와", "과", "도", "만")
 
+# PR-Match-4-Refine: Generic 사규명 suffix — 단독 substring 매칭 시 trivial match
+# 발생 → over-matching ("관리지침" 으로 끝나는 11개 doc 매칭). longest-first 순서.
+_GENERIC_SUFFIX_PARTS = (
+    "관리지침", "관리규정", "운영지침", "운영규정",  # compound (먼저 매칭)
+    "지침", "규정", "관리", "운영", "기준",          # single
+)
+
 
 def _normalize_token(token: str) -> str:
     """한국어 조사 + 종결 부호 제거. title 매칭 정확성 ↑.
@@ -372,6 +379,26 @@ def _normalize_token(token: str) -> str:
             if token.endswith(suffix) and len(token) > len(suffix) + 1:
                 token = token[:-len(suffix)]
                 break
+    return token
+
+
+def _strip_generic_suffix(token: str) -> str:
+    """Generic 사규명 suffix 제거 — Match 4 의 의미적 core token 확보.
+
+    예:
+    - '관리지침' → '' (전체가 generic, Match 4 에서 skip)
+    - '목표관리지침' → '목표' (suffix 제거)
+    - '국내출장비' → '국내출장비' (suffix 없음)
+    - '출장비' → '출장비' (suffix 없음)
+    """
+    if not token:
+        return token
+    # longest-first 순서로 시도
+    for suffix in _GENERIC_SUFFIX_PARTS:
+        if token == suffix:
+            return ""  # 전체가 generic
+        if token.endswith(suffix) and len(token) > len(suffix):
+            return token[:-len(suffix)]
     return token
 
 
@@ -420,17 +447,27 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
             # 3. token 공통 3개 이상
             elif len(q_tokens & t_tokens) >= 3:
                 hit = True
-            # 4. Token-level substring match (길이 ≥ 3 의 token 만)
-            # 예: q "출장비" (3) ⊂ t "국내출장비" (5) → match
-            # false positive 방지: token 길이 ≥ 3 만, 최소 매칭 token 길이 ≥ 3
+            # 4. Token-level substring match (precision-focused, generic suffix 차단)
+            # 예: q "출장비" (3) ⊂ t "국내출장비" (5) → match ✅
+            # 차단: q "관리지침" 같은 generic suffix 의 over-matching
+            # 방법: token 의 generic suffix 제거 후 core 부분 비교
             else:
                 for q_t in q_tokens:
                     if len(q_t) < 3:
                         continue
+                    # Generic suffix 제거 후 의미적 core 확보
+                    q_core = _strip_generic_suffix(q_t)
+                    # core 가 너무 짧으면 (전체가 generic 또는 1글자) → trivial match 차단
+                    if len(q_core) < 2:
+                        continue
                     for t_t in t_tokens:
                         if len(t_t) < 3:
                             continue
-                        if q_t in t_t or t_t in q_t:
+                        t_core = _strip_generic_suffix(t_t)
+                        if len(t_core) < 2:
+                            continue
+                        # Core 부분의 substring 매칭 (의미적 일치)
+                        if q_core in t_core or t_core in q_core:
                             hit = True
                             break
                     if hit:
