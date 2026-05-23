@@ -407,7 +407,7 @@ def _compute_v3_matches(
             score, _matched = _score_keywords_against_query(
                 chunk.get("auto_keywords") or [],
                 combined, query_words,
-                direct_weight=3, partial_weight=2,
+                direct_weight=5, partial_weight=3,
             )
             if score > 0:
                 doc_scores[doc_id]["chunk_score"] += score
@@ -517,7 +517,7 @@ def _shadow_log_auto_keywords_match(
             score, matched = _score_keywords_against_query(
                 chunk.get("auto_keywords") or [],
                 combined, query_words,
-                direct_weight=3, partial_weight=2,
+                direct_weight=5, partial_weight=3,
             )
             if score > 0:
                 doc_scores[doc_id]["chunk_score"] += score
