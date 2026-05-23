@@ -1171,7 +1171,7 @@ def ask(
 
     # PR-Disambiguation-Phase1: 모호한 retrieval 의 경우 선택지 표시
     try:
-        _ambig = detect_ambiguity(contexts or [])
+        _ambig = detect_ambiguity(contexts or [], question=question)
         if _ambig.get("is_ambiguous"):
             _suggestion = format_choice_suggestion(_ambig.get("candidate_docs", []))
             if _suggestion:
@@ -1646,7 +1646,7 @@ def ask_stream(
 
     # PR-Disambiguation-Phase1: 모호한 retrieval 의 경우 선택지 표시 (done Answer 에 반영)
     try:
-        _ambig = detect_ambiguity(contexts or [])
+        _ambig = detect_ambiguity(contexts or [], question=question)
         if _ambig.get("is_ambiguous"):
             _suggestion = format_choice_suggestion(_ambig.get("candidate_docs", []))
             if _suggestion:
