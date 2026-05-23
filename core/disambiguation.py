@@ -36,7 +36,33 @@ def _parse_title(title: str) -> tuple[Optional[str], str]:
     return (m.group(1).strip(), m.group(2).strip())
 
 
-def detect_ambiguity(top_chunks: list[dict]) -> dict:
+def _query_core_tokens(question: str) -> set:
+    """query 의 핵심 단어 추출 (2글자+, 조사/종결부호 제거)."""
+    tokens: set = set()
+    for t in (question or "").split():
+        t = t.rstrip("?!.,;:'\"").lower()
+        if len(t) >= 2:
+            tokens.add(t)
+    return tokens
+
+
+def _doc_chunks_match_query(chunks: list, q_tokens: set) -> bool:
+    """doc 의 chunk 들이 query 와 의미 매칭되는지 (PR-Disambiguation-Precision).
+
+    a) force_include_source 가 title_direct / auto_keywords (또는 auto_kw) → 매칭
+    b) chunk text 가 query 핵심 단어 포함 → 매칭
+    """
+    for c in chunks:
+        src = (c.get("force_include_source") or "").lower()
+        if "title_direct" in src or "auto_keywords" in src or "auto_kw" in src:
+            return True
+        text = (c.get("text") or "").lower()
+        if text and any(tok in text for tok in q_tokens):
+            return True
+    return False
+
+
+def detect_ambiguity(top_chunks: list[dict], question: str = "") -> dict:
     """retrieval top chunks 가 모호한지 판단.
 
     Returns: {
@@ -48,14 +74,18 @@ def detect_ambiguity(top_chunks: list[dict]) -> dict:
     if not top_chunks or len(top_chunks) < _MIN_CANDIDATES:
         return {"is_ambiguous": False, "reason": "insufficient_candidates", "candidate_docs": []}
 
-    # top_chunks 의 doc title 추출 (chunk 의 doc_title field)
+    # top_chunks 의 doc title 추출 + title 별 chunk 그룹화
     seen_titles: list[str] = []
     seen_set: set = set()
+    chunks_by_title: dict[str, list] = {}
     for c in top_chunks[:10]:
         title = c.get("doc_title") or c.get("title") or c.get("document_title") or ""
-        if title and title not in seen_set:
+        if not title:
+            continue
+        if title not in seen_set:
             seen_titles.append(title)
             seen_set.add(title)
+        chunks_by_title.setdefault(title, []).append(c)
 
     if len(seen_titles) < _MIN_CANDIDATES:
         return {"is_ambiguous": False, "reason": "single_doc", "candidate_docs": []}
@@ -73,11 +103,19 @@ def detect_ambiguity(top_chunks: list[dict]) -> dict:
     if multi_prefix_groups:
         # 가장 많은 group 의 candidates
         best_group = max(multi_prefix_groups.values(), key=len)
-        candidates = best_group[:_MAX_CHOICES]
+        # PR-Disambiguation-Precision: query 와 의미 매칭되는 candidate 만 유지
+        q_tokens = _query_core_tokens(question)
+        matched_candidates = [
+            t for t in best_group
+            if _doc_chunks_match_query(chunks_by_title.get(t, []), q_tokens)
+        ]
+        # 매칭된 candidate 가 2개 미만이면 모호 X (false positive 제거)
+        if len(matched_candidates) < _MIN_CANDIDATES:
+            return {"is_ambiguous": False, "reason": "no_query_match", "candidate_docs": []}
         return {
             "is_ambiguous": True,
             "reason": "domain_overlap",
-            "candidate_docs": candidates,
+            "candidate_docs": matched_candidates[:_MAX_CHOICES],
         }
 
     # 모호 detect 2: top 2 의 score 비슷 — Phase 2 에서 구현. Phase 1 은 domain_overlap 만.
