@@ -21,6 +21,7 @@ from .critical_mode import CriticalDetection, detect, enforce_structure, load_ke
 from .pii_filter import mask_pii
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .retriever import hybrid_search
+from .disambiguation import detect_ambiguity, format_choice_suggestion
 
 
 # ── Eval Mode: 모델 override (PR-Model-Self-Test) ──────────────
@@ -1168,6 +1169,21 @@ def ask(
     # 이며 quote 줄은 사용자 본인 화면에만 표시되므로 외부 노출 없음.
     final = _prepend_question_quote(final, question)
 
+    # PR-Disambiguation-Phase1: 모호한 retrieval 의 경우 선택지 표시
+    try:
+        _ambig = detect_ambiguity(contexts or [])
+        if _ambig.get("is_ambiguous"):
+            _suggestion = format_choice_suggestion(_ambig.get("candidate_docs", []))
+            if _suggestion:
+                final = (final or "") + _suggestion
+                print(
+                    f"[disambiguation] ambiguous detected reason={_ambig.get('reason')} "
+                    f"candidates={len(_ambig.get('candidate_docs', []))}",
+                    file=sys.stderr, flush=True,
+                )
+    except Exception as _e_amb:
+        print(f"[disambiguation] WARN skipped: {_e_amb}", file=sys.stderr, flush=True)
+
     elapsed = time.perf_counter() - t0
 
     # 질의 로그 (마스킹 후 본문만 저장, 원본은 즉시 폐기).
@@ -1627,6 +1643,21 @@ def ask_stream(
         _log_query_logs_insert_failure(
             list(_stream_payload.keys()), _e, supabase=supabase,
         )
+
+    # PR-Disambiguation-Phase1: 모호한 retrieval 의 경우 선택지 표시 (done Answer 에 반영)
+    try:
+        _ambig = detect_ambiguity(contexts or [])
+        if _ambig.get("is_ambiguous"):
+            _suggestion = format_choice_suggestion(_ambig.get("candidate_docs", []))
+            if _suggestion:
+                answer_text = (answer_text or "") + _suggestion
+                print(
+                    f"[disambiguation] ambiguous detected reason={_ambig.get('reason')} "
+                    f"candidates={len(_ambig.get('candidate_docs', []))}",
+                    file=sys.stderr, flush=True,
+                )
+    except Exception as _e_amb:
+        print(f"[disambiguation] WARN skipped: {_e_amb}", file=sys.stderr, flush=True)
 
     _emit("complete")
     yield ("done", Answer(
