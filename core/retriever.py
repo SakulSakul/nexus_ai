@@ -772,11 +772,14 @@ def hybrid_search(
         # Layer 1: SQL RPC (intersect SQL-side, 가장 신뢰)
         # Layer 2: Direct table query (RPC 미배포/실패 시)
         # Layer 3: Hardcoded title-based whitelist (둘 다 실패 시 최후 안전망)
+        # PR-Force-Include-Restructure: force_include 변수 — incident 분류와 무관 (block 외부)
+        force_chunks_raw: list = []
+        force_include_source: str = "none"
+        _doc_meta_enrich: dict = {}
+
+        # ── INCIDENT-DEPENDENT layers (L1/L1.5/L2/L3) ──
         if user_incident_nodes:
             nodes_list = sorted(user_incident_nodes)
-            force_chunks_raw: list = []
-            force_include_source: str = "none"
-            _doc_meta_enrich: dict = {}
 
             # ── Layer 1: SQL RPC ─────────────────────────────
             try:
@@ -894,102 +897,8 @@ def hybrid_search(
                         file=sys.stderr, flush=True,
                     )
 
-            # ── Layer 2.0: Title-direct matching (UNION) ──────────
-            # PR-Title-Direct-Match: 사규명 base (prefix 제거) 와 query 직접 매칭.
-            # "법인카드 관리지침 알려줘" 같이 사규명 자체가 query 에 등장하는 case.
-            # L2.5_AUTO 보다 먼저 — 사규명 직접 매칭이 가장 강한 신호.
-            # dedup 으로 L1/L2 가 이미 잡은 doc 제외.
-            try:
-                title_doc_ids = _compute_title_direct_matches(supabase, question)
-                if title_doc_ids:
-                    existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
-                    new_title_ids = [d for d in title_doc_ids if d not in existing_doc_ids]
-                    if new_title_ids:
-                        chunks_resp = (
-                            supabase.table("nexus_chunks")
-                            .select("id, document_id, chunk_idx, article_no, text")
-                            .in_("document_id", new_title_ids)
-                            .execute()
-                        )
-                        new_chunks = chunks_resp.data or []
-                        force_chunks_raw.extend(new_chunks)
-                        if force_include_source and force_include_source != "none":
-                            force_include_source = f"{force_include_source}+title_direct"
-                        else:
-                            force_include_source = "title_direct"
-                        print(
-                            f"[retriever:force_include:L2.0_TITLE_DIRECT] "
-                            f"matched_docs={len(title_doc_ids)} "
-                            f"new_docs={len(new_title_ids)} "
-                            f"chunks_added={len(new_chunks)}",
-                            file=sys.stderr, flush=True,
-                        )
-            except Exception as e:
-                print(
-                    f"[retriever:force_include:L2.0_TITLE_DIRECT] FAILED: "
-                    f"{type(e).__name__}: {e}",
-                    file=sys.stderr, flush=True,
-                )
-
-            # ── Layer 2.5: Auto-keywords matching (UNION) ──────────
-            # PR-Stage-A-2-Production-Union: L1/L2 와 항상 union (회귀 안전).
-            # L1_RPC 의 incident_nodes 잘못 분류 case 보호.
-            # chunks.auto_keywords (Auto-Fixer 보강 데이터) 활용.
-            # dedup 으로 L1/L2 가 이미 잡은 doc 제외.
-            try:
-                v3_candidates = _compute_v3_matches(
-                    supabase=supabase,
-                    question=question,
-                    retrieval_query_text=retrieval_query_text,
-                )
-                # 보수적 임계값 + top N
-                qualified = [c for c in v3_candidates if c.get("total", 0) >= 5][:5]
-
-                if qualified:
-                    # 기존 force_chunks_raw 의 doc_ids 와 dedup
-                    existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
-                    new_qualified = [c for c in qualified if c["id"] not in existing_doc_ids]
-                    new_doc_ids = [c["id"] for c in new_qualified]
-
-                    if new_doc_ids:
-                        chunks_resp = (
-                            supabase.table("nexus_chunks")
-                            .select("id, document_id, chunk_idx, article_no, text")
-                            .in_("document_id", new_doc_ids)
-                            .execute()
-                        )
-                        new_chunks = chunks_resp.data or []
-                        force_chunks_raw.extend(new_chunks)
-                        # source 누적 (multi-layer 매칭 표시)
-                        if force_include_source:
-                            force_include_source = f"{force_include_source}+auto_kw"
-                        else:
-                            force_include_source = "auto_keywords"
-                        print(
-                            f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
-                            f"qualified={len(qualified)} new_docs={len(new_doc_ids)} "
-                            f"top_new={[c['title'][:30] for c in new_qualified[:3]]} "
-                            f"chunks_added={len(new_chunks)}",
-                            file=sys.stderr, flush=True,
-                        )
-                    else:
-                        print(
-                            f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
-                            f"qualified={len(qualified)} all already in force (no new)",
-                            file=sys.stderr, flush=True,
-                        )
-                else:
-                    print(
-                        f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
-                        f"no candidates >= 5 (total: {len(v3_candidates)})",
-                        file=sys.stderr, flush=True,
-                    )
-            except Exception as e:
-                print(
-                    f"[retriever:force_include:L2.5_AUTO_KEYWORDS] FAILED: "
-                    f"{type(e).__name__}: {e}",
-                    file=sys.stderr, flush=True,
-                )
+            # ── Layer 2.0/2.5 는 PR-Force-Include-Restructure 로 incident block
+            # 밖으로 이동 (모든 query 적용). 아래 incident block 종료 후 실행.
 
             # ── Layer 3: Hardcoded title whitelist ──────────
             if not force_chunks_raw:
@@ -1069,14 +978,110 @@ def hybrid_search(
             except Exception:
                 pass  # shadow 실패가 retriever 정상 흐름 방해 안 함
 
-            # ── Union into raw_chunks (dedup by chunk id) ───
-            # PR-Fix-Force-Include-Dup-Flag: chunks dict map — 중복 chunks 의
-            # force_included_by_intent flag 보장. Vector + BM25 단계에서 이미
-            # raw_chunks 에 있는 chunks (낮은 score) 가 L3 force_include 매칭
-            # 시 단순 skip 했던 bug → best_chunk_per_doc 누락 → 답변 인용
-            # 못 함 회귀 차단. 예: 거래처 명절 선물 query 의 (CSR) 클린뱅크
-            # 운영 지침 chunks 가 vector 단계에 낮은 score 로 진입 → L3 매칭
-            # 됐어도 flag update 안 돼 final top_k 진입 못 함.
+        # ══ INCIDENT-INDEPENDENT layers (모든 query 적용) ══
+        # PR-Force-Include-Restructure: L2.0/L2.5 를 incident block 밖으로 이동.
+        # incident block 뒤에 unconditional 배치 — L1/L2/L3 의 force_chunks_raw
+        # 재할당(clobber) 후 extend+dedup union (incident 결과 보존 + 모든 query 적용).
+        # ── Layer 2.0: Title-direct matching (UNION) ──────────
+        # PR-Title-Direct-Match: 사규명 base (prefix 제거) 와 query 직접 매칭.
+        # "법인카드 관리지침 알려줘" 같이 사규명 자체가 query 에 등장하는 case.
+        try:
+            title_doc_ids = _compute_title_direct_matches(supabase, question)
+            if title_doc_ids:
+                existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
+                new_title_ids = [d for d in title_doc_ids if d not in existing_doc_ids]
+                if new_title_ids:
+                    chunks_resp = (
+                        supabase.table("nexus_chunks")
+                        .select("id, document_id, chunk_idx, article_no, text")
+                        .in_("document_id", new_title_ids)
+                        .execute()
+                    )
+                    new_chunks = chunks_resp.data or []
+                    force_chunks_raw.extend(new_chunks)
+                    if force_include_source and force_include_source != "none":
+                        force_include_source = f"{force_include_source}+title_direct"
+                    else:
+                        force_include_source = "title_direct"
+                    print(
+                        f"[retriever:force_include:L2.0_TITLE_DIRECT] "
+                        f"matched_docs={len(title_doc_ids)} "
+                        f"new_docs={len(new_title_ids)} "
+                        f"chunks_added={len(new_chunks)}",
+                        file=sys.stderr, flush=True,
+                    )
+        except Exception as e:
+            print(
+                f"[retriever:force_include:L2.0_TITLE_DIRECT] FAILED: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr, flush=True,
+            )
+
+        # ── Layer 2.5: Auto-keywords matching (UNION) ──────────
+        # PR-Stage-A-2-Production-Union: chunks.auto_keywords (Auto-Fixer 보강) 활용.
+        # dedup 으로 이미 잡은 doc 제외.
+        try:
+            v3_candidates = _compute_v3_matches(
+                supabase=supabase,
+                question=question,
+                retrieval_query_text=retrieval_query_text,
+            )
+            # 보수적 임계값 + top N
+            qualified = [c for c in v3_candidates if c.get("total", 0) >= 5][:5]
+
+            if qualified:
+                # 기존 force_chunks_raw 의 doc_ids 와 dedup
+                existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
+                new_qualified = [c for c in qualified if c["id"] not in existing_doc_ids]
+                new_doc_ids = [c["id"] for c in new_qualified]
+
+                if new_doc_ids:
+                    chunks_resp = (
+                        supabase.table("nexus_chunks")
+                        .select("id, document_id, chunk_idx, article_no, text")
+                        .in_("document_id", new_doc_ids)
+                        .execute()
+                    )
+                    new_chunks = chunks_resp.data or []
+                    force_chunks_raw.extend(new_chunks)
+                    # source 누적 (multi-layer 매칭 표시)
+                    if force_include_source and force_include_source != "none":
+                        force_include_source = f"{force_include_source}+auto_kw"
+                    else:
+                        force_include_source = "auto_keywords"
+                    print(
+                        f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
+                        f"qualified={len(qualified)} new_docs={len(new_doc_ids)} "
+                        f"top_new={[c['title'][:30] for c in new_qualified[:3]]} "
+                        f"chunks_added={len(new_chunks)}",
+                        file=sys.stderr, flush=True,
+                    )
+                else:
+                    print(
+                        f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
+                        f"qualified={len(qualified)} all already in force (no new)",
+                        file=sys.stderr, flush=True,
+                    )
+            else:
+                print(
+                    f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
+                    f"no candidates >= 5 (total: {len(v3_candidates)})",
+                    file=sys.stderr, flush=True,
+                )
+        except Exception as e:
+            print(
+                f"[retriever:force_include:L2.5_AUTO_KEYWORDS] FAILED: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr, flush=True,
+            )
+
+        # ── Union into raw_chunks (dedup by chunk id) ───
+        # PR-Fix-Force-Include-Dup-Flag: chunks dict map — 중복 chunks 의
+        # force_included_by_intent flag 보장. Vector + BM25 단계에서 이미
+        # raw_chunks 에 있는 chunks (낮은 score) 가 force_include 매칭 시
+        # 단순 skip 했던 bug → best_chunk_per_doc 누락 → 답변 인용 못 함 회귀 차단.
+        # PR-Force-Include-Restructure: force_chunks_raw 있으면 항상 union.
+        if force_chunks_raw:
             existing_chunks_by_id: dict = {
                 c.get("id"): c for c in raw_chunks if c.get("id")
             }
