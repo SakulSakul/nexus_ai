@@ -354,6 +354,24 @@ def _title_base(title: str) -> str:
     return (m.group(2).strip() if m else title.strip())
 
 
+def _normalize_token(token: str) -> str:
+    """한국어 조사 및 종결 부호 제거 — title 매칭 정확성 ↑.
+
+    예: '관리는' → '관리', '담당?' → '담당'
+    """
+    if not token:
+        return token
+    # 종결 부호 / 구두점 제거
+    token = token.rstrip("?!.,;:'\"")
+    # 한국어 조사 제거 (token 길이 > 2 일 때만 — 짧은 token 의미 보호)
+    if len(token) > 2:
+        for suffix in ("는", "은", "이", "가", "을", "를", "에", "의", "와", "과", "도", "만", "로", "으로"):
+            if token.endswith(suffix):
+                token = token[:-len(suffix)]
+                break
+    return token
+
+
 def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
     """PR-Title-Direct-Match: 사규명 base 와 query 의 직접 매칭 doc id 반환.
 
@@ -375,7 +393,8 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
 
         q = question or ""
         q_compact = "".join(q.split()).lower()
-        q_tokens = {t.lower() for t in q.split() if len(t) >= 2}
+        q_tokens = {_normalize_token(t.lower()) for t in q.split() if len(t.strip()) >= 2}
+        q_tokens = {t for t in q_tokens if t}  # 빈 token 제거
 
         matched_ids: list[str] = []
         for doc in docs:
@@ -385,7 +404,8 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
             t_compact = "".join(base.split()).lower()
             if len(t_compact) < 4:
                 continue  # 너무 짧은 사규명은 trivial 매칭 위험 — skip
-            t_tokens = {t.lower() for t in base.split() if len(t) >= 2}
+            t_tokens = {_normalize_token(t.lower()) for t in base.split() if len(t.strip()) >= 2}
+            t_tokens = {t for t in t_tokens if t}
 
             hit = False
             # 1. 사규명이 query 에 등장
@@ -397,6 +417,21 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
             # 3. token 공통 3개 이상
             elif len(q_tokens & t_tokens) >= 3:
                 hit = True
+            # 4. Token-level substring match (길이 ≥ 3 의 token 만)
+            # 예: q "출장비" (3) ⊂ t "국내출장비" (5) → match
+            # false positive 방지: token 길이 ≥ 3 만, 최소 매칭 token 길이 ≥ 3
+            else:
+                for q_t in q_tokens:
+                    if len(q_t) < 3:
+                        continue
+                    for t_t in t_tokens:
+                        if len(t_t) < 3:
+                            continue
+                        if q_t in t_t or t_t in q_t:
+                            hit = True
+                            break
+                    if hit:
+                        break
 
             if hit:
                 matched_ids.append(doc.get("id"))
