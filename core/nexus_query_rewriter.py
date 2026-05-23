@@ -113,7 +113,8 @@ def _call_gemini_for_rewrite(user_question: str) -> str:
     user_text = _USER_TEMPLATE.format(user_question=user_question)
 
     last_text = ""
-    for attempt in (1, 2):
+    # 3 attempts with exponential backoff (1s, 2s, 4s)
+    for attempt in (1, 2, 3):
         try:
             cli = genai.Client(api_key=s.gemini_api_key)
             cfg = types.GenerateContentConfig(
@@ -130,15 +131,18 @@ def _call_gemini_for_rewrite(user_question: str) -> str:
         except Exception as e:
             err_str = str(e)
             is_503 = "503" in err_str or "UNAVAILABLE" in err_str.upper()
-            if is_503 and attempt == 1:
+            is_retryable = is_503 or "429" in err_str or "TIMEOUT" in err_str.upper()
+            if is_retryable and attempt < 3:
+                wait_s = 2 ** (attempt - 1)  # 1s, 2s, 4s
                 print(
-                    "[nexus_query_rewriter] 503 on attempt 1, retrying after 1s",
+                    f"[nexus_query_rewriter] {err_str[:80]} on attempt {attempt}, "
+                    f"retrying after {wait_s}s",
                     file=sys.stderr, flush=True,
                 )
-                time.sleep(1.0)
+                time.sleep(wait_s)
                 continue
             print(
-                f"[nexus_query_rewriter] gemini call failed: "
+                f"[nexus_query_rewriter] gemini call failed (attempt {attempt}): "
                 f"{type(e).__name__}: {e}",
                 file=sys.stderr, flush=True,
             )
@@ -172,13 +176,15 @@ def _call_gemini_for_rewrite(user_question: str) -> str:
         if not text:
             text = (getattr(res, "text", "") or "").strip()
 
-        if not text and attempt == 1:
-            # 빈 응답 → 1회 retry
+        if not text and attempt < 3:
+            # 빈 응답 → exponential backoff retry
+            wait_s = 2 ** (attempt - 1)  # 1s, 2s
             print(
-                "[nexus_query_rewriter] empty response on attempt 1, retrying",
+                f"[nexus_query_rewriter] empty response on attempt {attempt}, "
+                f"retrying after {wait_s}s",
                 file=sys.stderr, flush=True,
             )
-            time.sleep(1.0)
+            time.sleep(wait_s)
             last_text = ""
             continue
 
