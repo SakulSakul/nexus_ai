@@ -38,6 +38,7 @@ def _chunk_domain(chunk: dict) -> str:
 # 2026-05-11 핫픽스: rewriter 1글자 절단 버그 수정 검증 전까지 False 유지.
 # admin "🔬 검색 비교" 패널에서 사용자가 raw vs cleaned 확인 후 True 로 복귀.
 USE_HYBRID_SEARCH: bool = True
+USE_REWRITER: bool = False  # PR-Disable-Rewriter-Default: testset 분석 결과 평균 -98 query (악화 4배)
 
 # Incident-aware rerank — document.meta.incident_nodes 매칭 시 rrf_score
 # 에 가산할 boost. admin 디버그 패널이 본 상수를 import 해 표시 일관성 유지.
@@ -604,10 +605,15 @@ def hybrid_search(
             nexus_classify_to_incident_nodes,
         )
         _t_rewrite0 = _t_subprog.perf_counter()
-        retrieval_query_text = rewrite_query_for_retrieval(question)
+        # PR-Disable-Rewriter-Default: production retrieval 의 rewriter 비활성화
+        if USE_REWRITER:
+            retrieval_query_text = rewrite_query_for_retrieval(question)
+        else:
+            retrieval_query_text = question
         _emit_sub("search_rewrite_done", {
             "elapsed_ms": int((_t_subprog.perf_counter() - _t_rewrite0) * 1000),
             "rewritten_preview": (retrieval_query_text or "")[:60],
+            "enabled": USE_REWRITER,
         })
 
         _t_embed0 = _t_subprog.perf_counter()
