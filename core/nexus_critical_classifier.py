@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 
@@ -125,11 +126,25 @@ def classify_with_llm(question: str) -> LLMClassifierResult | None:
     if not _is_suspect(question):
         return None  # suspect 아니면 LLM 호출 skip
 
+    # PR-Critical-Mode-Parallel: 3 calls 를 parallel 실행 (sequential 9-15초 → 3-5초)
     samples: list[dict] = []
-    for i in range(3):
-        result = _call_classifier_once(question)
-        if result is not None:
-            samples.append(result)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(_call_classifier_once, question)
+            for _ in range(3)
+        ]
+        for f in futures:
+            try:
+                result = f.result(timeout=15)
+                if result is not None:
+                    samples.append(result)
+            except Exception as e:
+                print(
+                    f"[critical_classifier] sample failed: "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr, flush=True,
+                )
+                continue
 
     if not samples:
         return None  # 모든 sample 실패
