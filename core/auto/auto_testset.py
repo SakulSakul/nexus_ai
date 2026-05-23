@@ -119,12 +119,20 @@ def run_full_testset(
         if doc_id in docs_by_id:
             chunks_by_doc.setdefault(doc_id, []).append(c)
 
-    # testset_run insert
+    # testset_run insert — progress 초기화
     run_id = str(uuid.uuid4())
+    total_estimate = sum(
+        len([q for q in (d.get("auto_query_examples") or [])
+             if isinstance(q, str) and q.strip()])
+        for d in docs
+    )
     try:
         sb.table("testset_runs").insert({
             "id": run_id,
             "total_queries": 0,
+            "progress_current": 0,
+            "progress_total": total_estimate,
+            "status": "running",
         }).execute()
     except Exception as e:
         return {"error": f"run insert 실패: {e}"}
@@ -203,6 +211,15 @@ def run_full_testset(
                     except Exception:
                         pass
 
+                # PR-Stage-B-Worker: 매 10 query 마다 progress DB update
+                if total % 10 == 0:
+                    try:
+                        sb.table("testset_runs").update({
+                            "progress_current": total,
+                        }).eq("id", run_id).execute()
+                    except Exception:
+                        pass
+
                 time.sleep(0.05)
 
             except Exception as e:
@@ -220,6 +237,8 @@ def run_full_testset(
         sb.table("testset_runs").update({
             "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "total_queries": total,
+            "progress_current": total,
+            "status": "completed",
             "recall_at_1": recall_at_1,
             "recall_at_3": recall_at_3,
             "recall_at_5": recall_at_5,

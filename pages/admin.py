@@ -3661,6 +3661,8 @@ def _tab_auto_testset(sb):
     """PR-Stage-B-Auto-Testset: 505 query 자가 진단."""
     import streamlit as st
 
+    import time as _time
+
     st.subheader("🧪 Auto-Testset")
     st.caption(
         "docs.auto_query_examples 의 505 query (101 docs × 5) 자동 실행. "
@@ -3687,21 +3689,37 @@ def _tab_auto_testset(sb):
         recent_runs = []
         st.warning(f"runs 조회 실패: {e}")
 
+    # PR-Stage-B-Worker: running run 있으면 자동 새로고침
+    has_running = any(r.get("status") == "running" for r in recent_runs)
+
     if recent_runs:
         st.markdown("**최근 실행 결과:**")
         for r in recent_runs[:3]:
             started = (r.get("started_at") or "?")[:19]
-            r5 = (r.get("recall_at_5") or 0) * 100
-            r_overall = (r.get("recall_overall") or 0) * 100
-            with st.expander(
-                f"📊 {started} — Recall@5: {r5:.1f}%, Overall: {r_overall:.1f}%",
-                expanded=(r == recent_runs[0]),
-            ):
-                cols = st.columns(4)
-                cols[0].metric("Total Q", r.get("total_queries", 0))
-                cols[1].metric("Recall@1", f"{(r.get('recall_at_1') or 0)*100:.1f}%")
-                cols[2].metric("Recall@3", f"{(r.get('recall_at_3') or 0)*100:.1f}%")
-                cols[3].metric("Recall@5", f"{(r.get('recall_at_5') or 0)*100:.1f}%")
+            status = r.get("status") or "completed"
+
+            # PR-Stage-B-Worker: status 별 표시
+            if status == "running":
+                cur = r.get("progress_current", 0)
+                tot = r.get("progress_total", 0) or 505
+                st.info(f"⏳ {started} — 실행 중... {cur}/{tot}")
+                st.progress(min(cur / max(tot, 1), 1.0))
+            elif status == "failed":
+                st.error(
+                    f"🔴 {started} — 실패: {r.get('error_message') or '(원인 미상)'}"
+                )
+            else:
+                r5 = (r.get("recall_at_5") or 0) * 100
+                r_overall = (r.get("recall_overall") or 0) * 100
+                with st.expander(
+                    f"📊 {started} — Recall@5: {r5:.1f}%, Overall: {r_overall:.1f}%",
+                    expanded=(r == recent_runs[0]),
+                ):
+                    cols = st.columns(4)
+                    cols[0].metric("Total Q", r.get("total_queries", 0))
+                    cols[1].metric("Recall@1", f"{(r.get('recall_at_1') or 0)*100:.1f}%")
+                    cols[2].metric("Recall@3", f"{(r.get('recall_at_3') or 0)*100:.1f}%")
+                    cols[3].metric("Recall@5", f"{(r.get('recall_at_5') or 0)*100:.1f}%")
 
     st.markdown("---")
 
@@ -3712,50 +3730,37 @@ def _tab_auto_testset(sb):
         help="False = 빠른 실행 (~3-5분, 안정성 우선). True = production 과 동일 (~10-15분, 503 spike 시 더 느림).",
     )
 
-    if st.button("⚡ Run Auto-Testset", key="testset_run", type="primary"):
-        with st.spinner(f"shadow V3 매칭 자동 실행 중... (rewriter: {use_rewriter})"):
-            progress_bar = st.progress(0, text="시작...")
+    if st.button("⚡ Run Auto-Testset", key="testset_run", type="primary",
+                 disabled=has_running):
+        # PR-Stage-B-Worker: background thread → page navigation 안전
+        import threading
 
-            def _on_progress(idx, total, info):
-                progress_bar.progress(
-                    min(idx / max(total, 1), 1.0),
-                    text=f"{idx}/{total}: {info.get('doc_title', '')[:30]} "
-                         f"(rank: {info.get('rank') or 'X'})",
-                )
+        def _run_in_background(use_rw: bool):
+            try:
+                run_full_testset(use_rewriter=use_rw)
+            except Exception as e:
+                import sys
+                print(f"[testset_worker] failed: {type(e).__name__}: {e}",
+                      file=sys.stderr, flush=True)
 
-            result = run_full_testset(
-                use_rewriter=use_rewriter,
-                progress_callback=_on_progress,
-            )
-            progress_bar.progress(1.0, text="완료")
+        th = threading.Thread(
+            target=_run_in_background,
+            args=(use_rewriter,),
+            daemon=True,
+        )
+        th.start()
 
-            if "error" in result:
-                st.error(f"실행 실패: {result['error']}")
-                return
+        st.success(
+            "✅ background 실행 시작. page navigation OK — "
+            "위 '최근 실행 결과' 영역에서 진척 자동 갱신."
+        )
+        _time.sleep(1)
+        st.rerun()
 
-            st.success(
-                f"✅ 완료 — {result['total_queries']} queries, "
-                f"errors {result.get('errors', 0)}"
-            )
-
-            cols = st.columns(4)
-            cols[0].metric("Recall Overall", f"{result['recall_overall']*100:.1f}%")
-            cols[1].metric("Recall@1", f"{result['recall_at_1']*100:.1f}%")
-            cols[2].metric("Recall@3", f"{result['recall_at_3']*100:.1f}%")
-            cols[3].metric("Recall@5", f"{result['recall_at_5']*100:.1f}%")
-
-            weak = result.get("weak_docs") or []
-            if weak:
-                st.markdown(f"### 🚨 Weak docs (recall < 50%) — {len(weak)}개")
-                for w in weak[:10]:
-                    st.markdown(
-                        f"- **{w['title']}** — recall {w['recall']*100:.0f}% "
-                        f"({w['matched']}/{w['total']})"
-                    )
-            else:
-                st.success("✅ 모든 doc 의 recall >= 50%")
-
-            st.balloons()
+    # PR-Stage-B-Worker: running 중이면 3초마다 auto-refresh
+    if has_running:
+        _time.sleep(3)
+        st.rerun()
 
 
 def _tab_auto_fixer(sb):
