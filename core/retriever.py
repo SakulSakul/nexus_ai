@@ -370,10 +370,15 @@ def _normalize_token(token: str) -> str:
     예: '관리는' → '관리', '담당?' → '담당', '제도로' → '제도'.
     조사는 longer-first 순서 ('으로' 가 '로' 보다 먼저) — '...으로' 정확 처리.
     len(token) > len(suffix) + 1 guard 로 과도한 stripping 방지.
+
+    PR-Query-Normalize-Robust: 양쪽 strip 으로 leading quote/bracket 처리.
+    예: '"출장비' → '출장비', '[2]' → '2' (이후 길이 filter 로 제외).
     """
     if not token:
         return token
-    token = token.rstrip("?!.,;:'\"")
+    # PR-Query-Normalize-Robust: rstrip → strip (양쪽) + bracket/quote 추가.
+    # `[2] "출장비..."` 같은 prefix + quote 패턴의 token matching robust.
+    token = token.strip("?!.,;:'\"[](){}「」『』<>")
     if len(token) > 2:
         for suffix in _KOREAN_PARTICLES:
             if token.endswith(suffix) and len(token) > len(suffix) + 1:
@@ -422,7 +427,11 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
         docs = docs_result.data or []
 
         q = question or ""
-        q_compact = "".join(q.split()).lower()
+        # PR-Query-Normalize-Robust: q_compact 도 punctuation 제거.
+        # Match 1/2 의 t_compact ⊂ q_compact 매칭에서 quote/bracket 영향 차단.
+        q_compact = re.sub(
+            r'[\'"`\[\](){}「」『』<>?!.,;:]', "", "".join(q.split()).lower()
+        )
         q_tokens = {_normalize_token(t.lower()) for t in q.split() if len(t.strip()) >= 2}
         q_tokens = {t for t in q_tokens if t and len(t) >= 2}  # 빈/1글자 token 제거
 
