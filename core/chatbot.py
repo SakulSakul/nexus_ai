@@ -20,7 +20,7 @@ from .config import settings, load_hotlines
 from .critical_mode import CriticalDetection, detect, enforce_structure, load_keywords
 from .pii_filter import mask_pii
 from .prompts import SYSTEM_PROMPT, build_user_prompt
-from .retriever import hybrid_search
+from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 
 
@@ -904,9 +904,15 @@ def _balance_by_doc_kind(
     # union 된 force 청크가 Reranker top-N + cap=ratios[kind] 에서 탈락해
     # LLM 컨텍스트에 빠지던 회귀(예: 출장비 "사규 미발견") fix. 동일 우선순위
     # 청크끼리는 입력(Reranker) 순서 보존.
+    # PR-RPC-Priority: force chunk 우선 + 그 안에서 cross-cutting (공통)/
+    # universal-SOP 는 후순위. rule bucket cap(ratios[kind]) 에서 도메인 사규
+    # force chunk 가 (공통) 사건사고 보고지침 force chunk 에 밀려 잘리던 회귀 fix.
     for kind in by_kind:
         by_kind[kind].sort(
-            key=lambda c: not c.get("force_included_by_intent", False)
+            key=lambda c: (
+                not c.get("force_included_by_intent", False),
+                (_chunk_domain(c) == "공통") or bool(c.get("is_universal_sop")),
+            )
         )
     result: list[dict] = []
     for kind, n in ratios.items():

@@ -1465,8 +1465,15 @@ def hybrid_search(
             if c.get("document_id")
         })
         # guaranteed_chunks 도 동일 결정적 정렬.
+        # PR-RPC-Priority: cross-cutting (공통)/universal-SOP force chunk 는
+        # 후순위 — 도메인 사규 doc 이 TOP_K 슬롯 우선 확보. (공통) 사건사고
+        # 보고지침이 윤리보고 등 다수 incident node 공유로 force-include 되어
+        # 성희롱/개인정보 도메인 doc 을 TOP_K 밖으로 밀어내던 회귀 fix.
+        # universal-SOP chunk 0·1 은 _ensure_universal_sop_completeness 가 별도
+        # 보존하므로 후순위로 둬도 SOP 구조 유지.
         guaranteed_chunks.sort(
             key=lambda c: (
+                (_chunk_domain(c) == "공통") or bool(c.get("is_universal_sop")),
                 -(c.get("rrf_score") or 0.0),
                 -(c.get("_query_keyword_overlap") or 0),
                 -(c.get("procedure_keyword_count") or 0),
