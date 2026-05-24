@@ -1068,7 +1068,7 @@ def hybrid_search(
                         supabase.table("nexus_chunks")
                         .select(
                             "id, document_id, chunk_idx, article_no, text, "
-                            "categories, chunk_incident_nodes"
+                            "categories"
                         )
                         .in_("document_id", new_title_ids)
                         .execute()
@@ -1127,7 +1127,7 @@ def hybrid_search(
                         supabase.table("nexus_chunks")
                         .select(
                             "id, document_id, chunk_idx, article_no, text, "
-                            "categories, chunk_incident_nodes"
+                            "categories"
                         )
                         .in_("document_id", new_doc_ids)
                         .execute()
@@ -1221,7 +1221,11 @@ def hybrid_search(
         # '응급대응' 태그된 청크를 vector/keyword pool 미포함이어도 강제 합류.
         # AEO 출입통제 위기상황 대응표 같은 청크 보장. doc title/kind/categories
         # 는 nexus_documents 별도 조회로 enrich.
-        if "응급대응" in user_incident_nodes:
+        # PR-Remove-chunk-incident-nodes-Select: chunk_incident_nodes 물리 컬럼이
+        # nexus_chunks 테이블에 부재하여 .contains() 필터가 항상 APIError(42703)로
+        # 실패(try/except silent) → 기능이 작동한 적 없음. 컬럼 추가 시 재활성화
+        # 위해 블록 구조는 보존하되 비활성화한다.
+        if False and "응급대응" in user_incident_nodes:
             try:
                 raw_chunk_ids = {c.get("id") for c in raw_chunks if c.get("id")}
                 em_resp = (
