@@ -284,6 +284,35 @@ def category_visual(
                     primary = cat
                     break
             if primary is None:
+                # ★ PR-Category-Classifier-Fallback-Enhance:
+                # 답변 인용 모두 "공통" 일 때 contexts.categories 의 도메인
+                # 카테고리 활용. (공통) cross-cutting 사규 (사건사고 보고지침
+                # 등) 가 자주 인용되어 실 도메인 사규 (예: (정보보안)
+                # 개인정보보호) 보다 우선 분류되는 BUG fix.
+                # 진단: "개인정보 보호" query → (공통) 사건사고 多 인용 +
+                # (정보보안) 0건 → "공통" 분류 (잘못, 정답: "정보보안").
+                if contexts:
+                    ctx_categories: list[str] = []
+                    for c in contexts:
+                        cats = c.get("categories") or []
+                        if isinstance(cats, list):
+                            ctx_categories.extend(
+                                str(x) for x in cats if x
+                            )
+                        # doc_title prefix 도 확인 (categories 부재 fallback)
+                        t = str(c.get("doc_title") or "")
+                        m = re.match(
+                            r"^\(\s*([^)\s][^)]*?)\s*\)", t
+                        )
+                        if m:
+                            ctx_categories.append(m.group(1).strip())
+                    if ctx_categories:
+                        ctx_counts = Counter(ctx_categories)
+                        for cat, _n in ctx_counts.most_common():
+                            if cat != "공통" and cat in CATEGORY_VISUAL:
+                                primary = cat
+                                break
+            if primary is None:
                 primary = "공통"
             icon, color = CATEGORY_VISUAL.get(primary, _CATEGORY_DEFAULT)
             return (icon, color, primary)
