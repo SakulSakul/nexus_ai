@@ -229,14 +229,22 @@ def _ensure_universal_sop_completeness(
     top_k_chunks: list,
     all_force_chunks: list,
 ) -> list:
-    """Universal SOP 도큐먼트의 모든 chunks 를 final 결과에 포함.
+    """Universal SOP 도큐먼트의 chunks 를 final 결과에 포함 (domain-aware cap).
 
-    근거 (PR #89 DEBUG): Layer 1 RPC 가 chunk_idx 미반환 → chunk index
-    기반 필터 불가. Universal SOP 도큐먼트는 작은 doc (일반 4 chunks /
-    중대 3 chunks) 이라 모두 포함해도 LLM 컨텍스트 부담 minimal.
-    효과: 4 phrasing 동일 chunk set → 동일 답변 (신뢰성 4/4).
+    PR-Fix-Domain-Surfacing: top_k_chunks 안에 도메인 force-include 청크
+    ((공통)/universal-SOP 가 아닌 force_included_by_intent=True 청크) 가
+    1개라도 있으면 universal-SOP 청크는 chunk_idx 0·1 만 보존 (cap=2 per doc).
+    도메인 사규 매칭이 없으면 기존 동작 (전체 청크 보존) — Q5/Q6 같은 순수
+    사건사고 query 회귀 0.
 
-    UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES 상수는 호환성 유지 위해 잔존 (미사용).
+    근거: 운영 검증(2026-05-24 log id=1403~1410) 에서 (인사) 성희롱/괴롭힘,
+    (정보보안) 정보보호 등 도메인 사규가 matched 되었음에도 LLM 답변 본문이
+    (공통) 사건사고 보고지침으로 도배되는 회귀 확인. 원인: universal_sop_
+    enrichment 가 모든 청크 (일반 4 + 중대 3 = 7) 를 무조건 final 에 주입,
+    LLM 컨텍스트의 (공통) 비율 57%. 도메인 매칭 시 cap=2 적용 시 33% 로
+    감소 → LLM 자연스럽게 도메인 우선 인용.
+
+    UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES = {0, 1} 상수를 cap 모드에서 활용.
     """
     if not all_force_chunks:
         print(
@@ -244,6 +252,15 @@ def _ensure_universal_sop_completeness(
             file=sys.stderr, flush=True,
         )
         return list(top_k_chunks)
+
+    # PR-Fix-Domain-Surfacing: top_k_chunks 안 도메인 force-include 청크 검사.
+    has_domain_force = any(
+        bool(c.get("force_included_by_intent"))
+        and _chunk_domain(c) != "공통"
+        and not bool(c.get("is_universal_sop"))
+        for c in top_k_chunks if isinstance(c, dict)
+    )
+    cap_mode = has_domain_force  # True 일 때 chunk_idx 0·1 만 보존
 
     out = list(top_k_chunks)
     existing_chunk_ids: set = set()
@@ -256,6 +273,7 @@ def _ensure_universal_sop_completeness(
 
     added_count = 0
     sop_doc_counts: dict = {}
+    skipped_by_cap: int = 0
 
     for chunk in all_force_chunks:
         if not isinstance(chunk, dict):
@@ -271,6 +289,12 @@ def _ensure_universal_sop_completeness(
         chunk_id = chunk.get("id") or chunk.get("chunk_id")
         if chunk_id and chunk_id in existing_chunk_ids:
             continue
+        # PR-Fix-Domain-Surfacing: cap_mode 시 chunk_idx 0·1 만 보존.
+        if cap_mode:
+            chunk_idx = chunk.get("chunk_idx")
+            if chunk_idx not in UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES:
+                skipped_by_cap += 1
+                continue
         enriched = dict(chunk)
         enriched["enrichment"] = "universal_sop_completeness"
         enriched["is_universal_sop"] = True
@@ -284,6 +308,7 @@ def _ensure_universal_sop_completeness(
     print(
         f"[retriever:universal_sop:enrichment] "
         f"added={added_count} per_doc={sop_doc_counts} "
+        f"cap_mode={cap_mode} skipped_by_cap={skipped_by_cap} "
         f"final_chunks={len(out)}",
         file=sys.stderr, flush=True,
     )
