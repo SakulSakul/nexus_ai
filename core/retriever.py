@@ -278,6 +278,7 @@ def _normalize_v2_row(row: dict) -> dict:
 def _ensure_universal_sop_completeness(
     top_k_chunks: list,
     all_force_chunks: list,
+    supabase: Any = None,
 ) -> list:
     """Universal SOP 도큐먼트의 chunks 를 final 결과에 포함 (domain-aware cap).
 
@@ -286,6 +287,14 @@ def _ensure_universal_sop_completeness(
     1개라도 있으면 universal-SOP 청크는 chunk_idx 0·1 만 보존 (cap=2 per doc).
     도메인 사규 매칭이 없으면 기존 동작 (전체 청크 보존) — Q5/Q6 같은 순수
     사건사고 query 회귀 0.
+
+    PR-Phase-5-Fix-N: cap_mode=True 시 universal_sop doc 의 chunk_idx 0+1 이
+    all_force_chunks 안에 부재하면 별도 SQL fetch (supabase 인자 제공 시).
+    Phase 4 의 '정보보안' nodes 매핑이 force-include 488 chunks 폭증 일으켜
+    universal_sop chunk_idx 0+1 우선순위가 다른 chunks 와 경쟁하여 RPC 결과에서
+    누락되던 회귀 fix (운영 검증 Q15: universal_sop_chunks={'(공통) 일반 사건사고
+    보고지침': 0, '(공통) 중대 사건사고 보고지침': 0} 회귀).
+    supabase 인자 미제공 시 기존 동작 유지 (backward compatible).
 
     근거: 운영 검증(2026-05-24 log id=1403~1410) 에서 (인사) 성희롱/괴롭힘,
     (정보보안) 정보보호 등 도메인 사규가 matched 되었음에도 LLM 답변 본문이
@@ -312,6 +321,71 @@ def _ensure_universal_sop_completeness(
     )
     cap_mode = has_domain_force  # True 일 때 chunk_idx 0·1 만 보존
 
+    # PR-Phase-5-Fix-N: cap_mode 에서 universal_sop doc 의 chunk_idx 0+1 부재 시
+    # 별도 SQL fetch (운영 검증 Q15 universal_sop=0+0 회귀 fix).
+    fetched_required_chunks: list = []
+    if cap_mode and supabase is not None:
+        # all_force_chunks 안의 universal_sop doc 별 chunk_idx 0+1 보유 여부 검사
+        sop_chunks_by_doc: dict = {}
+        for chunk in all_force_chunks:
+            if not isinstance(chunk, dict):
+                continue
+            doc_title = (
+                chunk.get("doc_title")
+                or chunk.get("title")
+                or chunk.get("document_title")
+                or ""
+            )
+            if doc_title not in UNIVERSAL_INCIDENT_SOP_TITLES:
+                continue
+            doc_id = chunk.get("document_id")
+            if not doc_id:
+                continue
+            info = sop_chunks_by_doc.setdefault(
+                doc_id, {"title": doc_title, "existing_idxs": set()}
+            )
+            ci = chunk.get("chunk_idx")
+            if ci is not None:
+                info["existing_idxs"].add(ci)
+        # 각 doc 별 chunk_idx 0+1 부재 시 fetch
+        for doc_id, info in sop_chunks_by_doc.items():
+            missing_idxs = sorted(
+                UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES - info["existing_idxs"]
+            )
+            if not missing_idxs:
+                continue
+            try:
+                result = (
+                    supabase.table("nexus_chunks")
+                    .select(
+                        "id, document_id, chunk_idx, text, article_no, "
+                        "case_no, doc_kind"
+                    )
+                    .eq("document_id", doc_id)
+                    .in_("chunk_idx", missing_idxs)
+                    .execute()
+                )
+                for row in (result.data or []):
+                    fetched = dict(row)
+                    fetched["doc_title"] = info["title"]
+                    fetched["force_included_by_intent"] = True
+                    fetched["is_universal_sop"] = True
+                    fetched_required_chunks.append(fetched)
+            except Exception as fetch_e:
+                print(
+                    f"[universal_sop:fetch_required] FAILED "
+                    f"doc_id={doc_id} missing_idxs={missing_idxs}: "
+                    f"{type(fetch_e).__name__}: {fetch_e}",
+                    file=sys.stderr, flush=True,
+                )
+        if fetched_required_chunks:
+            print(
+                f"[universal_sop:fetch_required] "
+                f"fetched={len(fetched_required_chunks)} chunks for "
+                f"{len(sop_chunks_by_doc)} doc(s)",
+                file=sys.stderr, flush=True,
+            )
+
     out = list(top_k_chunks)
     existing_chunk_ids: set = set()
     for c in out:
@@ -325,7 +399,9 @@ def _ensure_universal_sop_completeness(
     sop_doc_counts: dict = {}
     skipped_by_cap: int = 0
 
-    for chunk in all_force_chunks:
+    # PR-Phase-5-Fix-N: fetched_required_chunks 를 all_force_chunks 끝에 합쳐
+    # 기존 loop 가 처리. 동일 (chunk_idx 0+1 cap 통과 + dedupe).
+    for chunk in list(all_force_chunks) + fetched_required_chunks:
         if not isinstance(chunk, dict):
             continue
         doc_title = (
@@ -378,10 +454,12 @@ SHADOW_STOP_KEYWORDS: set[str] = {
     "환경",
     "안전관리",
     "리스크관리",
-    # PR-Stage-A-2-Shadow-V3: 의미 혼동 단어 ("수수" received vs "수수료" commission)
-    "수수료",
-    "판매수수료",
-    "수수료 조정",
+    # PR-Phase-5-Fix-M (Removed): V3 의 "수수료/판매수수료/수수료 조정" stop-word 제거.
+    # V3 원래 의도 ("수수" received vs "수수료" commission false positive 차단) 는
+    # token 길이 ≥3 필터 (line 637, 744 의 `len(token) >= 3`) 로 이미 자동 처리.
+    # "수수" (2글자) 는 query_words 진입 못함. 정확한 도메인 키워드 "판매수수료"
+    # 가 차단되어 Q10 (공정거래) 판매수수료 결정 및 변경 지침 lexical 매칭 무력화
+    # 회귀 fix (운영 검증 2026-05-24).
 }
 
 
@@ -1672,8 +1750,10 @@ def hybrid_search(
 
         # PR #88 — Universal SOP completeness: chunk 0+1 둘 다 강제 합류
         # (cap 우회). all_force_chunks = raw_chunks (force-included 청크 전체 풀).
+        # PR-Phase-5-Fix-N: supabase 전달 — cap_mode 시 chunk_idx 0+1 부재 doc
+        # 별도 fetch (운영 검증 Q15 universal_sop=0+0 회귀 fix).
         final_rows = _ensure_universal_sop_completeness(
-            final_rows, raw_chunks,
+            final_rows, raw_chunks, supabase,
         )
         return [_normalize_v2_row(r) for r in final_rows]
 
