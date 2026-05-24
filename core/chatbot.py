@@ -899,6 +899,15 @@ def _balance_by_doc_kind(
         kind = c.get("doc_kind")
         if kind in by_kind:
             by_kind[kind].append(c)
+    # PR-Balance-Force-Include-Priority: force_included_by_intent=True 청크를
+    # 각 doc_kind 그룹 앞으로 stable-sort. raw_chunks 끝에 rrf_score=0 으로
+    # union 된 force 청크가 Reranker top-N + cap=ratios[kind] 에서 탈락해
+    # LLM 컨텍스트에 빠지던 회귀(예: 출장비 "사규 미발견") fix. 동일 우선순위
+    # 청크끼리는 입력(Reranker) 순서 보존.
+    for kind in by_kind:
+        by_kind[kind].sort(
+            key=lambda c: not c.get("force_included_by_intent", False)
+        )
     result: list[dict] = []
     for kind, n in ratios.items():
         # PR-Fix-Penalty-All-Chunks: penalty 는 cap 무시 — retriever 단계에서
