@@ -358,8 +358,8 @@ def _ensure_universal_sop_completeness(
                 result = (
                     supabase.table("nexus_chunks")
                     .select(
-                        "id, document_id, chunk_idx, text, article_no, "
-                        "case_no, doc_kind"
+                        "id, document_id, chunk_idx, article_no, text, "
+                        "categories"
                     )
                     .eq("document_id", doc_id)
                     .in_("chunk_idx", missing_idxs)
@@ -1617,15 +1617,38 @@ def hybrid_search(
             for c in guaranteed_chunks
             if c.get("document_id")
         })
-        # guaranteed_chunks 도 동일 결정적 정렬.
-        # PR-RPC-Priority: cross-cutting (공통)/universal-SOP force chunk 는
-        # 후순위 — 도메인 사규 doc 이 TOP_K 슬롯 우선 확보. (공통) 사건사고
-        # 보고지침이 윤리보고 등 다수 incident node 공유로 force-include 되어
-        # 성희롱/개인정보 도메인 doc 을 TOP_K 밖으로 밀어내던 회귀 fix.
-        # universal-SOP chunk 0·1 은 _ensure_universal_sop_completeness 가 별도
-        # 보존하므로 후순위로 둬도 SOP 구조 유지.
+        # PR-Phase-6-Fix-A: Domain-aware quota — 핵심 prefix doc 우선 TOP_K 진입.
+        # 운영 검증(2026-05-24 Q10/Q15) 에서 matched_docs 폭증 (Q15=75, Q10=45)
+        # 시 (공정거래)/(정보보안) 같은 도메인 specific doc 가 (영업)/(공통)
+        # cross-cutting doc 와 균등 경쟁하여 TOP_K=12 cap 으로 drop 되던 회귀.
+        # 'zero-sum top_k competition' anti-pattern (메모리 박힌 5-PR 누적 결함)
+        # 의 구조적 해소.
+        def _extract_prefix(chunk: dict) -> str:
+            """doc_title 의 사규 prefix 추출. '(공정거래) 판매수수료...' → '공정거래'."""
+            title = str(chunk.get("doc_title") or "")
+            m = re.match(r"^\(\s*([^)\s][^)]*?)\s*\)", title)
+            return m.group(1).strip() if m else ""
+
+        # query 의 dominant prefix 결정 — node_match_score per prefix 의 max.
+        # matched_incident_nodes 와 user nodes 의 교집합 크기로 weight.
+        prefix_max_match: dict = {}
+        for c in guaranteed_chunks:
+            prefix = _extract_prefix(c)
+            if not prefix or prefix == "공통":
+                continue  # cross-cutting prefix 는 dominant 후보 제외
+            matched = c.get("matched_incident_nodes") or []
+            score = len(matched) if isinstance(matched, list) else 0
+            if score > prefix_max_match.get(prefix, 0):
+                prefix_max_match[prefix] = score
+        dominant_prefix = (
+            max(prefix_max_match, key=prefix_max_match.get)
+            if prefix_max_match else ""
+        )
+
+        # 정렬 — 1순위: dominant prefix 우선, 2순위: (공통)/universal_sop 후순위.
         guaranteed_chunks.sort(
             key=lambda c: (
+                _extract_prefix(c) != dominant_prefix if dominant_prefix else False,
                 (_chunk_domain(c) == "공통") or bool(c.get("is_universal_sop")),
                 -(c.get("rrf_score") or 0.0),
                 -(c.get("_query_keyword_overlap") or 0),
@@ -1635,6 +1658,15 @@ def hybrid_search(
         )
         # 매칭 doc 가 TOP_K 보다 많으면 점수 순 cap (방어 코드).
         guaranteed_chunks = guaranteed_chunks[:TOP_K]
+
+        # 로깅 — dominant prefix 결정 진단
+        if dominant_prefix:
+            print(
+                f"[retriever:domain_quota] dominant_prefix={dominant_prefix} "
+                f"max_match={prefix_max_match.get(dominant_prefix, 0)} "
+                f"all_prefix_scores={prefix_max_match}",
+                file=sys.stderr, flush=True,
+            )
 
         # 4-2) final 초기화 — 매칭 doc 대표 chunk 우선 등록 (TOP_K 전체 활용).
         final_rows: list = list(guaranteed_chunks)
