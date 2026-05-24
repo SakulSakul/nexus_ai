@@ -867,6 +867,8 @@ def hybrid_search(
                 force_chunks_raw = force_resp.data or []
                 if force_chunks_raw:
                     force_include_source = "rpc"
+                    for _fc in force_chunks_raw:
+                        _fc["force_source"] = "rpc"
                 print(
                     f"[retriever:force_include:L1_RPC] nodes={nodes_list} "
                     f"returned={len(force_chunks_raw)}",
@@ -963,6 +965,8 @@ def hybrid_search(
                         force_chunks_raw = chunks_resp.data or []
                         if force_chunks_raw:
                             force_include_source = "direct_table"
+                            for _fc in force_chunks_raw:
+                                _fc["force_source"] = "direct_table"
                         print(
                             f"[retriever:force_include:L2_DIRECT] "
                             f"chunks_fetched={len(force_chunks_raw)}",
@@ -1036,6 +1040,8 @@ def hybrid_search(
                         force_chunks_raw = chunks_resp.data or []
                         if force_chunks_raw:
                             force_include_source = "hardcoded_whitelist"
+                            for _fc in force_chunks_raw:
+                                _fc["force_source"] = "hardcoded"
                 except Exception as e:
                     print(
                         f"[retriever:force_include:L3_HARDCODED] FAILED: "
@@ -1095,6 +1101,8 @@ def hybrid_search(
                         .execute()
                     )
                     new_chunks = chunks_resp.data or []
+                    for _nc in new_chunks:
+                        _nc["force_source"] = "title_direct"
                     force_chunks_raw.extend(new_chunks)
                     if force_include_source and force_include_source != "none":
                         force_include_source = f"{force_include_source}+title_direct"
@@ -1155,6 +1163,8 @@ def hybrid_search(
                         .execute()
                     )
                     new_chunks = chunks_resp.data or []
+                    for _nc in new_chunks:
+                        _nc["force_source"] = "auto_keyword"
                     force_chunks_raw.extend(new_chunks)
                     # source 누적 (multi-layer 매칭 표시)
                     if force_include_source and force_include_source != "none":
@@ -1210,6 +1220,7 @@ def hybrid_search(
                     if _existing is not None:
                         _existing["force_included_by_intent"] = True
                         _existing["force_include_source"] = force_include_source
+                        _existing["force_source"] = fc.get("force_source")
                     skipped_count += 1
                     continue
                 _doc = _doc_meta_enrich.get(fc.get("document_id"), {}) or {}
@@ -1226,6 +1237,7 @@ def hybrid_search(
                     "rrf_score": 0.0,
                     "force_included_by_intent": True,
                     "force_include_source": force_include_source,
+                    "force_source": fc.get("force_source"),
                     "is_universal_sop": _title in UNIVERSAL_INCIDENT_SOP_TITLES,
                     # PR-Force-Include-Meta-Enrich: owning_department 누락 시
                     # build_user_prompt 헤더에 "· 관리부서: X팀" 명시 X →
