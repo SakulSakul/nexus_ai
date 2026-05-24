@@ -1412,18 +1412,24 @@ def hybrid_search(
                 file=sys.stderr, flush=True,
             )
 
-        # 4-1) 매칭 doc 별 대표 chunk (sort 후 첫 발견 = best score chunk).
-        best_chunk_per_doc: dict = {}
+        # 4-1) 매칭 doc 별 대표 chunks (sort 후 상위 MAX_CHUNKS_PER_DOC per doc).
+        # PR-Guaranteed-Chunks-Multi-Per-Doc: 기존 1 chunk/doc → 최대
+        # MAX_CHUNKS_PER_DOC chunks/doc. force chunks_added=6 인데 guaranteed
+        # 가 2 chunks (1/doc) 뿐이라 도입부만 contexts 에 들어가고 정산·일당 등
+        # 본문 청크가 채움 phase 에서 탈락 → LLM 답변 fail (출장비) 회귀 fix.
+        top_chunks_per_doc: dict = {}
         for chunk in raw_chunks:
             if not chunk.get("force_included_by_intent"):
                 continue
             doc_id = chunk.get("document_id") or ""
-            if not doc_id or doc_id in best_chunk_per_doc:
+            if not doc_id:
                 continue
-            best_chunk_per_doc[doc_id] = chunk
+            bucket = top_chunks_per_doc.setdefault(doc_id, [])
+            if len(bucket) < MAX_CHUNKS_PER_DOC:
+                bucket.append(chunk)
 
-        matched_doc_count = len(best_chunk_per_doc)
-        guaranteed_chunks = list(best_chunk_per_doc.values())
+        matched_doc_count = len(top_chunks_per_doc)
+        guaranteed_chunks = [c for bucket in top_chunks_per_doc.values() for c in bucket]
         # guaranteed_chunks 도 동일 결정적 정렬.
         guaranteed_chunks.sort(
             key=lambda c: (
