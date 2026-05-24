@@ -151,7 +151,7 @@ def enforce_structure(
             items = [
                 "발생 일시·장소·관련자·구체적 행위를 시간순으로 메모",
                 "가능한 증거(메시지·이메일·녹취 등)를 안전한 위치에 보관",
-                "아래 핫라인 또는 인사교육팀에 익명/실명으로 상담 요청",
+                "아래 핫라인 또는 CSR팀에 익명/실명으로 상담 요청",
             ]
     for i, a in enumerate(items[:3], start=1):
         parts.append(f"{i}. {a}")

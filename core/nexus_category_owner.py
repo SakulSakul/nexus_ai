@@ -12,27 +12,40 @@ from __future__ import annotations
 
 # 카테고리 → 담당부서 매핑.
 # 신세계DF 사규 거버넌스 구조 기준 (필요 시 사쿨이 직접 조정).
-NEXUS_CATEGORY_OWNER_DEPT = {
-    # 비즈니스 영역
+# 도메인 fallback default — owning_department 정보 없을 때만 사용.
+# 사규 본문이 진실이므로 일반적 default 만 명시 (사쿨 운영 원칙).
+NEXUS_CATEGORY_OWNER_DEPT_DEFAULT = {
     "CSR": "CSR팀",
     "윤리": "CSR팀",
     "공통": "CSR팀",
-    "영업": "총무팀",          # 매장 운영·습득물 등 다수 문서가 총무팀 관할
-    "총무": "총무팀",
-    "인사": "인사교육팀",
-    "재무": "재무팀",
-    # 안전·보안·규제
-    "안전": "CSR팀",           # 안전보건은 CSR 관할
-    "정보보안": "정보보호 주관부서",
     "공정거래": "CSR팀",
     "환경": "CSR팀",
+    "안전": "총무팀",       # 안전 사규 다수가 총무팀 (사규 본문 기준)
+    "총무": "총무팀",
+    "영업": "총무팀",
+    "인사": "인사팀",       # 사규 본문 = 인사팀
+    "재무": "경리팀",       # 다수 = 경리팀
+    "정보보안": "정보보안담당",
 }
 
-_FALLBACK = "관할 부서"
+# 하위 호환 alias (기존 import 코드 보호)
+NEXUS_CATEGORY_OWNER_DEPT = NEXUS_CATEGORY_OWNER_DEPT_DEFAULT
+
+_FALLBACK = "CSR팀"  # 사규 관리 주체
 
 
-def nexus_get_owner_dept(category: str | None) -> str:
-    """카테고리 문자열 → 담당부서 명. 미매핑·빈 입력 시 일반 문구."""
-    if not category:
-        return _FALLBACK
-    return NEXUS_CATEGORY_OWNER_DEPT.get(category.strip(), _FALLBACK)
+def nexus_get_owner_dept(
+    category: str | None,
+    doc_owning_dept: str | None = None,
+) -> str:
+    """담당부서명 반환.
+
+    1순위: 사규 본문의 owning_department (doc_owning_dept)
+    2순위: 도메인 fallback default
+    3순위: CSR팀 (사규 관리 주체)
+    """
+    if doc_owning_dept and doc_owning_dept.strip():
+        return doc_owning_dept.strip()
+    if category:
+        return NEXUS_CATEGORY_OWNER_DEPT_DEFAULT.get(category.strip(), _FALLBACK)
+    return _FALLBACK
