@@ -872,6 +872,45 @@ def _supabase():
     return create_client(s.supabase_url, key)
 
 
+def _validate_db_schema(sb) -> bool:
+    """Critical .select() 컬럼이 실제 DB schema 와 일치하는지 startup 시 검증.
+
+    PR-Coding-Policy-Defense: chunk_incident_nodes(부재 컬럼)를 select 해
+    force-include 가 전체 silent fail 한 사고(17+시간, 9 PR 무력화) 재발 방지.
+    한 번이라도 컬럼이 어긋나면 stderr + UI 에 즉시 가시화한다.
+    """
+    import sys as _sys
+    checks = [
+        ("nexus_chunks",
+         "id, document_id, chunk_idx, article_no, text, categories"),
+        ("nexus_documents",
+         "id, title, doc_kind, meta, owning_department"),
+    ]
+    failures: list[str] = []
+    for table, cols in checks:
+        try:
+            sb.table(table).select(cols).limit(1).execute()
+        except Exception as e:
+            msg = f"{table}: {str(e)[:300]}"
+            failures.append(msg)
+            print(f"[STARTUP_SCHEMA_CHECK] FAIL {msg}",
+                  file=_sys.stderr, flush=True)
+    if failures:
+        print(f"[STARTUP_SCHEMA_CHECK] ⚠️ {len(failures)} mismatch(es)",
+              file=_sys.stderr, flush=True)
+        try:
+            st.error(
+                "⚠️ DB schema 불일치 (운영자 확인 필요):\n"
+                + "\n".join(f"- {f}" for f in failures)
+            )
+        except Exception:
+            pass
+        return False
+    print("[STARTUP_SCHEMA_CHECK] ✅ All checks OK",
+          file=_sys.stderr, flush=True)
+    return True
+
+
 def _supabase_admin():
     """service_role 키 기반 클라이언트.
 
@@ -2725,6 +2764,16 @@ def _run_ask(
             # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
             # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
             answer_placeholder.markdown(ans.text)
+            # PR-Coding-Policy-Defense: retrieval/LLM critical path 에서 silent
+            # 처리된 내부 오류를 운영자에게 가시화 (접힌 expander). chunk_incident_nodes
+            # 같은 스키마 오류가 force-include 를 무력화한 사고 재발 조기 감지.
+            _critical_errs = st.session_state.pop("_critical_errors", None)
+            if _critical_errs:
+                with st.expander(
+                    f"⚠️ Internal warnings ({len(_critical_errs)})", expanded=False
+                ):
+                    for _err in _critical_errs:
+                        st.code(_err, language="text")
             # PR-Fun1 작업 4: 카테고리 chip — 답변 본문 직후, confidence chip 위.
             # critical 답변에도 표시 (사용자 정보 제공).
             # PR-Fix-Category-Citation-Based: ans.text 전달 → 인용 prefix 기반 결정.
@@ -3084,6 +3133,11 @@ def main():
     if sb is None:
         st.error("Supabase 설정이 없습니다. SUPABASE_URL / SUPABASE_KEY 를 secrets에 추가하세요.")
         st.stop()
+
+    # PR-Coding-Policy-Defense: DB schema self-check (session 당 1회).
+    if not st.session_state.get("_schema_checked"):
+        _validate_db_schema(sb)
+        st.session_state["_schema_checked"] = True
 
     if not _consent_gate(sb):
         st.stop()
