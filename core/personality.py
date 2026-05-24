@@ -264,16 +264,42 @@ def category_visual(
     contexts: list[dict],
     answer_text: str | None = None,
 ) -> tuple[str, str, str]:
-    """카테고리 우선순위: answer_text 인용 prefix > contexts.categories 빈도.
+    """카테고리 우선순위: 고신호 force-include doc prefix > answer_text 인용
+    prefix > contexts.categories 빈도.
 
-    answer_text 가 제공되면 답변 본문 「📎 ((xxx) doc_title)」 인용 prefix
-    빈도로 primary 카테고리 결정 (LLM 의 실제 인용 의도 정확 반영).
-    인용 0건이면 기존 contexts 기반 fallback. '공통' 1위면 2위 사용
-    (cross-cutting fallback 의미 → 실 도메인 우선).
+    1순위 (PR-Category-Force-Include-Priority): query 의도와 직접 매칭된
+    고신호 force-include doc (force_source ∈ rpc/direct_table/title_direct/
+    hardcoded) 의 prefix. LLM 의 답변 본문 인용 여부와 무관하게 정답 도메인
+    보장. L2.5 auto_keyword 확장은 노이즈이므로 신호에서 제외 (force_source
+    == "auto_keyword"). 진단: 법인카드 query 가 (재무) 법인카드 2 chunks
+    진입했어도 auto_keyword 노이즈 다수 chunks 가 다수결을 오염시켜 '안전'
+    오분류되던 회귀 fix.
+    2순위: answer_text 「📎 ((xxx) doc_title)」 인용 prefix 빈도.
+    3순위: contexts.categories 빈도. '공통' 1위면 2위 사용 (cross-cutting
+    fallback 의미 → 실 도메인 우선).
     """
     from collections import Counter
 
-    # 1. PR-Fix-Category-Citation-Based: 답변 본문 인용 prefix 우선.
+    # 1. PR-Category-Force-Include-Priority: 고신호 force-include doc prefix.
+    if contexts:
+        force_cats: list[str] = []
+        for c in contexts:
+            if not c.get("force_included_by_intent"):
+                continue
+            if c.get("force_source") == "auto_keyword":
+                continue
+            t = str(c.get("doc_title") or "")
+            m = re.match(r"^\(\s*([^)\s][^)]*?)\s*\)", t)
+            if m:
+                force_cats.append(m.group(1).strip())
+        if force_cats:
+            fc_counts = Counter(force_cats)
+            for cat, _n in fc_counts.most_common():
+                if cat != "공통" and cat in CATEGORY_VISUAL:
+                    icon, color = CATEGORY_VISUAL.get(cat, _CATEGORY_DEFAULT)
+                    return (icon, color, cat)
+
+    # 2. PR-Fix-Category-Citation-Based: 답변 본문 인용 prefix 우선.
     if answer_text:
         cited = _extract_categories_from_answer(answer_text)
         if cited:
@@ -317,7 +343,7 @@ def category_visual(
             icon, color = CATEGORY_VISUAL.get(primary, _CATEGORY_DEFAULT)
             return (icon, color, primary)
 
-    # 2. Fallback — 기존 contexts.categories 빈도 (backwards-compatible).
+    # 3. Fallback — 기존 contexts.categories 빈도 (backwards-compatible).
     if not contexts:
         return (*_CATEGORY_DEFAULT, "")
     flat: list[str] = []
