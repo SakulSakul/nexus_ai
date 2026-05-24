@@ -364,6 +364,24 @@ _GENERIC_SUFFIX_PARTS = (
 )
 
 
+def _signal_critical_error(component: str, exc: Exception) -> None:
+    """Critical 경로(force-include 등) 실패를 Streamlit UI 로 노출하는 신호.
+
+    PR-Coding-Policy-Defense: chunk_incident_nodes 처럼 DB/스키마 오류가
+    try/except 로 silent 처리돼 force-include 가 전체 무력화된 채 9 PR 동안
+    발견되지 못한 사고 재발 방지. stderr 로그(기존)에 더해 session_state 에
+    누적하여 app.py 가 답변 하단 expander 로 운영자에게 노출한다.
+    streamlit context 밖(smoke test/배치)에서는 조용히 무시.
+    """
+    try:
+        import streamlit as st
+        st.session_state.setdefault("_critical_errors", []).append(
+            f"{component}: {type(exc).__name__}: {str(exc)[:200]}"
+        )
+    except Exception:
+        pass
+
+
 def _normalize_token(token: str) -> str:
     """한국어 조사 + 종결 부호 제거. title 매칭 정확성 ↑.
 
@@ -860,6 +878,7 @@ def hybrid_search(
                     f"{type(e).__name__}: {e}",
                     file=sys.stderr, flush=True,
                 )
+                _signal_critical_error("L1_RPC force-include", e)
 
             # ── Layer 1.5 (PR-Fix-DocKind-Enrich): L1 RPC 결과 doc_kind 보강 ─
             # L1 RPC schema (db/migrations/20260511_nexus_force_include_rpc_v2.sql)
@@ -955,6 +974,7 @@ def hybrid_search(
                         f"{type(e).__name__}: {e}",
                         file=sys.stderr, flush=True,
                     )
+                    _signal_critical_error("L2_DIRECT force-include", e)
 
             # ── Layer 2.0/2.5 는 PR-Force-Include-Restructure 로 incident block
             # 밖으로 이동 (모든 query 적용). 아래 incident block 종료 후 실행.
@@ -1022,6 +1042,7 @@ def hybrid_search(
                         f"{type(e).__name__}: {e}",
                         file=sys.stderr, flush=True,
                     )
+                    _signal_critical_error("L3_HARDCODED force-include", e)
 
             # ═══ L2.5_AUTO_KEYWORDS shadow log ═══ (PR-Stage-A-2-Shadow)
             # 회귀 위험 0: 실제 force_include / raw_chunks 에 영향 X.
@@ -1093,6 +1114,7 @@ def hybrid_search(
                 f"{type(e).__name__}: {e}",
                 file=sys.stderr, flush=True,
             )
+            _signal_critical_error("L2.0_TITLE_DIRECT force-include", e)
 
         # ── Layer 2.5: Auto-keywords matching (UNION) ──────────
         # PR-Stage-A-2-Production-Union: chunks.auto_keywords (Auto-Fixer 보강) 활용.
@@ -1165,6 +1187,7 @@ def hybrid_search(
                 f"{type(e).__name__}: {e}",
                 file=sys.stderr, flush=True,
             )
+            _signal_critical_error("L2.5_AUTO_KEYWORDS force-include", e)
 
         # ── Union into raw_chunks (dedup by chunk id) ───
         # PR-Fix-Force-Include-Dup-Flag: chunks dict map — 중복 chunks 의
