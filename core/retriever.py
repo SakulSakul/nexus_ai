@@ -378,7 +378,14 @@ def _normalize_token(token: str) -> str:
         return token
     # PR-Query-Normalize-Robust: rstrip → strip (양쪽) + bracket/quote 추가.
     # `[2] "출장비..."` 같은 prefix + quote 패턴의 token matching robust.
-    token = token.strip("?!.,;:'\"[](){}「」『』<>")
+    # PR-Query-Normalize-Smart-Quote-Robust: smart quote/Unicode 처리 추가.
+    # macOS/iOS keyboard 의 default smart quote 자동 변환 대응.
+    # PR #222 (ASCII quote) 후 잔존 회귀 fix.
+    token = token.strip(
+        "?!.,;:'\"[](){}「」『』<>"
+        "“”‘’"  # smart quote “ ” ‘ ’
+        "‐–—…"  # hyphen/dash/ellipsis
+    )
     if len(token) > 2:
         for suffix in _KOREAN_PARTICLES:
             if token.endswith(suffix) and len(token) > len(suffix) + 1:
@@ -429,8 +436,11 @@ def _compute_title_direct_matches(supabase: Any, question: str) -> list[str]:
         q = question or ""
         # PR-Query-Normalize-Robust: q_compact 도 punctuation 제거.
         # Match 1/2 의 t_compact ⊂ q_compact 매칭에서 quote/bracket 영향 차단.
+        # PR-Query-Normalize-Smart-Quote-Robust: smart quote/Unicode 추가.
         q_compact = re.sub(
-            r'[\'"`\[\](){}「」『』<>?!.,;:]', "", "".join(q.split()).lower()
+            r'[\'"`\[\](){}「」『』<>?!.,;:“”‘’‐–—…]',
+            "",
+            "".join(q.split()).lower(),
         )
         q_tokens = {_normalize_token(t.lower()) for t in q.split() if len(t.strip()) >= 2}
         q_tokens = {t for t in q_tokens if t and len(t) >= 2}  # 빈/1글자 token 제거
