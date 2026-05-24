@@ -281,32 +281,44 @@ def category_visual(
     from collections import Counter
 
     # 1. PR-Category-Force-Include-Priority: 고신호 force-include doc prefix.
-    # PR-Fix-Category-Doc-Majority: chunk 단위 → doc 단위 dedupe majority.
-    # 운영 검증(2026-05-24 Q3) 에서 (영업) AEO 3 doc(chunks 13+10+4=27) 가
-    # (정보보안) 6 doc(chunks 85) 의 청크 단위 majority 를 chunk-rich 효과로
-    # 압도, 답변 본문은 정보보안 인용임에도 카테고리는 영업 표시 회귀.
-    # AEO doc 의 incident_nodes 매핑은 정당(통관 보안 사규) — 청크 수가 아닌
-    # doc 수 단위로 카운트하면 정보보안 6 > 영업 3 으로 자연 해결.
+    # PR-Fix-Category-Doc-Majority (#236): chunk → doc 단위 dedupe.
+    # PR-Phase-4-Fix-L: doc count → max node_match_score per prefix.
+    # 운영 검증(2026-05-24 Q2/Q3) 에서 Phase 3 광범위 nodes 매핑 부작용으로
+    # (재무) 17 doc·(영업) AEO 3 doc 가 윤리/정보 query 와 노이즈 매칭 → doc
+    # count majority 부정 회귀. node_match_score(user_nodes ∩ doc_nodes 크기)
+    # 의 prefix 별 max 가 더 정확 — 광범위 매핑 doc 회피, 핵심 도메인 doc 우대.
+    # 예: Q2 윤리 query → (인사) 직장 내 괴롭힘 max=3 > (재무) 자산 실사 max=2
+    #     → 인사 카테고리 정상 결정.
     if contexts:
-        force_doc_prefixes: dict[str, set] = {}
+        force_prefix_max_match: dict[str, int] = {}
+        force_prefix_doc_count: dict[str, set] = {}  # tiebreaker
         for c in contexts:
             if not c.get("force_included_by_intent"):
                 continue
             if c.get("force_source") == "auto_keyword":
                 continue
             t = str(c.get("doc_title") or "")
-            doc_id = c.get("document_id") or t  # doc_id 없으면 title 로 dedupe
+            doc_id = c.get("document_id") or t
             m = re.match(r"^\(\s*([^)\s][^)]*?)\s*\)", t)
-            if m:
-                prefix = m.group(1).strip()
-                force_doc_prefixes.setdefault(prefix, set()).add(doc_id)
-        if force_doc_prefixes:
-            # doc count 단위 majority — 같은 doc 의 multi-chunk 가 1로 카운트
-            fc_counts = Counter({
-                prefix: len(doc_ids)
-                for prefix, doc_ids in force_doc_prefixes.items()
-            })
-            for cat, _n in fc_counts.most_common():
+            if not m:
+                continue
+            prefix = m.group(1).strip()
+            # node_match_score — chunk 의 matched_incident_nodes 활용
+            # (retriever 가 RPC 매칭 시 set 한 값). 부재 시 1로 fallback.
+            matched = c.get("matched_incident_nodes") or []
+            score = len(matched) if isinstance(matched, list) else 1
+            # per-prefix max — 광범위 매핑 doc 의 낮은 score 회피, 정확 doc 우선
+            if score > force_prefix_max_match.get(prefix, 0):
+                force_prefix_max_match[prefix] = score
+            force_prefix_doc_count.setdefault(prefix, set()).add(doc_id)
+        if force_prefix_max_match:
+            # 1순위 sort key: max_match 내림차순
+            # 2순위 sort key (tiebreaker): doc count 내림차순 (기존 #236 정합)
+            sorted_prefixes = sorted(
+                force_prefix_max_match.items(),
+                key=lambda kv: (-kv[1], -len(force_prefix_doc_count.get(kv[0], set())))
+            )
+            for cat, _score in sorted_prefixes:
                 if cat != "공통" and cat in CATEGORY_VISUAL:
                     icon, color = CATEGORY_VISUAL.get(cat, _CATEGORY_DEFAULT)
                     return (icon, color, cat)

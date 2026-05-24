@@ -112,6 +112,24 @@ L3_FALLBACK_BY_DOMAIN: dict = {
         "운영보안 업무지침",    # (정보보안) 운영보안 업무지침
         "생활보안 업무지침",    # (정보보안) 생활보안 업무지침
     ),
+    # PR-Phase-4-Fix-K: 공정거래 도메인 fallback whitelist (Q10 fix).
+    "fair_trade": (
+        "표시광고",            # (공정거래) 표시광고 지침 + SNS 인플루언서
+        "판매수수료",          # (공정거래) 판매수수료 결정 및 변경 지침
+        "협력회사",            # (공정거래) 협력회사 입점/퇴점/판촉비/판촉사원
+        "특약매입",            # (공정거래) 특약매입거래 부당성 심사
+        "반품관리",            # (공정거래) 반품관리 지침
+        "부당한 경영활동",     # (공정거래) 부당한 경영활동 간섭
+        "매장 위치이동",       # (공정거래) 매장 위치이동 및 인테리어 비용 분담
+    ),
+    # PR-Phase-4-Fix-I: 환경 도메인 fallback whitelist 확장.
+    # 기존 environment 와 함께 폐기물·환경법규 query 매칭 보장.
+    "environment_expand": (
+        "환경운영관리",        # (환경) 환경운영관리 지침 (폐기물)
+        "환경경영매뉴얼",      # (환경) 환경경영매뉴얼
+        "법규 요구사항",       # (환경) 법규 요구사항 관리지침
+        "환경영향평가",        # (환경) 환경영향평가 지침
+    ),
 }
 
 # user_incident_nodes (Gemini classifier AVAILABLE_INCIDENT_NODES + rule_based
@@ -172,6 +190,13 @@ INCIDENT_NODE_TO_DOMAIN: dict = {
     "회사정보": "infosec",
     "고객정보": "infosec",
     "회사자료유출": "infosec",
+    # PR-Phase-4-Fix-I: 환경 도메인 신규 어휘 (Q14 폐기물 query fix).
+    "환경관리": "environment",
+    "환경법규": "environment",
+    "폐기물관리": "environment",
+    # PR-Phase-4-Fix-K: 공정거래 도메인 신설 (Q10 판매수수료 query fix).
+    # 윤리위반/비위행위 광범위 매핑과 분리하여 공정거래 query 정확 분류.
+    "공정거래위반": "fair_trade",
 }
 
 # 절차 키워드 — 매장 사고 응급/보고/분류 전반 (best chunk 선정용).
