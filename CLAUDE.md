@@ -63,6 +63,9 @@ For multi-step tasks, state a brief plan with steps and verification checkpoints
 - 증상이 아니라 root cause 를 고친다. cap 하나 고치면 다음 cap 에서 또
   깨지는 whack-a-mole 은 신호다 — 한 단계 위(데이터가 들어오는 지점)를 의심하라.
 - "이 가설이 정말 root cause 인가?"를 PR 시작 시 명시한다 (Think Before Coding).
+- **fix 효과가 없으면 멈추고 root cause 를 재의심한다.** 같은 가설 path 의
+  연쇄 PR 을 만들지 말 것. (PR #225 → #226 → #227 cascade 가 신호였고,
+  진짜 root cause 는 force-include *이전* 단계의 DB schema 오류였다.)
 
 ### B. 진단은 log grep first
 실패를 시뮬레이션으로 추측하기 전에 **로그부터** 본다:
@@ -104,6 +107,22 @@ python test_smoke.py   # 출장비 / 법인카드 / 위험성평가 / 개인정�
 ### F. 변경 위치는 line number 가 아닌 context 로
 라인 번호는 drift 한다. spec 의 line 번호를 맹신하지 말고 실제 코드를
 grep/read 로 확인한 뒤 surgical 하게 고친다 (Surgical Changes).
+
+### G. speculative 컬럼/필드 추가 금지
+- 미래 기능을 위해 column·API·abstraction 을 미리 추가하지 않는다.
+  추가 시점 = 실제 사용 시점 (Simplicity First).
+- (실제 사례: PR #221 이 거의 쓰이지 않는 응급대응용 `chunk_incident_nodes`
+  를 `.select()` 에 미리 넣어 force-include 전체를 무력화했다.)
+
+### 진단 빠른 참조
+
+| 증상 | 첫 진단 step |
+|---|---|
+| Query fail | `grep -E "FAILED\|ERROR\|Exception" log.txt` |
+| force-include 작동 X | `grep "force_include" log.txt` → `matched_docs` 확인 |
+| `guaranteed_in_top_k=0` | DB schema 검증 (물리 컬럼 부재 의심) |
+| `guaranteed >= 1` 인데 답변 X | LLM prompt priority / contexts 순서 확인 |
+| reboot 직후 stale | "App started" 확인 또는 수십 초 대기 |
 
 ---
 
