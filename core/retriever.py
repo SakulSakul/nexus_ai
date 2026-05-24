@@ -347,13 +347,25 @@ def _ensure_universal_sop_completeness(
             ci = chunk.get("chunk_idx")
             if ci is not None:
                 info["existing_idxs"].add(ci)
-        # 각 doc 별 chunk_idx 0+1 부재 시 fetch
+        # PR-Phase-7-Fix-B: N+1 SQL → 단일 batch query.
+        # universal_sop doc 별 별도 fetch 패턴을 doc_ids + chunk_idxs 단일 batch
+        # 로 통합. 매 query latency -200~400ms (Supabase round-trip N→1 절감).
+        # cartesian product 로 일부 이미 보유 chunk 도 fetch 가능하나 downstream
+        # existing_chunk_ids dedupe (line ~416) 로 안전.
+        fetch_doc_ids: list = []
+        fetch_chunk_idxs: set = set()
+        doc_title_map: dict = {}
         for doc_id, info in sop_chunks_by_doc.items():
-            missing_idxs = sorted(
+            missing_idxs = (
                 UNIVERSAL_SOP_REQUIRED_CHUNK_INDICES - info["existing_idxs"]
             )
             if not missing_idxs:
                 continue
+            fetch_doc_ids.append(doc_id)
+            fetch_chunk_idxs.update(missing_idxs)
+            doc_title_map[doc_id] = info["title"]
+
+        if fetch_doc_ids and fetch_chunk_idxs:
             try:
                 result = (
                     supabase.table("nexus_chunks")
@@ -361,20 +373,23 @@ def _ensure_universal_sop_completeness(
                         "id, document_id, chunk_idx, article_no, text, "
                         "categories"
                     )
-                    .eq("document_id", doc_id)
-                    .in_("chunk_idx", missing_idxs)
+                    .in_("document_id", fetch_doc_ids)
+                    .in_("chunk_idx", sorted(fetch_chunk_idxs))
                     .execute()
                 )
                 for row in (result.data or []):
+                    row_doc_id = row.get("document_id")
+                    if row_doc_id not in doc_title_map:
+                        continue  # dedup: 본 batch 의 target doc 만
                     fetched = dict(row)
-                    fetched["doc_title"] = info["title"]
+                    fetched["doc_title"] = doc_title_map[row_doc_id]
                     fetched["force_included_by_intent"] = True
                     fetched["is_universal_sop"] = True
                     fetched_required_chunks.append(fetched)
             except Exception as fetch_e:
                 print(
-                    f"[universal_sop:fetch_required] FAILED "
-                    f"doc_id={doc_id} missing_idxs={missing_idxs}: "
+                    f"[universal_sop:fetch_required] FAILED batch "
+                    f"doc_ids={fetch_doc_ids} chunk_idxs={sorted(fetch_chunk_idxs)}: "
                     f"{type(fetch_e).__name__}: {fetch_e}",
                     file=sys.stderr, flush=True,
                 )
@@ -1640,15 +1655,25 @@ def hybrid_search(
             score = len(matched) if isinstance(matched, list) else 0
             if score > prefix_max_match.get(prefix, 0):
                 prefix_max_match[prefix] = score
-        dominant_prefix = (
-            max(prefix_max_match, key=prefix_max_match.get)
-            if prefix_max_match else ""
+        # PR-Phase-7-Fix-A: Top-2 dominant prefixes (multi-domain query 지원).
+        # Phase-6 Fix A 의 single dominant 한계 — Q14 같은 multi-domain query
+        # (nodes=['공정거래위반','윤리보고','환경관리','환경법규']) 에서 score 1등
+        # prefix 만 우선되어 두 번째 도메인 doc 가 universal_sop 보다 후순위로
+        # 밀리던 회귀 fix. score > 0 인 top-2 prefix 동시 우선.
+        sorted_prefixes_by_score = sorted(
+            prefix_max_match.items(), key=lambda kv: -kv[1]
         )
+        dominant_prefixes: set = {
+            p for p, s in sorted_prefixes_by_score[:2] if s > 0
+        }
 
-        # 정렬 — 1순위: dominant prefix 우선, 2순위: (공통)/universal_sop 후순위.
+        # 정렬 — 1순위: dominant prefixes 우선, 2순위: (공통)/universal_sop 후순위.
         guaranteed_chunks.sort(
             key=lambda c: (
-                _extract_prefix(c) != dominant_prefix if dominant_prefix else False,
+                (
+                    _extract_prefix(c) not in dominant_prefixes
+                    if dominant_prefixes else False
+                ),
                 (_chunk_domain(c) == "공통") or bool(c.get("is_universal_sop")),
                 -(c.get("rrf_score") or 0.0),
                 -(c.get("_query_keyword_overlap") or 0),
@@ -1659,11 +1684,10 @@ def hybrid_search(
         # 매칭 doc 가 TOP_K 보다 많으면 점수 순 cap (방어 코드).
         guaranteed_chunks = guaranteed_chunks[:TOP_K]
 
-        # 로깅 — dominant prefix 결정 진단
-        if dominant_prefix:
+        # 로깅 — dominant prefixes 결정 진단
+        if dominant_prefixes:
             print(
-                f"[retriever:domain_quota] dominant_prefix={dominant_prefix} "
-                f"max_match={prefix_max_match.get(dominant_prefix, 0)} "
+                f"[retriever:domain_quota] dominant_prefixes={sorted(dominant_prefixes)} "
                 f"all_prefix_scores={prefix_max_match}",
                 file=sys.stderr, flush=True,
             )
