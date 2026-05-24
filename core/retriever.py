@@ -1047,7 +1047,10 @@ def hybrid_search(
 
                     chunks_resp = (
                         supabase.table("nexus_chunks")
-                        .select("id, document_id, chunk_idx, article_no, text")
+                        .select(
+                            "id, document_id, chunk_idx, article_no, text, "
+                            "categories, chunk_incident_nodes"
+                        )
                         .in_("document_id", new_title_ids)
                         .execute()
                     )
@@ -1103,7 +1106,10 @@ def hybrid_search(
 
                     chunks_resp = (
                         supabase.table("nexus_chunks")
-                        .select("id, document_id, chunk_idx, article_no, text")
+                        .select(
+                            "id, document_id, chunk_idx, article_no, text, "
+                            "categories, chunk_incident_nodes"
+                        )
                         .in_("document_id", new_doc_ids)
                         .execute()
                     )
@@ -1179,6 +1185,10 @@ def hybrid_search(
                     "force_included_by_intent": True,
                     "force_include_source": force_include_source,
                     "is_universal_sop": _title in UNIVERSAL_INCIDENT_SOP_TITLES,
+                    # PR-Force-Include-Meta-Enrich: owning_department 누락 시
+                    # build_user_prompt 헤더에 "· 관리부서: X팀" 명시 X →
+                    # LLM 이 "관할 담당 부서" generic 화하는 BUG fix.
+                    "owning_department": _doc.get("owning_department"),
                 })
                 added_count += 1
             print(
