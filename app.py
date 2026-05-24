@@ -992,7 +992,15 @@ def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None,
             _icon, _color, cat_label = category_visual(contexts, answer_text=answer_text)
         except Exception:
             cat_label = ""
-    dept = nexus_get_owner_dept(cat_label)
+    # PR-Universal-Routing-Cleanup: top doc 의 owning_department (사규 본문) 우선
+    _top_owning_dept = None
+    if contexts:
+        for _c in contexts:
+            _od = _c.get("owning_department")
+            if _od and str(_od).strip():
+                _top_owning_dept = str(_od).strip()
+                break
+    dept = nexus_get_owner_dept(cat_label, doc_owning_dept=_top_owning_dept)
     chip_map = {
         "high":   ("🟢", "높은 신뢰도", "#1f7a3a"),
         "medium": ("🟡", f"보조 참고 — 정확한 사항은 {dept} 확인", "#a07020"),
