@@ -977,7 +977,7 @@ def _sidebar(sb, hotlines: dict) -> str:
 
 "COMPASS(나침반)"라는 이름처럼, 임직원이 바른 방향을 잡을 수 있도록 곁에서 길을 안내하는 도구를 지향합니다. 신세계디에프의 정도경영을 일상에서 실천할 수 있도록 돕는 것이 본 챗봇의 소임입니다.
 
-본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. 인사 행정 사항은 인사팀에 직접 문의하세요.
+본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. 인사 행정 사항은 인사교육팀에 직접 문의하세요.
             """)
         st.markdown(
             '<p class="nx-sidebar-label">질의 범위</p>',
@@ -994,7 +994,7 @@ def _sidebar(sb, hotlines: dict) -> str:
             '<p class="nx-disclaimer">'
             '본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다.<br>'
             '신고·조사 사항은 CSR팀 또는 신세계면세점 핫라인으로,<br>'
-            '인사 규정·복리후생 등 인사 행정 사항은 인사팀으로 문의해 주시기 바랍니다.'
+            '인사 규정·복리후생 등 인사 행정 사항은 인사교육팀으로 문의해 주시기 바랍니다.'
             '</p>',
             unsafe_allow_html=True,
         )
@@ -1743,7 +1743,7 @@ def _render_clean_report_panel(hotlines: dict[str, str]) -> None:
 
 
 def _render_hr_inquiry_panel(hotlines: dict[str, str]) -> None:
-    """인사팀 문의 안내 박스 — hotline_config 4개 키 매핑, 빈 값은 렌더 생략.
+    """인사교육팀 문의 안내 박스 — hotline_config 4개 키 매핑, 빈 값은 렌더 생략.
     DB 스키마 변경 없이 기존 키만 사용 (`hr_contact_text`, `hr_chatbot_url`,
     `internal_report_url`, `external_hotline`)."""
     hr_text = (hotlines.get("hr_contact_text") or "").strip()
@@ -1751,8 +1751,8 @@ def _render_hr_inquiry_panel(hotlines: dict[str, str]) -> None:
     anon_url = (hotlines.get("internal_report_url") or "").strip()
     ext_hotline = (hotlines.get("external_hotline") or "").strip()
     with st.container(border=True):
-        st.markdown("**📞 인사팀 문의 채널**")
-        st.markdown(hr_text or "인사팀에 직접 문의하세요.")
+        st.markdown("**📞 인사교육팀 문의 채널**")
+        st.markdown(hr_text or "인사교육팀에 직접 문의하세요.")
         # URL 항목은 placeholder(example.invalid) 일 수 있으므로 그대로 link_button —
         # admin 이 hotline_config 갱신하면 즉시 반영.
         if hr_chatbot:
@@ -1764,7 +1764,7 @@ def _render_hr_inquiry_panel(hotlines: dict[str, str]) -> None:
             # 있어 link_button 부적합 → 텍스트 라인으로.
             st.markdown(f"📞 외부 상담채널: {ext_hotline}")
         st.caption(
-            "⚠️ 본 답변은 사규 해석 보조이며, 인사 행정 결정은 인사팀 문의가 우선합니다."
+            "⚠️ 본 답변은 사규 해석 보조이며, 인사 행정 결정은 인사교육팀 문의가 우선합니다."
         )
 
 
@@ -1779,9 +1779,9 @@ def _render_action_buttons(
     is_critical: bool = False,
     confidence: str | None = None,
 ) -> None:
-    """답변 본문 직후 두 액션: [📞 인사팀 문의] [🔄 다시 답변].
+    """답변 본문 직후 두 액션: [📞 인사교육팀 문의] [🔄 다시 답변].
 
-    인사팀 문의 — toggle. session_state["hr_open"] set 으로 msg_idx 별 독립.
+    인사교육팀 문의 — toggle. session_state["hr_open"] set 으로 msg_idx 별 독립.
     다시 답변 — 1회 한정. session_state["rerolled_msgs"] set 으로 msg_idx 별
     중복 차단. 클릭 시 session_state["_pending_reroll"] 에 reroll request 적재
     후 rerun → main() 다음 사이클에서 _run_ask(reroll_of=...) 로 처리.
@@ -1836,8 +1836,8 @@ def _render_action_buttons(
     if is_hr_graceful:
         # 인사 graceful — 휴가/평가/근태 등 인사 routing
         hr_label = (
-            "📞 인사팀 문의 닫기" if msg_idx in hr_open
-            else "📞 인사팀 문의"
+            "📞 인사교육팀 문의 닫기" if msg_idx in hr_open
+            else "📞 인사교육팀 문의"
         )
     elif is_clean_report:
         # PR-Hotline-Branch: 클린신고 (자진신고) — SHRS CSR경영란
@@ -2804,7 +2804,7 @@ def _run_ask(
                 ans.is_critical,
                 msg_idx=len(st.session_state["history"]),
             )
-            # 액션 버튼 (📞 인사팀 문의 / 🔄 다시 답변) — 답변 본문 직후, 피드백 위.
+            # 액션 버튼 (📞 인사교육팀 문의 / 🔄 다시 답변) — 답변 본문 직후, 피드백 위.
             # msg_idx 는 곧 push 될 assistant 엔트리의 인덱스 (= 현재 history 길이).
             # original_q: reroll 모드면 reroll_of 의 원 질문, 정상이면 직전 user 메시지(q).
             _action_msg_idx = len(st.session_state["history"])
@@ -2918,7 +2918,7 @@ _CONSENT_BODY_MD = """
 3. **답변 한계**
    - 본 챗봇은 사규 해석 보조 도구이며 **법적 효력이 없습니다.**
    - 신고·조사 사항은 CSR팀 또는 신세계면세점 핫라인으로 접수해 주시기 바랍니다.
-   - 인사 규정·복리후생 등 인사 행정 사항은 인사팀에 문의해 주시기 바랍니다.
+   - 인사 규정·복리후생 등 인사 행정 사항은 인사교육팀에 문의해 주시기 바랍니다.
    - 핫라인 URL 일부는 placeholder 상태일 수 있습니다.
 
 4. **수집 정보**
@@ -3218,7 +3218,7 @@ def main():
                     bool(meta.get("critical")), msg_idx=idx,
                 )
             # 액션 버튼 — 정상 답변(query_log_id 있음) 한정. 에러 답변은 다시
-            # 답변 시 동일 에러 반복 가능성 + 인사팀 문의는 의미 없으므로 미노출.
+            # 답변 시 동일 에러 반복 가능성 + 인사교육팀 문의는 의미 없으므로 미노출.
             if (role == "assistant" and meta.get("query_log_id") is not None):
                 _render_action_buttons(
                     idx,
@@ -3254,7 +3254,7 @@ def main():
         'padding:24px 0 8px 0; border-top:1px solid #eee; margin-top:32px;">'
         '© 2026 신세계디에프 (Shinsegae Duty Free) · 인사담당 CSR팀<br>'
         '본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. '
-        '인사·신고 행정 사항은 인사팀에 직접 문의하세요.'
+        '인사·신고 행정 사항은 인사교육팀에 직접 문의하세요.'
         '</div>',
         unsafe_allow_html=True,
     )

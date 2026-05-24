@@ -216,7 +216,7 @@ def _classify_button(
     if decision == "report":
         return "📞 신고 방법 안내"
     if decision == "hr_inquiry":
-        return "📞 인사팀 문의"
+        return "📞 인사교육팀 문의"
     return "(숨김)"
 
 
