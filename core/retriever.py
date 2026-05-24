@@ -100,6 +100,18 @@ L3_FALLBACK_BY_DOMAIN: dict = {
     "total_affairs": (
         "인감 관리",   # (총무) 인감 관리지침 / 인감 관리 지침 매칭
     ),
+    # PR-Fix-L3-Infosec: 정보보안 도메인 fallback whitelist.
+    # L1_RPC + L2_DIRECT 둘 다 실패 시 정보보안 active 6 doc 매칭 보장.
+    # Phase 3 DB 보강 후 L1_RPC 정상 매칭률 ~100% 이지만 RPC 일시 장애·
+    # 신규 query nodes 분류 미스 등 edge case 안전망.
+    "infosec": (
+        "정보보호 업무지침",    # (정보보안) 정보보호 업무지침
+        "정보보호 정책서",      # (정보보안) 정보보호 정책서
+        "개인정보보호 지침",    # (정보보안) 개인정보보호 지침
+        "개발보안 업무지침",    # (정보보안) 개발보안 업무지침
+        "운영보안 업무지침",    # (정보보안) 운영보안 업무지침
+        "생활보안 업무지침",    # (정보보안) 생활보안 업무지침
+    ),
 }
 
 # user_incident_nodes (Gemini classifier AVAILABLE_INCIDENT_NODES + rule_based
@@ -147,6 +159,19 @@ INCIDENT_NODE_TO_DOMAIN: dict = {
     "환경경영": "environment",
     "비상시대비": "environment",
     "인감관리": "total_affairs",
+    # PR-Fix-L3-Infosec: 정보보안 도메인 nodes — L3 fallback 진입 시
+    # (L1_RPC 일시 장애 등) 정보보안 query 가 안전/환경/윤리 도메인으로
+    # 잘못 매칭되던 회귀 fix (운영 로그 2026-05-24 line 327 재현).
+    # nexus_query_rewriter Phase 2.3 nodes + nexus_critical_classifier 의
+    # harassment kind 와 함께 작동. (공통) 임직원 징계기준 nodes(Phase 1)
+    # + 정보보안 active 6 doc nodes(Fix C) 와 매칭 정합.
+    "정보보안": "infosec",
+    "해킹": "infosec",
+    "악성코드": "infosec",
+    "개인정보유출": "infosec",
+    "회사정보": "infosec",
+    "고객정보": "infosec",
+    "회사자료유출": "infosec",
 }
 
 # 절차 키워드 — 매장 사고 응급/보고/분류 전반 (best chunk 선정용).
