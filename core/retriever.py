@@ -1655,16 +1655,19 @@ def hybrid_search(
             score = len(matched) if isinstance(matched, list) else 0
             if score > prefix_max_match.get(prefix, 0):
                 prefix_max_match[prefix] = score
-        # PR-Phase-7-Fix-A: Top-2 dominant prefixes (multi-domain query 지원).
-        # Phase-6 Fix A 의 single dominant 한계 — Q14 같은 multi-domain query
-        # (nodes=['공정거래위반','윤리보고','환경관리','환경법규']) 에서 score 1등
-        # prefix 만 우선되어 두 번째 도메인 doc 가 universal_sop 보다 후순위로
-        # 밀리던 회귀 fix. score > 0 인 top-2 prefix 동시 우선.
-        sorted_prefixes_by_score = sorted(
-            prefix_max_match.items(), key=lambda kv: -kv[1]
+        # PR-Phase-8-Equal-Score: Top-2 dominant 의 score 차이 무시 결함 fix.
+        # 운영 검증(2026-05-25 16 query) 에서 score 차이 큰 경우 부적합 prefix
+        # top-2 진입 회귀 확인 — Q3 (정보보안6 vs 영업2), Q11 (재무4 vs 영업1),
+        # Q13 (정보보안5 vs 영업1), Q15 (정보보안2 vs 안전1, Q15 카테고리 ⚠️
+        # 안전 오인식 직접 원인).
+        # max score 동률인 prefix 만 top-2 — Q14 같은 동률 multi-domain query
+        # 의 두 prefix 동시 보장 + 그 외 single dominant 정확.
+        max_score = (
+            max(prefix_max_match.values()) if prefix_max_match else 0
         )
         dominant_prefixes: set = {
-            p for p, s in sorted_prefixes_by_score[:2] if s > 0
+            p for p, s in prefix_max_match.items()
+            if s == max_score and s > 0
         }
 
         # 정렬 — 1순위: dominant prefixes 우선, 2순위: (공통)/universal_sop 후순위.
