@@ -1031,6 +1031,20 @@ def hybrid_search(
                 existing_doc_ids = {c.get("document_id") for c in force_chunks_raw}
                 new_title_ids = [d for d in title_doc_ids if d not in existing_doc_ids]
                 if new_title_ids:
+                    # PR-L20-L25-Doc-Kind-Enrich: _doc_meta_enrich 보강 (L1/L2/L3 패턴 통일).
+                    # LLM 의 user prompt input = contexts (filtered).
+                    # _balance_by_doc_kind 의 doc_kind 필터 (rule/penalty/case) 에서 None 인
+                    # force chunks 는 통째로 제거되어 LLM 답변 generation 에 활용 X.
+                    # nexus_documents 의 doc_kind 정보 보강하여 rule list 안에 포함 보장.
+                    _doc_resp = (
+                        supabase.table("nexus_documents")
+                        .select("id, title, doc_kind, meta, owning_department")
+                        .in_("id", new_title_ids)
+                        .execute()
+                    )
+                    for _d in (_doc_resp.data or []):
+                        _doc_meta_enrich[_d["id"]] = _d
+
                     chunks_resp = (
                         supabase.table("nexus_chunks")
                         .select("id, document_id, chunk_idx, article_no, text")
@@ -1047,6 +1061,7 @@ def hybrid_search(
                         f"[retriever:force_include:L2.0_TITLE_DIRECT] "
                         f"matched_docs={len(title_doc_ids)} "
                         f"new_docs={len(new_title_ids)} "
+                        f"docs_enriched={len(_doc_resp.data or [])} "
                         f"chunks_added={len(new_chunks)}",
                         file=sys.stderr, flush=True,
                     )
@@ -1076,6 +1091,16 @@ def hybrid_search(
                 new_doc_ids = [c["id"] for c in new_qualified]
 
                 if new_doc_ids:
+                    # PR-L20-L25-Doc-Kind-Enrich: _doc_meta_enrich 보강.
+                    _doc_resp = (
+                        supabase.table("nexus_documents")
+                        .select("id, title, doc_kind, meta, owning_department")
+                        .in_("id", new_doc_ids)
+                        .execute()
+                    )
+                    for _d in (_doc_resp.data or []):
+                        _doc_meta_enrich[_d["id"]] = _d
+
                     chunks_resp = (
                         supabase.table("nexus_chunks")
                         .select("id, document_id, chunk_idx, article_no, text")
@@ -1092,6 +1117,7 @@ def hybrid_search(
                     print(
                         f"[retriever:force_include:L2.5_AUTO_KEYWORDS] "
                         f"qualified={len(qualified)} new_docs={len(new_doc_ids)} "
+                        f"docs_enriched={len(_doc_resp.data or [])} "
                         f"top_new={[c['title'][:30] for c in new_qualified[:3]]} "
                         f"chunks_added={len(new_chunks)}",
                         file=sys.stderr, flush=True,
