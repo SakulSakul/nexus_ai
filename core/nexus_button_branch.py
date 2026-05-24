@@ -81,10 +81,12 @@ ANSWER_CLEAN_REPORT_KEYWORDS: tuple[str, ...] = (
 )
 
 ANSWER_HR_GRACEFUL_KEYWORDS: tuple[str, ...] = (
+    # 현재 표기 (조직개편 후 — 인사교육팀)
+    "인사 규정·복리후생 등 인사 행정 사항은 인사교육팀에 문의",
+    "인사교육팀에 문의해 주시기 바랍니다",
+    # 구 표기 호환 (history/cache 답변 — 인사팀)
     "인사 규정·복리후생 등 인사 행정 사항은 인사팀에 문의",
     "인사팀에 문의해 주시기 바랍니다",
-    # PR-Synthesizer-Dynamic-Routing 이전 표기 호환 (history/cache 답변)
-    "인사교육팀에 문의해 주시기 바랍니다",
 )
 
 
