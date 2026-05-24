@@ -1412,24 +1412,19 @@ def hybrid_search(
                 file=sys.stderr, flush=True,
             )
 
-        # 4-1) 매칭 doc 별 대표 chunks (sort 후 상위 MAX_CHUNKS_PER_DOC per doc).
-        # PR-Guaranteed-Chunks-Multi-Per-Doc: 기존 1 chunk/doc → 최대
-        # MAX_CHUNKS_PER_DOC chunks/doc. force chunks_added=6 인데 guaranteed
-        # 가 2 chunks (1/doc) 뿐이라 도입부만 contexts 에 들어가고 정산·일당 등
-        # 본문 청크가 채움 phase 에서 탈락 → LLM 답변 fail (출장비) 회귀 fix.
-        top_chunks_per_doc: dict = {}
-        for chunk in raw_chunks:
-            if not chunk.get("force_included_by_intent"):
-                continue
-            doc_id = chunk.get("document_id") or ""
-            if not doc_id:
-                continue
-            bucket = top_chunks_per_doc.setdefault(doc_id, [])
-            if len(bucket) < MAX_CHUNKS_PER_DOC:
-                bucket.append(chunk)
-
-        matched_doc_count = len(top_chunks_per_doc)
-        guaranteed_chunks = [c for bucket in top_chunks_per_doc.values() for c in bucket]
+        # 4-1) Force-include chunks 는 모든 cap bypass — single source of truth.
+        # PR-Force-Include-All-Bypass: force_included_by_intent=True chunks 를
+        # 전부 guaranteed 로 채택. best_chunk_per_doc(1/doc)·MAX_CHUNKS_PER_DOC
+        # (2/doc) 같은 per-doc cap 이 force chunks(정산·일당 등 본문)를 떨어뜨려
+        # LLM 답변 fail 하던 구조적 root cause fix. 상한은 아래 TOP_K cap 하나만.
+        guaranteed_chunks = [
+            c for c in raw_chunks if c.get("force_included_by_intent")
+        ]
+        matched_doc_count = len({
+            c.get("document_id")
+            for c in guaranteed_chunks
+            if c.get("document_id")
+        })
         # guaranteed_chunks 도 동일 결정적 정렬.
         guaranteed_chunks.sort(
             key=lambda c: (
