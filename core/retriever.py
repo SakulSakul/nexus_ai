@@ -1735,12 +1735,16 @@ def hybrid_search(
         # 회사 공금 횡령) 누락. TOP_K + MAX_CHUNKS_PER_DOC cap 무시하여
         # penalty force_include 청크 전부 추가. input tokens +~1500 추정
         # (Gemini 200K context 의 1% 미만, 무시 가능).
+        # PR-Phase-9-Fix-A: force_included_by_intent 조건 제거.
+        # 운영 검증(2026-05-25 Q5 사건사고 보고 절차) 의 ⚖️ 섹션 누락 회귀.
+        # user_incident_nodes=[] generic query 에서 force_included_by_intent=
+        # False 가 되어 penalty doc final 진입 실패 → ⚖️ 본문 부재.
+        # 위 주석 의도(penalty doc 모든 청크 강제 보존, +~1500 tokens 무시 가능)
+        # 그대로 실현 — nodes 매칭 무관 모든 penalty doc chunk 가 final 진입.
         for chunk in raw_chunks:
             if chunk.get("id") in final_chunk_ids:
                 continue
             if (chunk.get("doc_kind") or "") != "penalty":
-                continue
-            if not chunk.get("force_included_by_intent"):
                 continue
             final_rows.append(chunk)
             final_chunk_ids.add(chunk.get("id"))
