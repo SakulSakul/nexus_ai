@@ -1165,6 +1165,12 @@ def ask(
         except Exception:
             pass
         _user_nodes = sorted(_question_nodes)
+        # PR-Phase-10.2-Fix-E: Domain-Lock 의 chunk matched 의존성 제거 위해
+        # contexts_raw 의 모든 chunks 에 _user_incident_nodes 첨부. balanced
+        # contexts 는 동일 dict 참조라 category_visual 0순위 Domain-Lock 이 활용.
+        for _c in (contexts_raw or []):
+            if isinstance(_c, dict):
+                _c["_user_incident_nodes"] = list(_user_nodes)
         print(
             f"[chatbot:ask:validator_input] user_incident_nodes={_user_nodes} "
             f"chunks_raw={len(contexts_raw or [])} "
@@ -1609,6 +1615,12 @@ def ask_stream(
         except Exception:
             pass
         _user_nodes = sorted(_question_nodes)
+        # PR-Phase-10.2-Fix-E: Domain-Lock 의 chunk matched 의존성 제거 위해
+        # contexts_raw 의 모든 chunks 에 _user_incident_nodes 첨부. balanced
+        # contexts 는 동일 dict 참조라 category_visual 0순위 Domain-Lock 이 활용.
+        for _c in (contexts_raw or []):
+            if isinstance(_c, dict):
+                _c["_user_incident_nodes"] = list(_user_nodes)
         print(
             f"[chatbot:ask_stream:validator_input] user_incident_nodes={_user_nodes} "
             f"chunks_raw={len(contexts_raw or [])} "
