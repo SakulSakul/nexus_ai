@@ -240,17 +240,19 @@ CATEGORY_VISUAL: dict[str, tuple[str, str]] = {
 }
 _CATEGORY_DEFAULT = ("📋", "#475569")
 
-# PR-Phase-10-Fix-A: Domain-Lock 매핑 — user_incident_nodes 의 명확
-# 도메인 매칭 시 카테고리 강제 결정. chunks majority 의 ⚠️ 안전 오인식
-# 차단. 운영 검증(2026-05-25 N3·N4·N6·N15) 의 6건 misalignment 직접 fix.
+# PR-Phase-10-Fix-A + PR-Phase-10.3-Fix-F: Domain-Lock Tier System
+# Tier 1 (명확/specific) > Tier 2 (광범위/broad) priority.
+# 운영 검증(2026-05-25 14:31) 의 N6-1 발견 — LLM rewriter 가 광범위 nodes
+# (정보보안/회사정보) 함께 추출 시 명확 nodes (외부강의신고) lock 의 우선순위
+# 정정. Tier 1 매칭 있으면 Tier 2 무시.
+#
 # ethics nodes (횡령/배임/뇌물 등) 는 단일 카테고리 매핑 불가 (CSR/공정거래
 # /재무 다중 가능) — lock 제외, force-include 1순위 fallback 활용.
-NODE_TO_CATEGORY_LOCK: dict[str, str] = {
-    # 정보보안 — 명확 매핑
-    "정보보안": "정보보안", "정보유출": "정보보안",
-    "개인정보유출": "정보보안", "고객정보": "정보보안",
-    "회사정보": "정보보안", "회사자료유출": "정보보안",
-    "해킹": "정보보안", "악성코드": "정보보안",
+
+# Tier 1: 명확 매핑 — specific domain trigger nodes (우선 적용)
+NODE_TO_CATEGORY_LOCK_TIER1: dict[str, str] = {
+    # CSR — 윤리/외부활동 명확 매핑
+    "외부강의신고": "CSR",
     # 인사 — HR domain (성희롱/괴롭힘/근무기강/복리후생)
     "성희롱": "인사", "괴롭힘": "인사", "폭언폭력": "인사",
     "근무기강": "인사", "근무태만": "인사", "복리후생": "인사",
@@ -259,9 +261,24 @@ NODE_TO_CATEGORY_LOCK: dict[str, str] = {
     # 환경 — 명확
     "환경관리": "환경", "환경법규": "환경", "폐기물관리": "환경",
     "환경사고": "환경", "환경위반": "환경", "환경경영": "환경",
-    # 안전 — 명확
+}
+
+# Tier 2: 광범위 매핑 — broad domain nodes (fallback)
+NODE_TO_CATEGORY_LOCK_TIER2: dict[str, str] = {
+    # 정보보안 — broad infosec nodes
+    "정보보안": "정보보안", "정보유출": "정보보안",
+    "개인정보유출": "정보보안", "고객정보": "정보보안",
+    "회사정보": "정보보안", "회사자료유출": "정보보안",
+    "해킹": "정보보안", "악성코드": "정보보안",
+    # 안전 — broad safety nodes
     "안전점검": "안전", "근로자안전": "안전", "안전관리": "안전",
     "시설안전": "안전",
+}
+
+# 호환성 — 외부 모듈이 NODE_TO_CATEGORY_LOCK 참조하는 경우 대비
+NODE_TO_CATEGORY_LOCK: dict[str, str] = {
+    **NODE_TO_CATEGORY_LOCK_TIER1,
+    **NODE_TO_CATEGORY_LOCK_TIER2,
 }
 
 
@@ -327,22 +344,27 @@ def category_visual(
                 matched = c.get("matched_incident_nodes") or []
                 if isinstance(matched, list):
                     nodes_union.update(matched)
-        locked_cats: dict = {}
-        for node in nodes_union:
-            lock_cat = NODE_TO_CATEGORY_LOCK.get(node)
-            if lock_cat:
-                locked_cats[lock_cat] = locked_cats.get(lock_cat, 0) + 1
-        if locked_cats:
-            # 최다 매칭 카테고리 lock (count 내림차순, 동률 시 이름 사전순).
-            # min(-count, name) — Q14 환경2 > 공정거래1 정확 선택.
-            primary_lock = min(
-                locked_cats.items(), key=lambda kv: (-kv[1], kv[0])
-            )[0]
-            if primary_lock in CATEGORY_VISUAL:
-                icon, color = CATEGORY_VISUAL.get(
-                    primary_lock, _CATEGORY_DEFAULT
-                )
-                return (icon, color, primary_lock)
+        # PR-Phase-10.3-Fix-F: Tier 1 (명확) → Tier 2 (광범위) priority.
+        # N6-1 시나리오: nodes=['거래행위','외부강의신고','윤리보고','정보보안','회사정보']
+        # Tier 1 매칭: 외부강의신고 → CSR (count 1)
+        # Tier 2 매칭: 정보보안+회사정보 → 정보보안 (count 2)
+        # Tier 1 우선 → 🤝 CSR (광범위 정보보안 lock 무시).
+        # min(-count, name): count 내림차순, 동률 시 이름 사전순.
+        for tier in (NODE_TO_CATEGORY_LOCK_TIER1, NODE_TO_CATEGORY_LOCK_TIER2):
+            tier_cats: dict = {}
+            for node in nodes_union:
+                lock_cat = tier.get(node)
+                if lock_cat:
+                    tier_cats[lock_cat] = tier_cats.get(lock_cat, 0) + 1
+            if tier_cats:
+                primary_lock = min(
+                    tier_cats.items(), key=lambda kv: (-kv[1], kv[0])
+                )[0]
+                if primary_lock in CATEGORY_VISUAL:
+                    icon, color = CATEGORY_VISUAL.get(
+                        primary_lock, _CATEGORY_DEFAULT
+                    )
+                    return (icon, color, primary_lock)
 
     # 1. PR-Category-Force-Include-Priority: 고신호 force-include doc prefix.
     # PR-Fix-Category-Doc-Majority (#236): chunk → doc 단위 dedupe.
