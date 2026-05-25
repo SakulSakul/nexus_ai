@@ -15,6 +15,17 @@ _CITATION_RE = re.compile(
     r"📎\s*\*{0,2}\s*\(\s*(\([^)]+\)[^)]*?)\s*\)\s*\*{0,2}"
 )
 
+# PR-Phase-13-Fix-A: 조항 번호(제N조/제N항/제N호) 정규화.
+# LLM 이 인용에 조항 번호를 붙이면 (예: "(재무) 내부거래 협의체 운영 규정
+# 제1조") doc_title (조항 번호 없음) 과 exact match 실패 → false positive
+# (hallucination 오탐) 발생. 매칭 시 조항 번호를 제거하여 차단.
+_DOC_TITLE_ARTICLE_RE = re.compile(r"\s+제\d+조(\s+제\d+항)?(\s+제\d+호)?$")
+
+
+def normalize_doc_title(title: str) -> str:
+    """doc_title 정규화 — 조항 번호 제거하여 false positive 차단."""
+    return _DOC_TITLE_ARTICLE_RE.sub("", title).strip()
+
 
 def extract_citations_from_answer(answer_text: str) -> list[str]:
     """답변 본문의 「📎 ((xxx) doc_title)」 인용 doc_title 추출."""
@@ -40,19 +51,20 @@ def verify_citations(
         for c in contexts if c.get("doc_title")
     }
 
-    matched = sorted(cited_titles & context_titles)
-    unmatched_raw = sorted(cited_titles - context_titles)
-    context_unused = sorted(context_titles - cited_titles)
+    # PR-Phase-13-Fix-A: 조항 번호 정규화 후 매칭. 인용에 제N조 등이 붙어도
+    # doc_title 과 매칭되어 false positive (hallucination 오탐) 차단.
+    ctx_norm = {normalize_doc_title(t) for t in context_titles}
+    cited_norm = {normalize_doc_title(t) for t in cited_titles}
 
-    # 정규화 — 「(인사)」 와 「(인사) 」 등 사소한 차이 해소
-    if unmatched_raw:
-        ctx_normalized = {t.replace(" ", "").lower() for t in context_titles}
-        unmatched = [
-            t for t in unmatched_raw
-            if t.replace(" ", "").lower() not in ctx_normalized
-        ]
-    else:
-        unmatched = []
+    matched = sorted(
+        t for t in cited_titles if normalize_doc_title(t) in ctx_norm
+    )
+    unmatched = sorted(
+        t for t in cited_titles if normalize_doc_title(t) not in ctx_norm
+    )
+    context_unused = sorted(
+        t for t in context_titles if normalize_doc_title(t) not in cited_norm
+    )
 
     return matched, unmatched, context_unused
 
