@@ -1153,6 +1153,7 @@ def ask(
     # doc_title 메타 보존 (_balance_by_doc_kind 가 일부 drop 한 force 청크까지 복구).
     try:
         import sys as _sys
+        from .citation_verifier import log_verification_result
         from .synthesis_validator import validate_and_repair_answer
         from .nexus_query_rewriter import (
             nexus_classify_to_incident_nodes, rewrite_query_for_retrieval,
@@ -1177,6 +1178,13 @@ def ask(
             f"chunks_balanced={len(contexts or [])}",
             file=_sys.stderr, flush=True,
         )
+        # PR-Phase-11.2-Fix-H: Citation Verification Layer 통합.
+        # 답변 인용 ↔ contexts_raw 의 doc_title 매칭 검증 + 로깅 (Phase-12
+        # Strict Constraint 규칙 ② 준수 측정). 측정 layer 만 — 답변 흐름 불변.
+        try:
+            log_verification_result(final, contexts_raw or [])
+        except Exception:
+            pass
         final, _ = validate_and_repair_answer(
             final, chunks=contexts_raw, user_incident_nodes=_user_nodes,
         )
@@ -1603,6 +1611,7 @@ def ask_stream(
     # ask() 와 동일 — question + rewritten union, chunks=contexts_raw.
     try:
         import sys as _sys
+        from .citation_verifier import log_verification_result
         from .synthesis_validator import validate_and_repair_answer
         from .nexus_query_rewriter import (
             nexus_classify_to_incident_nodes, rewrite_query_for_retrieval,
@@ -1627,6 +1636,11 @@ def ask_stream(
             f"chunks_balanced={len(contexts or [])}",
             file=_sys.stderr, flush=True,
         )
+        # PR-Phase-11.2-Fix-H: Citation Verification Layer 통합 (ask_stream).
+        try:
+            log_verification_result(answer_text, contexts_raw or [])
+        except Exception:
+            pass
         answer_text, _ = validate_and_repair_answer(
             answer_text, chunks=contexts_raw, user_incident_nodes=_user_nodes,
         )
