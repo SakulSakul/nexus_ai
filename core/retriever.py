@@ -197,6 +197,10 @@ INCIDENT_NODE_TO_DOMAIN: dict = {
     # PR-Phase-4-Fix-K: 공정거래 도메인 신설 (Q10 판매수수료 query fix).
     # 윤리위반/비위행위 광범위 매핑과 분리하여 공정거래 query 정확 분류.
     "공정거래위반": "fair_trade",
+    # PR-Phase-10.1-Fix-D: 외부강의신고 node 신설 (N6 강의료 query fix).
+    # (CSR) 대외출강 운영 지침의 meta.incident_nodes 와 일치. ethics 도메인
+    # 분류 — CSR/윤리 영역.
+    "외부강의신고": "ethics",
 }
 
 # 절차 키워드 — 매장 사고 응급/보고/분류 전반 (best chunk 선정용).
