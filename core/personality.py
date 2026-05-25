@@ -304,16 +304,29 @@ def category_visual(
     """
     from collections import Counter
 
-    # 0. PR-Phase-10-Fix-A: Domain-Lock — user_incident_nodes 의 명확 도메인
-    # 매칭 시 카테고리 강제 결정. chunks majority 의 ⚠️ 안전 오인식 차단.
-    # contexts 의 모든 chunks 의 matched_incident_nodes union 으로
-    # user_incident_nodes 추정 (호출 site 변경 없음).
+    # 0. PR-Phase-10-Fix-A + PR-Phase-10.2-Fix-E: Domain-Lock — user_incident_nodes
+    # 의 명확 도메인 매칭 시 카테고리 강제 결정. chunks majority 의 ⚠️ 안전
+    # 오인식 차단.
+    # PR-Phase-10.2 Fix E: chunks 의 matched_incident_nodes 의존성 제거.
+    # 사규 doc 의 meta.incident_nodes 가 부재한 경우 matched=[] 가 되어
+    # Domain-Lock 무력화되는 결함 fix. chatbot.py 가 contexts 의 모든
+    # chunks 에 _user_incident_nodes 속성 첨부 → 직접 활용.
+    # (공통) cross-cutting 사규의 nodes 보강(Schema 작업) 과 분리하여 코드
+    # 변경 만으로 즉시 fix.
     if contexts:
         nodes_union: set = set()
+        # 우선순위 1: chatbot.py 가 첨부한 _user_incident_nodes (PR-Phase-10.2)
         for c in contexts:
-            nodes = c.get("matched_incident_nodes") or []
-            if isinstance(nodes, list):
-                nodes_union.update(nodes)
+            un = c.get("_user_incident_nodes")
+            if isinstance(un, list) and un:
+                nodes_union.update(un)
+                break  # 모든 chunks 동일 값
+        # 우선순위 2 (fallback): chunks 의 matched_incident_nodes (기존 로직)
+        if not nodes_union:
+            for c in contexts:
+                matched = c.get("matched_incident_nodes") or []
+                if isinstance(matched, list):
+                    nodes_union.update(matched)
         locked_cats: dict = {}
         for node in nodes_union:
             lock_cat = NODE_TO_CATEGORY_LOCK.get(node)
