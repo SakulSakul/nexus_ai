@@ -246,13 +246,18 @@ _CATEGORY_DEFAULT = ("📋", "#475569")
 # (정보보안/회사정보) 함께 추출 시 명확 nodes (외부강의신고) lock 의 우선순위
 # 정정. Tier 1 매칭 있으면 Tier 2 무시.
 #
-# ethics nodes (횡령/배임/뇌물 등) 는 단일 카테고리 매핑 불가 (CSR/공정거래
-# /재무 다중 가능) — lock 제외, force-include 1순위 fallback 활용.
+# ethics nodes 중 윤리보고/윤리위반 은 CSR 로 매핑 (PR-Phase-14). ethics-only
+# query (자진 신고 등) 가 어느 tier 에도 안 걸려 chunks majority 의 ⚠️ 안전
+# 으로 오분류되던 회귀 fix. 단 도메인 specific node 와 동률 시 TIER1_PRIORITY
+# 로 CSR 이 양보 (공정거래/환경/인사 우선). 횡령/배임/뇌물 등 나머지 ethics
+# node 는 여전히 lock 제외 (다중 매핑 가능 — force-include fallback).
 
 # Tier 1: 명확 매핑 — specific domain trigger nodes (우선 적용)
 NODE_TO_CATEGORY_LOCK_TIER1: dict[str, str] = {
     # CSR — 윤리/외부활동 명확 매핑
     "외부강의신고": "CSR",
+    # PR-Phase-14-Fix-L: ethics-only query 의 ⚠️ 안전 오분류 fix.
+    "윤리보고": "CSR", "윤리위반": "CSR",
     # 인사 — HR domain (성희롱/괴롭힘/근무기강/복리후생)
     "성희롱": "인사", "괴롭힘": "인사", "폭언폭력": "인사",
     "근무기강": "인사", "근무태만": "인사", "복리후생": "인사",
@@ -262,6 +267,29 @@ NODE_TO_CATEGORY_LOCK_TIER1: dict[str, str] = {
     "환경관리": "환경", "환경법규": "환경", "폐기물관리": "환경",
     "환경사고": "환경", "환경위반": "환경", "환경경영": "환경",
 }
+
+# PR-Phase-14-Fix-M: TIER1 카테고리 priority — count 동률 시 도메인 specific
+# 카테고리(공정거래/환경/인사) 가 포괄적 CSR 보다 우선. alphabetical tiebreaker
+# 가 도메인 의미를 무시하던 회귀 방지 (예: 공정거래위반+윤리보고 → 공정거래).
+TIER1_PRIORITY: dict[str, int] = {
+    # 도메인 특정성 강한 카테고리 (priority 1)
+    "공정거래": 1,
+    "환경": 1,
+    "인사": 1,
+    # 포괄적/일반적 성격 카테고리 (priority 2) — 동률 시 양보
+    "CSR": 2,
+    # Tier 2 카테고리 — 미래 Tier 1 승격 대비 명시
+    "정보보안": 2,
+    "안전": 2,
+}
+
+# PR-Phase-14 2-lite: ethics→CSR lock defer 노드. 이 노드들이 동반되면
+# 윤리보고/윤리위반 의 CSR lock 을 건너뛰고 기존 fallback 을 쓴다 — 횡령/배임/
+# 뇌물/협력회사(부당거래) 등이 CSR 로 오분류되는 회귀 방지. 순수 ethics-only
+# query(자진 신고/CREDO) 만 CSR 로 잠근다.
+_ETHICS_DEFER_NODES: frozenset = frozenset(
+    {"비위행위", "횡령", "배임", "금전사고", "뇌물"}
+)
 
 # Tier 2: 광범위 매핑 — broad domain nodes (fallback)
 NODE_TO_CATEGORY_LOCK_TIER2: dict[str, str] = {
@@ -344,21 +372,30 @@ def category_visual(
                 matched = c.get("matched_incident_nodes") or []
                 if isinstance(matched, list):
                     nodes_union.update(matched)
+        # PR-Phase-14 2-lite: 윤리보고/윤리위반 → CSR lock 은 다른 misconduct
+        # 신호(횡령/배임/뇌물/비위행위/금전사고) 가 없을 때만 적용한다 (pure
+        # ethics-only). "자진 신고"/CREDO 처럼 윤리보고/윤리위반 만 있는 query 는
+        # CSR 로 회복하되, 횡령/배임/뇌물/협력회사(부당거래) 등은 기존 fallback
+        # 유지 → 회귀 0. (협력회사→공정거래 등 도메인 정답 보존.)
+        _ethics_defer = bool(nodes_union & _ETHICS_DEFER_NODES)
         # PR-Phase-10.3-Fix-F: Tier 1 (명확) → Tier 2 (광범위) priority.
         # N6-1 시나리오: nodes=['거래행위','외부강의신고','윤리보고','정보보안','회사정보']
         # Tier 1 매칭: 외부강의신고 → CSR (count 1)
         # Tier 2 매칭: 정보보안+회사정보 → 정보보안 (count 2)
         # Tier 1 우선 → 🤝 CSR (광범위 정보보안 lock 무시).
-        # min(-count, name): count 내림차순, 동률 시 이름 사전순.
+        # min(-count, priority, name): count 내림차순 → TIER1_PRIORITY → 사전순.
         for tier in (NODE_TO_CATEGORY_LOCK_TIER1, NODE_TO_CATEGORY_LOCK_TIER2):
             tier_cats: dict = {}
             for node in nodes_union:
+                if node in ("윤리보고", "윤리위반") and _ethics_defer:
+                    continue  # misconduct 동반 시 ethics→CSR lock 건너뜀
                 lock_cat = tier.get(node)
                 if lock_cat:
                     tier_cats[lock_cat] = tier_cats.get(lock_cat, 0) + 1
             if tier_cats:
                 primary_lock = min(
-                    tier_cats.items(), key=lambda kv: (-kv[1], kv[0])
+                    tier_cats.items(),
+                    key=lambda kv: (-kv[1], TIER1_PRIORITY.get(kv[0], 99), kv[0]),
                 )[0]
                 if primary_lock in CATEGORY_VISUAL:
                     icon, color = CATEGORY_VISUAL.get(
