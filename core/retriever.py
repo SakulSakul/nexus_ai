@@ -931,6 +931,7 @@ def hybrid_search(
     doc_kinds: list[str] | None = None,
     top_k: int | None = None,
     progress_callback=None,
+    raw_question: str | None = None,
 ) -> list[dict]:
     """PR-UI-Sub-Stage-Visualization: progress_callback(stage, payload).
     각 sub-stage 의 elapsed_ms / metadata 를 emit 하여 UI 의 sub-message
@@ -1010,12 +1011,27 @@ def hybrid_search(
         })
 
 
-        # 1) 사용자 입력 incident 분류 — 원본 + rewritten 합쳐 노드 추출.
-        user_incident_nodes = set(
-            nexus_classify_to_incident_nodes(question or "")
-        ) | set(
+        # 1) 사용자 입력 incident 분류 — PR-Phase-14.4: PII 마스킹 false-positive
+        # (_RE_DEPT 의 "00실" 패턴이 "비위사실"→"[익명]" 마스킹) 로 노드가 증발해
+        # L1_RPC 가 스킵되던 결함 fix. 노드 분류는 raw_question(마스킹 전) 기반 —
+        # 분류는 고정 trigger substring 매칭이라 PII 무관, 로그에도 미노출.
+        # 임베딩/BM25 검색은 masked(=question) 유지 (프라이버시 보존).
+        _node_src = raw_question if raw_question is not None else question
+        _nodes_raw = set(nexus_classify_to_incident_nodes(_node_src or ""))
+        _nodes_masked = set(nexus_classify_to_incident_nodes(question or ""))
+        user_incident_nodes = _nodes_raw | set(
             nexus_classify_to_incident_nodes(retrieval_query_text or "")
         )
+        # PR-Phase-14.4 모니터링: 마스킹이 노드를 떨어뜨린 경우만 가시화 (raw
+        # 텍스트는 PII 보호 위해 로그 제외 — masked 텍스트·노드 라벨만 출력).
+        _mask_dropped = _nodes_raw - _nodes_masked
+        if _mask_dropped:
+            print(
+                f"[retriever:input] mask_dropped_nodes={sorted(_mask_dropped)} "
+                f"masked='{(question or '')[:50]}' "
+                f"nodes_raw={sorted(_nodes_raw)} nodes_masked={sorted(_nodes_masked)}",
+                file=sys.stderr, flush=True,
+            )
 
         # 1.4) Track C v2 — Triple-layer fallback force-include.
         # Layer 1: SQL RPC (intersect SQL-side, 가장 신뢰)
