@@ -1681,6 +1681,12 @@ def _render_report_channels_panel(hotlines: dict[str, str]) -> None:
         st.markdown(
             "**📋 1차 보고**: SRMS 시스템 즉시 등록 (인지 시점 24시간 內)"
         )
+        # PR-Phase-15.2: SRMS 접속 link_button (시급성 순서 — 최상단).
+        st.link_button(
+            "🔗 SRMS 바로가기",
+            "https://rms.shinsegae.com/",
+            use_container_width=True,
+        )
         if ethics_hotline:
             st.link_button(
                 "🏢 신세계면세점 핫라인",
