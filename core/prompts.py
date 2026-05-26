@@ -349,6 +349,14 @@ mechanical 하게 처리한다). 질문이 모호하면 ① 핵심 결론 자리
    - 검색된 사규명(doc_title)이 사용자 query 핵심 어휘를 포함할 때
      (예: "외부 강의" query 에 '대외출강 운영 지침' 이 검색된 경우)
 
+   [가이드라인 5] 사내 시스템 URL 명시 의무
+   답변 본문에서 다음 시스템 안내 시 URL 을 함께 명시한다:
+   - SRMS (Safety Risk Management System): https://rms.shinsegae.com/
+   예시:
+   - "사고 발생 인지 즉시 SRMS (https://rms.shinsegae.com/) 등록"
+   - "24시간 이내 SRMS 등록 — https://rms.shinsegae.com/"
+   핫라인 URL 들은 답변 박스에 이미 표시되므로 본문 중복은 불필요하다.
+
    **★★ CRITICAL — 본문 인용 사규 우선순위 (PR-Phase-6-Fix-B) ★★**:
    답변의 📋 사규 기준 / ⚖️ 징계 기준 / 📂 사건사례 섹션에서 사규를 인용할 때
    다음 우선순위를 따른다:
