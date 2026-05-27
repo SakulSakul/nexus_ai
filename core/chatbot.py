@@ -22,6 +22,7 @@ from .pii_filter import mask_pii
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
+from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
 
 
 # ── Eval Mode: 모델 override (PR-Model-Self-Test) ──────────────
@@ -960,6 +961,16 @@ def ask(
 
     s = settings()
 
+    # PR-Phase-17.1: Query Classifier Shadow Mode — logging 전용 (action 없음).
+    # 기본 비활성(ENABLE_QUERY_CLASSIFIER_LOGGING=false) → 호출 자체 미실행 →
+    # ZERO regression. 실패해도 본 흐름 영향 없음 (classify_query 내부 흡수).
+    if ENABLE_QUERY_CLASSIFIER_LOGGING:
+        try:
+            classify_query(question)
+        except Exception as _qc_e:
+            print(f"[query_classifier:shadow] error: {_qc_e}",
+                  file=sys.stderr, flush=True)
+
     # Prompt injection 1차 필터 — LLM 호출 전 차단으로 토큰 비용·로깅 노이즈 절감.
     # 매치되면 LLM 미호출 + critical 트리거 안 함 + 별도 로그만 남기고 거절.
     if _looks_like_injection(question):
@@ -1444,6 +1455,14 @@ def ask_stream(
     검수 회차(run_review) 등 답변 완성본만 필요한 호출자는 기존 ask() 사용.
     """
     s = settings()
+
+    # PR-Phase-17.1: Query Classifier Shadow Mode (ask_stream) — logging 전용.
+    if ENABLE_QUERY_CLASSIFIER_LOGGING:
+        try:
+            classify_query(question)
+        except Exception as _qc_e:
+            print(f"[query_classifier:shadow] error: {_qc_e}",
+                  file=sys.stderr, flush=True)
 
     def _emit(stage: str, payload: dict | None = None) -> None:
         if progress_callback is None:
