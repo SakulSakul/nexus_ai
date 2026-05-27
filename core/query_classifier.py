@@ -6,10 +6,11 @@
 - ENABLE_QUERY_CLASSIFIER_LOGGING 기본 false → 머지 시 ZERO regression
   (기본값에서는 ask/ask_stream 의 shadow 호출 자체가 실행 안 됨).
 - ENABLE_QUERY_CLASSIFIER_ACTION 기본 false → action 미적용, logging/측정 전용.
-- 정확도 sim 은 pages/admin.py 의 "🧭 Classifier Sim" 탭에서 실 Gemini 로 실행
+- 정확도 sim 은 pages/admin.py 의 "🧭 Classifier Sim" 탭에서 실 Claude 로 실행
   (live API test 는 admin 패널 버튼으로 embed — 운영 원칙 정합).
 
-Gemini 호출 패턴은 core/nexus_query_rewriter.py 와 동일 (google-genai Client).
+모델: Claude Haiku 4.5 (Anthropic SDK). 호출 패턴은 Critical Mode
+(core/chatbot.py:_gen_claude) 와 동일 — instruction following 강 → 1단어 출력 일관.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ ENABLE_QUERY_CLASSIFIER_LOGGING: bool = (
 ENABLE_QUERY_CLASSIFIER_ACTION: bool = (
     get_secret("ENABLE_QUERY_CLASSIFIER_ACTION", "false").lower() == "true"
 )
-_CLASSIFIER_MODEL: str = get_secret("QUERY_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
+CLASSIFIER_MODEL: str = get_secret("QUERY_CLASSIFIER_MODEL", "claude-haiku-4-5")
 
 CLASSIFIER_PROMPT = """당신은 신세계디에프 사규 챗봇의 query 분류기입니다.
 사용자 query 를 4 가지 카테고리 중 하나로 분류하세요:
@@ -46,28 +47,44 @@ CLASSIFIER_PROMPT = """당신은 신세계디에프 사규 챗봇의 query 분�
 - 정확히 한 단어로만 응답: simple_faq / standard / complex / critical
 - 다른 설명 금지
 
-Query: {question}"""
+Query: {question}
+
+Respond with ONE word only from these options: simple_faq, standard, complex, critical. Do not add any explanation."""
 
 
 def classify_query(question: str) -> dict:
     """Query 를 4-way 분류.
 
     Returns: {"category": str, "elapsed": float, "model": str}
-    Gemini 실패 시 category="standard" (안전 default) — 절대 raise 하지 않음
+    호출 실패 시 category="standard" (안전 default) — 절대 raise 하지 않음
     (shadow mode 에서 본 흐름을 깨지 않기 위함).
+
+    Claude Haiku 4.5 (Anthropic SDK) — Critical Mode(core/chatbot.py:_gen_claude)
+    와 동일 패턴. ANTHROPIC_API_KEY 재사용 (추가 secret 불필요).
     """
     start = time.perf_counter()
     category: str = "standard"
     try:
-        from google import genai
+        import anthropic
 
         s = settings()
-        cli = genai.Client(api_key=s.gemini_api_key)
-        res = cli.models.generate_content(
-            model=_CLASSIFIER_MODEL,
-            contents=CLASSIFIER_PROMPT.format(question=question or ""),
+        cli = anthropic.Anthropic(
+            api_key=s.anthropic_api_key, timeout=30.0, max_retries=0
         )
-        raw = (getattr(res, "text", "") or "").strip().lower()
+        res = cli.messages.create(
+            model=CLASSIFIER_MODEL,
+            max_tokens=50,
+            temperature=0.0,
+            messages=[{
+                "role": "user",
+                "content": CLASSIFIER_PROMPT.format(question=question or ""),
+            }],
+        )
+        raw = ""
+        for block in res.content:
+            if getattr(block, "type", None) == "text":
+                raw += getattr(block, "text", "") or ""
+        raw = raw.strip().lower()
         for v in _VALID:
             if v in raw:
                 category = v
@@ -84,7 +101,7 @@ def classify_query(question: str) -> dict:
             f"category={category} elapsed={elapsed:.2f}s",
             file=sys.stderr, flush=True,
         )
-    return {"category": category, "elapsed": elapsed, "model": _CLASSIFIER_MODEL}
+    return {"category": category, "elapsed": elapsed, "model": CLASSIFIER_MODEL}
 
 
 # ── 자동화 sim 데이터셋 (정답 = prompt few-shot 예시 기반 추정) ──
@@ -124,8 +141,8 @@ SIM_DATASET: dict[str, list[str]] = {
 def run_classifier_sim() -> dict:
     """SIM_DATASET 일괄 분류 + per-category 정확도 + 오분류 list.
 
-    실 Gemini 호출 (classify_query). pages/admin.py 의 "🧭 Classifier Sim"
-    탭에서 사용. 환경에 GEMINI_API_KEY 가 있어야 의미 있는 결과가 나온다
+    실 Claude 호출 (classify_query). pages/admin.py 의 "🧭 Classifier Sim"
+    탭에서 사용. 환경에 ANTHROPIC_API_KEY 가 있어야 의미 있는 결과가 나온다
     (없으면 모든 결과가 안전 default 'standard' 로 떨어짐).
     """
     per_category: dict = {}
