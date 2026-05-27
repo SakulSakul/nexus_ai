@@ -3420,7 +3420,7 @@ def main():
 
 
 def _tab_classifier_sim(sb):
-    """PR-Phase-17.1: Query Classifier 자동화 sim (실 Gemini 호출).
+    """PR-Phase-17.1: Query Classifier 자동화 sim (실 Claude Haiku 4.5 호출).
 
     SIM_DATASET 일괄 분류 → per-category 정확도 + 오분류 list + 평균 응답시간.
     live API test 를 admin 패널 버튼으로 embed (운영 원칙 정합). 버튼 클릭
@@ -3431,24 +3431,24 @@ def _tab_classifier_sim(sb):
     st.subheader("🧭 Query Classifier Sim (Phase-17.1 Shadow)")
     st.caption(
         "4-way 분류기(simple_faq/standard/complex/critical)의 정확도를 실 "
-        "Gemini 로 측정합니다. Shadow Mode — 운영 pipeline 무영향 "
+        "Claude Haiku 4.5 로 측정합니다. Shadow Mode — 운영 pipeline 무영향 "
         "(ENABLE_QUERY_CLASSIFIER_LOGGING 기본 false)."
     )
     from core.query_classifier import (
         run_classifier_sim,
         SIM_DATASET,
-        _CLASSIFIER_MODEL,
+        CLASSIFIER_MODEL,
         ENABLE_QUERY_CLASSIFIER_LOGGING,
         ENABLE_QUERY_CLASSIFIER_ACTION,
     )
     _total = sum(len(v) for v in SIM_DATASET.values())
     st.markdown(
-        f"- 모델: `{_CLASSIFIER_MODEL}`  \n"
+        f"- 모델: `{CLASSIFIER_MODEL}`  \n"
         f"- 데이터셋: {_total} query ({len(SIM_DATASET)} category)  \n"
         f"- flags: LOGGING=`{ENABLE_QUERY_CLASSIFIER_LOGGING}` / "
         f"ACTION=`{ENABLE_QUERY_CLASSIFIER_ACTION}`"
     )
-    if st.button("▶️ Classifier Sim 실행 (실 Gemini 호출)",
+    if st.button("▶️ Classifier Sim 실행 (실 Claude 호출)",
                  type="primary", key="run_classifier_sim"):
         with st.spinner(f"분류 중... ({_total} query)"):
             try:
