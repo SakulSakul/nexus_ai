@@ -3493,7 +3493,9 @@ def _tab_faq_cache_management(sb):
                 with st.spinner("현 시스템 답변 생성 중..."):
                     try:
                         from core.chatbot import ask as _live_ask
-                        _ans = _live_ask(sb, question=row["query_display"])
+                        _ans = _live_ask(
+                            sb, question=row["query_display"], category=None,
+                        )
                         ok = faq_cache_upsert(
                             row["query_display"],
                             answer_text=_ans.text,
