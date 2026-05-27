@@ -3371,6 +3371,196 @@ def _tab_search_compare(sb):
                         st.json(selected)
 
 
+def _tab_faq_cache_management(sb):
+    """PR-Phase-18.1: FAQ Cache 큐레이션 인터페이스.
+
+    nexus_faq_cache 의 FAQ 답변을 등록·Pre-compute·검토·승인한다.
+    응답 경로 미접촉 (Fast Path 는 18.2, ENABLE_FAST_PATH 기본 OFF).
+    """
+    import streamlit as st
+
+    from core.faq_cache import (
+        ENABLE_FAST_PATH,
+        faq_cache_approve,
+        faq_cache_delete,
+        faq_cache_get,
+        faq_cache_list,
+        faq_cache_stats,
+        faq_cache_upsert,
+    )
+
+    st.subheader("📦 FAQ Cache Management (Phase-18.1)")
+    st.caption(
+        "FAQ 답변을 큐레이션합니다. 등록 → Pre-compute(현 시스템 답변 자동 생성) "
+        "→ 검토/Edit → Approve(컴플라이언스 게이트). 승인된 비-critical 항목만 "
+        f"18.2 Fast Path 가 서빙합니다. ENABLE_FAST_PATH=`{ENABLE_FAST_PATH}` "
+        "(18.1 미사용)."
+    )
+
+    sb_admin = _supabase_admin()
+
+    # ── 통계 panel ──
+    try:
+        stt = faq_cache_stats()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("총 FAQ", stt["total"])
+        c2.metric("승인됨", stt["approved"])
+        c3.metric("총 hit", stt["total_hits"])
+        _top = stt.get("top")
+        c4.metric(
+            "최다 hit",
+            (f"{_top.get('hit_count', 0)}" if _top else "0"),
+            help=(_top.get("query_display") if _top else None),
+        )
+    except Exception as e:
+        st.warning(f"통계 조회 실패: {type(e).__name__}: {e}")
+
+    # ── Add new FAQ ──
+    with st.expander("➕ Add new FAQ"):
+        with st.form("faq_add_form"):
+            q_disp = st.text_input("query (원문)", key="faq_add_q")
+            cat = st.selectbox(
+                "category", ["(없음)", *CATEGORIES], key="faq_add_cat",
+            )
+            ans = st.text_area(
+                "answer_text (선택 — 비우면 Pre-compute 권장)",
+                key="faq_add_ans", height=120,
+            )
+            is_crit = st.checkbox(
+                "is_critical (체크 시 Fast Path 서빙 제외)",
+                value=False, key="faq_add_crit",
+            )
+            submitted = st.form_submit_button("저장", type="primary")
+        if submitted:
+            if not (q_disp or "").strip():
+                st.error("query 를 입력하세요.")
+            else:
+                ok = faq_cache_upsert(
+                    q_disp,
+                    answer_text=ans or "",
+                    category=(None if cat == "(없음)" else cat),
+                    is_critical=is_crit,
+                    source="manual",
+                )
+                if ok:
+                    _audit(sb_admin, action="faq_upsert", target=q_disp)
+                    st.success("저장됨. 아래 목록에서 Pre-compute/Approve 진행.")
+                    st.rerun()
+                else:
+                    st.error("저장 실패 (service_role 키/네트워크 확인).")
+
+    # ── Phase 2 Hook (disabled) ──
+    st.button(
+        "📈 Top N from query_logs (Phase 2)",
+        disabled=True,
+        help="Phase 2: 운영 배포 후 활성화. 베타 단계에서는 Manual 큐레이션만.",
+        key="faq_phase2_hook",
+    )
+
+    st.divider()
+
+    # ── FAQ list + row 액션 ──
+    rows = faq_cache_list(limit=50)
+    if not rows:
+        st.info("등록된 FAQ 가 없습니다. 위 'Add new FAQ' 로 추가하세요.")
+        return
+
+    st.markdown(f"**FAQ 목록 ({len(rows)}건, 승인 우선 · hit 내림차순)**")
+    for row in rows:
+        fid = row["id"]
+        badge = "✅" if row.get("approved") else "⏳"
+        crit = " 🚨critical" if row.get("is_critical") else ""
+        title = (
+            f"{badge} {row.get('query_display', '')}  "
+            f"· {row.get('category') or '-'} · hit {row.get('hit_count', 0)}{crit}"
+        )
+        with st.expander(title):
+            st.text_area(
+                "answer_text", value=row.get("answer_text") or "",
+                key=f"faq_ans_{fid}", height=140,
+            )
+            new_cat = st.selectbox(
+                "category", ["(없음)", *CATEGORIES],
+                index=(
+                    (CATEGORIES.index(row["category"]) + 1)
+                    if row.get("category") in CATEGORIES else 0
+                ),
+                key=f"faq_cat_{fid}",
+            )
+            b1, b2, b3, b4, b5 = st.columns(5)
+
+            if b1.button("🔄 Pre-compute", key=f"faq_pre_{fid}"):
+                with st.spinner("현 시스템 답변 생성 중..."):
+                    try:
+                        from core.chatbot import ask as _live_ask
+                        _ans = _live_ask(sb, question=row["query_display"])
+                        ok = faq_cache_upsert(
+                            row["query_display"],
+                            answer_text=_ans.text,
+                            category=(None if new_cat == "(없음)" else new_cat),
+                            is_critical=row.get("is_critical", False),
+                            source="precompute",
+                        )
+                        if ok:
+                            _audit(sb_admin, action="faq_precompute",
+                                   target=row["query_display"])
+                            st.success("답변 생성·저장됨. 검토 후 Approve.")
+                            st.rerun()
+                        else:
+                            st.error("저장 실패.")
+                    except Exception as e:
+                        st.error(f"Pre-compute 실패: {type(e).__name__}: {e}")
+
+            if b2.button("✏️ Edit 저장", key=f"faq_edit_{fid}"):
+                ok = faq_cache_upsert(
+                    row["query_display"],
+                    answer_text=st.session_state.get(f"faq_ans_{fid}", ""),
+                    category=(None if new_cat == "(없음)" else new_cat),
+                    is_critical=row.get("is_critical", False),
+                    source=row.get("source", "manual"),
+                )
+                if ok:
+                    _audit(sb_admin, action="faq_edit", target=row["query_display"])
+                    st.success("수정 저장됨.")
+                    st.rerun()
+                else:
+                    st.error("저장 실패.")
+
+            if b3.button("🧪 Test", key=f"faq_test_{fid}"):
+                hit = faq_cache_get(row["query_display"])
+                if hit:
+                    st.success("Cache HIT (승인·비critical) ✓")
+                    st.json(hit)
+                else:
+                    st.warning(
+                        "Cache MISS — 미승인/critical/빈 답변 중 하나. "
+                        "Approve 후 다시 Test."
+                    )
+
+            if b4.button("✅ Approve", key=f"faq_appr_{fid}"):
+                actor = st.session_state.get("admin_actor") or "admin"
+                if faq_cache_approve(fid, actor):
+                    _audit(sb_admin, action="faq_approve",
+                           target=row["query_display"])
+                    st.success("승인됨 ✓")
+                    st.rerun()
+                else:
+                    st.error("승인 실패 (answer_text 가 비어있는지 확인).")
+
+            if b5.button("🗑️ Delete", key=f"faq_del_{fid}"):
+                if st.session_state.get(f"faq_del_confirm_{fid}"):
+                    if faq_cache_delete(fid):
+                        _audit(sb_admin, action="faq_delete",
+                               target=row["query_display"])
+                        st.success("삭제됨.")
+                        st.rerun()
+                    else:
+                        st.error("삭제 실패.")
+                else:
+                    st.session_state[f"faq_del_confirm_{fid}"] = True
+                    st.warning("한 번 더 누르면 삭제됩니다.")
+
+
 def main():
     _require_auth()
 
@@ -3397,7 +3587,7 @@ def main():
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
         "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset", "🚨 Auto-Fixer",
-        "🧭 Classifier Sim",
+        "🧭 Classifier Sim", "📦 FAQ Cache",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3417,6 +3607,7 @@ def main():
     with tabs[15]: _tab_auto_testset(sb)
     with tabs[16]: _tab_auto_fixer(sb)
     with tabs[17]: _tab_classifier_sim(sb)
+    with tabs[18]: _tab_faq_cache_management(sb)
 
 
 def _tab_classifier_sim(sb):
