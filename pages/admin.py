@@ -3397,6 +3397,7 @@ def main():
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
         "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset", "🚨 Auto-Fixer",
+        "🧭 Classifier Sim",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3415,6 +3416,61 @@ def main():
     with tabs[14]: _tab_chunk_meta(sb)
     with tabs[15]: _tab_auto_testset(sb)
     with tabs[16]: _tab_auto_fixer(sb)
+    with tabs[17]: _tab_classifier_sim(sb)
+
+
+def _tab_classifier_sim(sb):
+    """PR-Phase-17.1: Query Classifier 자동화 sim (실 Gemini 호출).
+
+    SIM_DATASET 일괄 분류 → per-category 정확도 + 오분류 list + 평균 응답시간.
+    live API test 를 admin 패널 버튼으로 embed (운영 원칙 정합). 버튼 클릭
+    시에만 Gemini 호출 — 평시 비용 0.
+    """
+    import streamlit as st
+
+    st.subheader("🧭 Query Classifier Sim (Phase-17.1 Shadow)")
+    st.caption(
+        "4-way 분류기(simple_faq/standard/complex/critical)의 정확도를 실 "
+        "Gemini 로 측정합니다. Shadow Mode — 운영 pipeline 무영향 "
+        "(ENABLE_QUERY_CLASSIFIER_LOGGING 기본 false)."
+    )
+    from core.query_classifier import (
+        run_classifier_sim,
+        SIM_DATASET,
+        _CLASSIFIER_MODEL,
+        ENABLE_QUERY_CLASSIFIER_LOGGING,
+        ENABLE_QUERY_CLASSIFIER_ACTION,
+    )
+    _total = sum(len(v) for v in SIM_DATASET.values())
+    st.markdown(
+        f"- 모델: `{_CLASSIFIER_MODEL}`  \n"
+        f"- 데이터셋: {_total} query ({len(SIM_DATASET)} category)  \n"
+        f"- flags: LOGGING=`{ENABLE_QUERY_CLASSIFIER_LOGGING}` / "
+        f"ACTION=`{ENABLE_QUERY_CLASSIFIER_ACTION}`"
+    )
+    if st.button("▶️ Classifier Sim 실행 (실 Gemini 호출)",
+                 type="primary", key="run_classifier_sim"):
+        with st.spinner(f"분류 중... ({_total} query)"):
+            try:
+                res = run_classifier_sim()
+            except Exception as e:
+                st.error(f"sim 실행 실패: {type(e).__name__}: {e}")
+                return
+        acc = res["accuracy"]
+        st.metric(
+            "Overall 정확도",
+            f"{acc:.1%} ({res['overall_correct']}/{res['overall_total']})",
+        )
+        st.caption(f"평균 응답시간: {res['avg_elapsed']:.2f}s / query")
+        st.markdown("**per-category 정확도**")
+        for cat, d in res["per_category"].items():
+            pct = (d["correct"] / d["total"] * 100) if d["total"] else 0
+            st.markdown(f"- `{cat}`: {d['correct']}/{d['total']} ({pct:.0f}%)")
+        if res["misclassified"]:
+            st.markdown(f"**⚠️ 오분류 {len(res['misclassified'])}건**")
+            st.dataframe(res["misclassified"], use_container_width=True)
+        else:
+            st.success("오분류 0건 — 전체 정합 ✓")
 
 
 def _tab_auto_meta(sb):
