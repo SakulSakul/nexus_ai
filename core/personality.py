@@ -291,6 +291,13 @@ _ETHICS_DEFER_NODES: frozenset = frozenset(
     {"비위행위", "횡령", "배임", "금전사고", "뇌물"}
 )
 
+# PR-Phase-16.1-Fix-D: ethics/integrity 노드 — 도메인(tier1/tier2) 무매칭 시
+# 최후 CSR fallback. 윤리보고/윤리위반 + 미스컨덕트(비위행위/횡령/배임/금전사고/
+# 뇌물). 도메인 specific 노드가 있으면 그 도메인 우선, 없을 때만 → CSR.
+_ETHICS_FALLBACK_NODES: frozenset = _ETHICS_DEFER_NODES | frozenset(
+    {"윤리보고", "윤리위반"}
+)
+
 # Tier 2: 광범위 매핑 — broad domain nodes (fallback)
 NODE_TO_CATEGORY_LOCK_TIER2: dict[str, str] = {
     # 정보보안 — broad infosec nodes
@@ -377,18 +384,20 @@ def category_visual(
         # ethics-only). "자진 신고"/CREDO 처럼 윤리보고/윤리위반 만 있는 query 는
         # CSR 로 회복하되, 횡령/배임/뇌물/협력회사(부당거래) 등은 기존 fallback
         # 유지 → 회귀 0. (협력회사→공정거래 등 도메인 정답 보존.)
-        _ethics_defer = bool(nodes_union & _ETHICS_DEFER_NODES)
+        # PR-Phase-16.1-Fix-D: ethics→CSR 을 "최후 fallback tier" 로 강등.
+        # Phase-14 의 _ethics_defer guard 가 윤리보고/윤리위반→CSR 을 무력화해
+        # Domain-Lock 빈손 → fallback noise(영업/재무/안전) 추락하던 결함 fix.
+        # 도메인 specific 노드(외부강의신고/성희롱/공정거래위반/환경/정보보안/안전)
+        # 가 하나라도 매칭되면 그 도메인 우선, 아무 도메인도 없을 때만 ethics/
+        # integrity 노드 → CSR. (협력회사는 공정거래위반 보유 → 공정거래 우선 보존.)
+        # 윤리보고/윤리위반 은 도메인 loop 에서 제외 — ethics fallback 전용.
         # PR-Phase-10.3-Fix-F: Tier 1 (명확) → Tier 2 (광범위) priority.
-        # N6-1 시나리오: nodes=['거래행위','외부강의신고','윤리보고','정보보안','회사정보']
-        # Tier 1 매칭: 외부강의신고 → CSR (count 1)
-        # Tier 2 매칭: 정보보안+회사정보 → 정보보안 (count 2)
-        # Tier 1 우선 → 🤝 CSR (광범위 정보보안 lock 무시).
         # min(-count, priority, name): count 내림차순 → TIER1_PRIORITY → 사전순.
         for tier in (NODE_TO_CATEGORY_LOCK_TIER1, NODE_TO_CATEGORY_LOCK_TIER2):
             tier_cats: dict = {}
             for node in nodes_union:
-                if node in ("윤리보고", "윤리위반") and _ethics_defer:
-                    continue  # misconduct 동반 시 ethics→CSR lock 건너뜀
+                if node in ("윤리보고", "윤리위반"):
+                    continue  # ethics 노드는 도메인 매칭 제외 (아래 최후 fallback)
                 lock_cat = tier.get(node)
                 if lock_cat:
                     tier_cats[lock_cat] = tier_cats.get(lock_cat, 0) + 1
@@ -402,6 +411,10 @@ def category_visual(
                         primary_lock, _CATEGORY_DEFAULT
                     )
                     return (icon, color, primary_lock)
+        # 최후 fallback: 도메인 무매칭 + ethics/integrity 노드 존재 → CSR.
+        if nodes_union & _ETHICS_FALLBACK_NODES:
+            icon, color = CATEGORY_VISUAL.get("CSR", _CATEGORY_DEFAULT)
+            return (icon, color, "CSR")
 
     # 1. PR-Category-Force-Include-Priority: 고신호 force-include doc prefix.
     # PR-Fix-Category-Doc-Majority (#236): chunk → doc 단위 dedupe.
