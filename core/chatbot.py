@@ -23,6 +23,7 @@ from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
+from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
 
 
 # ── Eval Mode: 모델 override (PR-Model-Self-Test) ──────────────
@@ -392,6 +393,39 @@ def _log_query_logs_insert_success(
     # 같은 process 내 1회만 dump — 이미 logged 면 skip (failure path 와
     # 동일 _ROLE_DIAGNOSTIC_LOGGED guard 공유).
     _log_role_diagnostic_once(supabase)
+
+
+def _log_faq_cache_hit(
+    supabase: Any, *, masked: str, category: str | None, s: Any,
+) -> int | None:
+    """PR-Phase-18.2: Fast Path cache hit 을 query_logs 에 경량 기록.
+
+    chat_provider="faq_cache" / elapsed_ms=0 으로 표시해 hit rate·👍/👎
+    피드백을 식별 가능하게 한다. 실패해도 응답 흐름 불변(try/except 흡수).
+    반환: query_logs.id 또는 None (피드백 update 용).
+    """
+    _payload = {
+        "category":            category if category and category != "전체" else None,
+        "query_masked":        masked,
+        "is_critical":         False,
+        "critical_kind":       None,
+        "hit_chunk_ids":       [],
+        "hit_categories":      [],
+        "env":                 s.env_tag,
+        "embed_model_version": s.embed_model,
+        "chat_provider":       "faq_cache",
+        "chat_model_version":  None,
+        "elapsed_ms":          0,
+        "used_fallback":       False,
+    }
+    try:
+        ins = supabase.table("query_logs").insert(_payload).execute()
+        _qid = ins.data[0].get("id") if ins.data else None
+        _log_query_logs_insert_success(_qid, list(_payload.keys()), supabase=supabase)
+        return _qid
+    except Exception as _e:
+        _log_query_logs_insert_failure(list(_payload.keys()), _e, supabase=supabase)
+        return None
 
 
 @dataclass
@@ -1019,6 +1053,26 @@ def ask(
     if not detection.triggered:
         detection = detect(masked, keywords)
 
+    # PR-Phase-18.2: FAQ Fast Path — 승인된 비-critical 캐시 hit 시 즉시 반환.
+    # detect() 이후라 critical 쿼리는 위에서 detection.triggered=True 로 판정 →
+    # 이 gate 우회 → 정상 critical pipeline(핫라인) 진입 보장. 또한 faq_cache_get
+    # 은 approved·is_critical=false 만 반환 → 이중 가드. flag OFF(기본) 시 미진입.
+    if ENABLE_FAST_PATH and not detection.triggered:
+        _faq_hit = faq_cache_get(question)
+        if _faq_hit:
+            _qid = _log_faq_cache_hit(supabase, masked=masked, category=category, s=s)
+            _emit("complete")
+            return Answer(
+                text=_faq_hit["answer_text"],
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=0.0,
+                query_log_id=_qid,
+                confidence="high",
+            )
+
     # 카테고리 필터:
     # 1) 명시 인자(category) 가 있으면 그것 + '공통' 합집합으로 폭 넓힘
     # 2) 명시 인자 없으면 질의에서 자동 추론(infer_categories) — 상위 3개
@@ -1500,6 +1554,26 @@ def ask_stream(
         )
         yield ("done", ans)
         return
+
+    # PR-Phase-18.2: FAQ Fast Path (streaming) — cache hit 시 단일 done.
+    # 위 critical 블록에서 triggered 는 이미 위임 return → 여기 도달 = non-critical.
+    # faq_cache_get 의 approved·is_critical=false 가드로 핫라인/미검토 답변 차단.
+    if ENABLE_FAST_PATH:
+        _faq_hit = faq_cache_get(question)
+        if _faq_hit:
+            _qid = _log_faq_cache_hit(supabase, masked=masked, category=category, s=s)
+            _emit("complete")
+            yield ("done", Answer(
+                text=_faq_hit["answer_text"],
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=0.0,
+                query_log_id=_qid,
+                confidence="high",
+            ))
+            return
 
     # 일반 모드 — streaming 진행
     cats: list[str] | None

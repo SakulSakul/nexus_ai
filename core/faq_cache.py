@@ -59,6 +59,41 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def faq_cache_peek(query: str) -> Optional[dict]:
+    """Read-only 조회 — hit_count 를 증가시키지 않는다 (faq_cache_get 과 차이).
+
+    Admin stress test / 검증 도구 전용. 프로덕션 응답 경로(Fast Path)는
+    faq_cache_get 을 써서 hit_count 가 정상 누적되어야 하므로, latency 반복
+    측정 시 통계 오염을 피하려고 부작용 없는 이 함수를 사용한다.
+    """
+    sb = _get_sb()
+    if not sb:
+        return None
+    try:
+        normalized = normalize_query(query)
+        if not normalized:
+            return None
+        r = (
+            sb.table("nexus_faq_cache")
+            .select("id,answer_text,category,incident_nodes,hit_count")
+            .eq("query_normalized", normalized)
+            .eq("approved", True)
+            .eq("is_critical", False)
+            .limit(1)
+            .execute()
+        )
+        if not r.data:
+            return None
+        row = r.data[0]
+        if not (row.get("answer_text") or "").strip():
+            return None
+        return row
+    except Exception as e:
+        print(f"[faq_cache] peek failed: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+    return None
+
+
 def faq_cache_get(query: str) -> Optional[dict]:
     """승인된 비-critical FAQ 만 조회. hit 시 hit_count++ / last_hit_at 갱신.
 
