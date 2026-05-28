@@ -3385,6 +3385,7 @@ def _tab_faq_cache_management(sb):
         faq_cache_delete,
         faq_cache_get,
         faq_cache_list,
+        faq_cache_peek,
         faq_cache_stats,
         faq_cache_upsert,
     )
@@ -3414,6 +3415,66 @@ def _tab_faq_cache_management(sb):
         )
     except Exception as e:
         st.warning(f"통계 조회 실패: {type(e).__name__}: {e}")
+
+    # ── PR-Phase-18.2.3: Fast Path Latency Stress Test ──
+    with st.expander("📊 Fast Path Latency Stress Test"):
+        st.caption(
+            "faq_cache_peek (read-only — hit_count 미증가) 로 lookup latency 를 "
+            "반복 측정. HIT = 승인된 FAQ query, MISS = 미존재 query. Fast Path "
+            "활성화 전 lookup 비용(P50/95/99) 검증용. 통계·hit_count 영향 없음."
+        )
+        n_iter = st.number_input(
+            "쿼리당 반복 횟수", min_value=5, max_value=200, value=30, step=5,
+            key="faq_stress_iter",
+        )
+        if st.button("▶ 측정 실행", key="faq_stress_run"):
+            approved = [
+                r for r in faq_cache_list(limit=50, approved_only=True)
+                if (r.get("query_display") or "").strip()
+            ]
+            if not approved:
+                st.warning("승인된 FAQ 가 없습니다 — HIT 측정 불가. 먼저 Approve 하세요.")
+            else:
+                import time as _t
+
+                def _pct(samples, q):
+                    s = sorted(samples)
+                    return s[min(len(s) - 1, int(q * len(s)))]
+
+                hit, miss = [], []
+                _miss_q = f"__stress_miss__{_t.time()}__존재하지않는질의"
+                with st.spinner(
+                    f"측정 중 — HIT {len(approved)}건 × {int(n_iter)}, "
+                    f"MISS × {int(n_iter)}..."
+                ):
+                    for r in approved:
+                        _q = r["query_display"]
+                        for _ in range(int(n_iter)):
+                            _s = _t.perf_counter()
+                            faq_cache_peek(_q)
+                            hit.append((_t.perf_counter() - _s) * 1000)
+                    for _ in range(int(n_iter)):
+                        _s = _t.perf_counter()
+                        faq_cache_peek(_miss_q)
+                        miss.append((_t.perf_counter() - _s) * 1000)
+
+                cH, cM = st.columns(2)
+                cH.markdown(
+                    f"**HIT** (n={len(hit)})\n\n"
+                    f"P50 `{_pct(hit, 0.50):.1f} ms`\n\n"
+                    f"P95 `{_pct(hit, 0.95):.1f} ms`\n\n"
+                    f"P99 `{_pct(hit, 0.99):.1f} ms`"
+                )
+                cM.markdown(
+                    f"**MISS** (n={len(miss)})\n\n"
+                    f"P50 `{_pct(miss, 0.50):.1f} ms`\n\n"
+                    f"P95 `{_pct(miss, 0.95):.1f} ms`\n\n"
+                    f"P99 `{_pct(miss, 0.99):.1f} ms`"
+                )
+                st.caption(
+                    "read-only 측정이라 hit_count·통계 영향 없음. 실제 Fast Path "
+                    "HIT 는 여기에 UPDATE(hit_count++) 1 회 왕복이 더해진다."
+                )
 
     # ── Add new FAQ ──
     with st.expander("➕ Add new FAQ"):
