@@ -3444,7 +3444,7 @@ def _tab_faq_cache_management(sb):
                 )
                 if ok:
                     _audit(sb_admin, action="faq_upsert", target=q_disp)
-                    st.success("저장됨. 아래 목록에서 Pre-compute/Approve 진행.")
+                    st.toast("저장됨. 아래 목록에서 Pre-compute/Approve 진행.", icon="✅")
                     st.rerun()
                 else:
                     st.error("저장 실패 (service_role 키/네트워크 확인).")
@@ -3506,7 +3506,7 @@ def _tab_faq_cache_management(sb):
                         if ok:
                             _audit(sb_admin, action="faq_precompute",
                                    target=row["query_display"])
-                            st.success("답변 생성·저장됨. 검토 후 Approve.")
+                            st.toast("답변 생성·저장됨. 검토 후 Approve.", icon="✅")
                             st.rerun()
                         else:
                             st.error("저장 실패.")
@@ -3523,7 +3523,7 @@ def _tab_faq_cache_management(sb):
                 )
                 if ok:
                     _audit(sb_admin, action="faq_edit", target=row["query_display"])
-                    st.success("수정 저장됨.")
+                    st.toast("수정 저장됨.", icon="✅")
                     st.rerun()
                 else:
                     st.error("저장 실패.")
@@ -3544,7 +3544,7 @@ def _tab_faq_cache_management(sb):
                 if faq_cache_approve(fid, actor):
                     _audit(sb_admin, action="faq_approve",
                            target=row["query_display"])
-                    st.success("승인됨 ✓")
+                    st.toast("승인됨", icon="✅")
                     st.rerun()
                 else:
                     st.error("승인 실패 (answer_text 가 비어있는지 확인).")
@@ -3554,7 +3554,7 @@ def _tab_faq_cache_management(sb):
                     if faq_cache_delete(fid):
                         _audit(sb_admin, action="faq_delete",
                                target=row["query_display"])
-                        st.success("삭제됨.")
+                        st.toast("삭제됨.", icon="✅")
                         st.rerun()
                     else:
                         st.error("삭제 실패.")
