@@ -3901,7 +3901,7 @@ def _tab_ops_dashboard(sb):
 # ── PR-Phase-19.2.1: 동의어 사전 (사규 자동 추출 + 검수) ─────────
 
 def _tab_synonym_dictionary(sb):
-    """📚 동의어 사전 — 사규 chunk 의 동의어 자동 추출 (regex + Haiku 4.5) + 검수.
+    """📚 동의어 사전 — 사규 chunk 의 동의어 자동 추출 (regex + Opus 4.7) + 검수.
 
     18.6 _NEXUS_NL_TO_REGULATORY 하드코딩 dict 와 공존 (회귀 0). retrieval
     통합은 PR 19.2.2 에서 ENABLE_SYNONYM_EXPANSION flag 로 활성화.
@@ -3915,7 +3915,7 @@ def _tab_synonym_dictionary(sb):
 
     st.subheader("📚 동의어 사전 (Synonym Dictionary)")
     st.caption(
-        "사규 chunk 의 명시적 동의어 정의 (regex 0.7+ · Claude Haiku 4.5) 자동 추출 + 검수.  "
+        "사규 chunk 의 명시적 동의어 정의 (regex 0.7+ · Claude Opus 4.7) 자동 추출 + 검수.  "
         f"ENABLE_SYNONYM_EXPANSION=`{ENABLE_SYNONYM_EXPANSION}` (PR 19.2.2 에서 retrieval 통합)."
     )
 
@@ -3950,8 +3950,8 @@ def _tab_synonym_dictionary(sb):
     # ── 사규 분석 실행 ──
     st.markdown("### ▶️ 사규 분석 실행")
     st.caption(
-        "active 청크 전체를 regex + Claude Haiku 4.5 로 분석.  "
-        "비용 ~$1 (1000 청크 가정), 시간 1-2분. UNIQUE(primary,synonym) 중복 자동 skip."
+        "active 청크 전체를 regex + Claude Opus 4.7 로 분석.  "
+        "비용 ~$15 (1000 청크 가정), 시간 3-5분. UNIQUE(primary,synonym) 중복 자동 skip."
     )
 
     if st.button("🚀 사규 분석 시작", type="primary", key="syn_run"):
