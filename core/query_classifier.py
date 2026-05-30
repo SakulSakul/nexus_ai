@@ -20,8 +20,8 @@ from typing import Literal
 
 from .config import get_secret, settings
 
-ClassificationResult = Literal["simple_faq", "standard", "complex", "critical"]
-_VALID: tuple[str, ...] = ("simple_faq", "standard", "complex", "critical")
+ClassificationResult = Literal["simple_faq", "standard", "complex", "critical", "out_of_scope"]
+_VALID: tuple[str, ...] = ("simple_faq", "standard", "complex", "critical", "out_of_scope")
 
 ENABLE_QUERY_CLASSIFIER_LOGGING: bool = (
     get_secret("ENABLE_QUERY_CLASSIFIER_LOGGING", "false").lower() == "true"
@@ -32,10 +32,10 @@ ENABLE_QUERY_CLASSIFIER_ACTION: bool = (
 CLASSIFIER_MODEL: str = get_secret("QUERY_CLASSIFIER_MODEL", "claude-haiku-4-5")
 
 CLASSIFIER_PROMPT = """당신은 신세계디에프 사규 챗봇의 query 분류기입니다.
-사용자 query 를 4 가지 카테고리 중 하나로 분류하세요:
+사용자 query 를 5 가지 카테고리 중 하나로 분류하세요:
 
 1. simple_faq: 빈번하게 묻는 단순 안내 query (단일 답변 가능)
-   예: "자진 신고", "외부 강의 강의료", "휴가 신청 방법", "신고 방법 안내", "회의실 예약"
+   예: "자진 신고", "외부 강의 강의료", "휴가 신청 방법", "신고 방법 안내"
 2. standard: 일반 사규/절차/방법의 단순 조회 query (정보 탐색 의도 — "어떻게 / 방법 / 절차").
    포괄적 사내 규정 위반의 보고·신고 절차도 여기 포함 (특정 강력범죄 미명시).
    예: "성희롱 신고 방법", "환경 위반 신고", "공정거래 위반", "협력회사 부당행위", "위반사실 보고"
@@ -53,18 +53,31 @@ CLASSIFIER_PROMPT = """당신은 신세계디에프 사규 챗봇의 query 분�
    Negative (→ standard 로 분류): "성희롱 신고 방법"(방법 안내),
        "환경 위반 신고"(절차 조회), "공정거래 위반"(사규 조회),
        "위반사실 보고"(포괄적 위반 보고)
+5. out_of_scope: 사규/윤리/컴플라이언스 범위를 벗어난 query — 검색·생성을
+   건너뛰고 담당 부서로 라우팅. IT 시스템 장애, 총무 시설 예약, 개인 급여·
+   인사기록, 잡담/테스트, 타사 사규 등 단순 행정·외부 문의.
+   Positive 예: "VPN 접속 장애"(IT), "내 연봉 알려줘"(개인), "롯데면세점 사규"(타사),
+       "오늘 날씨"(일반상식), "안녕"/"hello"/"테스트"(잡담), "회의실 예약"(총무)
+   ★★ 절대 금지 (사용자 안전 — Critical False Positive=0):
+     - 신고/사고/위반/보고/제보/피해/발견/인지/유출/폭행/성희롱/횡령/범죄/
+       중대재해/응급/부상/사망/괴롭힘/사건/협박/감금 중 하나라도 포함 →
+       OOS 절대 금지 (critical 또는 standard 우선).
+     - 회사 사규/규정/지침/윤리에 조금이라도 걸칠 가능성이 있으면 standard
+       우선 (보수적 default — 애매할 때 OOS 로 빠지지 말 것).
+     - 회의실/PC/VPN 도 신고·사고 맥락이면 즉시 critical/standard 재판정
+       (예: "회의실에서 폭행 발생" = critical, "VPN 통한 정보유출" = critical).
 
 규칙:
-- 정확히 한 단어로만 응답: simple_faq / standard / complex / critical
+- 정확히 한 단어로만 응답: simple_faq / standard / complex / critical / out_of_scope
 - 다른 설명 금지
 
 Query: {question}
 
-Respond with ONE word only from these options: simple_faq, standard, complex, critical. Do not add any explanation."""
+Respond with ONE word only from these options: simple_faq, standard, complex, critical, out_of_scope. Do not add any explanation."""
 
 
 def classify_query(question: str) -> dict:
-    """Query 를 4-way 분류.
+    """Query 를 5-way 분류.
 
     Returns: {"category": str, "elapsed": float, "model": str}
     호출 실패 시 category="standard" (안전 default) — 절대 raise 하지 않음
@@ -122,7 +135,6 @@ SIM_DATASET: dict[str, list[str]] = {
         "외부 강의 강의료",
         "휴가 신청 방법",
         "신고 방법 안내",
-        "회의실 예약",
     ],
     "standard": [
         "성희롱 신고 방법",
@@ -145,6 +157,14 @@ SIM_DATASET: dict[str, list[str]] = {
         "비위사실 발견",
         "정보유출 신고 절차",
         "범죄사실 인지",
+    ],
+    "out_of_scope": [
+        "VPN 접속 장애",
+        "내 연봉 알려줘",
+        "롯데면세점 사규",
+        "오늘 날씨",
+        "안녕",
+        "회의실 예약",
     ],
 }
 
