@@ -970,11 +970,36 @@ def hybrid_search(
         # true 시 vector(embed_one) + keyword(tsquery/pgroonga) 양측에 동의어
         # primary_term 이 append 되어 18.6 의 vector gap 까지 해소.
         try:
-            from .synonym_expander import expand_query_with_synonyms
+            from .synonym_expander import expand_query_with_synonyms, ENABLE_SYNONYM_EXPANSION as _SYN_FLAG_MOD
+            # PR-Phase-19.2.3 진단 트랩 (next PR 에서 제거 예정).
+            # Streamlit Cloud 로그에 노출되는 stderr print 패턴 (logging.warning
+            # 은 root logger 미설정 시 미노출 가능 — 검증된 print 패턴 사용).
+            import sys as _sys
+            try:
+                from .config import get_secret as _gs
+                _flag_live = _gs("ENABLE_SYNONYM_EXPANSION", "NOT_SET")
+            except Exception:
+                _flag_live = "GET_SECRET_FAIL"
+            print(
+                f"[SYN_DIAG:retriever:CALL] ENABLE_module_level={_SYN_FLAG_MOD} "
+                f"ENABLE_live={_flag_live!r} "
+                f"q_in={(retrieval_query_text or '')[:60]!r}",
+                file=_sys.stderr, flush=True,
+            )
             retrieval_query_text, _syn_subs = expand_query_with_synonyms(
                 retrieval_query_text, supabase,
             )
-        except Exception:
+            print(
+                f"[SYN_DIAG:retriever:DONE] subs_count={len(_syn_subs)} "
+                f"q_out={(retrieval_query_text or '')[:80]!r}",
+                file=_sys.stderr, flush=True,
+            )
+        except Exception as _syn_e:
+            import sys as _sys
+            print(
+                f"[SYN_DIAG:retriever:EXCEPTION] {type(_syn_e).__name__}: {_syn_e}",
+                file=_sys.stderr, flush=True,
+            )
             _syn_subs = []
         if _syn_subs:
             _emit_sub("synonym_substitution", {"substitutions": _syn_subs})
