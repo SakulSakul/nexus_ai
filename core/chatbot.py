@@ -434,6 +434,7 @@ def _log_faq_cache_hit(
 def _log_oos_skip(
     supabase: Any, *, masked: str, category: str | None, s: Any,
     elapsed_ms: int = 0,
+    provider: str = "oos_skip",
 ) -> int | None:
     """PR-Phase-18.5.2: OOS Fast Skip 을 query_logs 에 경량 기록.
 
@@ -451,7 +452,7 @@ def _log_oos_skip(
         "hit_categories":      [],
         "env":                 s.env_tag,
         "embed_model_version": s.embed_model,
-        "chat_provider":       "oos_skip",
+        "chat_provider":       provider,
         "chat_model_version":  None,
         "elapsed_ms":          elapsed_ms,
         "used_fallback":       False,
@@ -1130,24 +1131,32 @@ def ask(
     if ENABLE_OOS_ROUTING and not detection.triggered:
         _cls = classify_query(question, supabase=supabase)
         if _cls.get("category") == "out_of_scope":
-            from .oos_router import oos_routing_message
-            # PR-Phase-18.3.1: Option B — classifier-only 측정에서 ask 진입부
-            # t0 기준 전체 시간으로 교체 (사용자 체감 latency 정합).
-            _oos_elapsed = time.perf_counter() - t0
-            _qid = _log_oos_skip(
+            from .oos_router import gated_oos_decision
+            if gated_oos_decision(supabase, question):
+                from .oos_router import oos_routing_message
+                # PR-Phase-18.3.1: Option B — classifier-only 측정에서 ask 진입부
+                # t0 기준 전체 시간으로 교체 (사용자 체감 latency 정합).
+                _oos_elapsed = time.perf_counter() - t0
+                _qid = _log_oos_skip(
+                    supabase, masked=masked, category=category, s=s,
+                    elapsed_ms=int(_oos_elapsed * 1000),
+                )
+                _emit("complete")
+                return Answer(
+                    text=oos_routing_message(supabase),
+                    is_critical=False,
+                    critical_kind=None,
+                    contexts=[],
+                    masked_question=masked,
+                    elapsed=_oos_elapsed,
+                    query_log_id=_qid,
+                    confidence="high",
+                )
+            # PR-OOS-Gate: 관련 사규 발견 -> OOS 취소, 정상 파이프라인 진행(override)
+            _log_oos_skip(
                 supabase, masked=masked, category=category, s=s,
-                elapsed_ms=int(_oos_elapsed * 1000),
-            )
-            _emit("complete")
-            return Answer(
-                text=oos_routing_message(supabase),
-                is_critical=False,
-                critical_kind=None,
-                contexts=[],
-                masked_question=masked,
-                elapsed=_oos_elapsed,
-                query_log_id=_qid,
-                confidence="high",
+                elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                provider="oos_override",
             )
 
     # 카테고리 필터:
@@ -1666,25 +1675,33 @@ def ask_stream(
     if ENABLE_OOS_ROUTING and not detection.triggered:
         _cls = classify_query(question, supabase=supabase)
         if _cls.get("category") == "out_of_scope":
-            from .oos_router import oos_routing_message
-            # PR-Phase-18.3.1: Option B — ask 진입 t0 기준 전체 시간.
-            _oos_elapsed = time.perf_counter() - t0
-            _qid = _log_oos_skip(
+            from .oos_router import gated_oos_decision
+            if gated_oos_decision(supabase, question):
+                from .oos_router import oos_routing_message
+                # PR-Phase-18.3.1: Option B — ask 진입 t0 기준 전체 시간.
+                _oos_elapsed = time.perf_counter() - t0
+                _qid = _log_oos_skip(
+                    supabase, masked=masked, category=category, s=s,
+                    elapsed_ms=int(_oos_elapsed * 1000),
+                )
+                _emit("complete")
+                yield ("done", Answer(
+                    text=oos_routing_message(supabase),
+                    is_critical=False,
+                    critical_kind=None,
+                    contexts=[],
+                    masked_question=masked,
+                    elapsed=_oos_elapsed,
+                    query_log_id=_qid,
+                    confidence="high",
+                ))
+                return
+            # PR-OOS-Gate: override -> 정상 스트리밍 진행
+            _log_oos_skip(
                 supabase, masked=masked, category=category, s=s,
-                elapsed_ms=int(_oos_elapsed * 1000),
+                elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                provider="oos_override",
             )
-            _emit("complete")
-            yield ("done", Answer(
-                text=oos_routing_message(supabase),
-                is_critical=False,
-                critical_kind=None,
-                contexts=[],
-                masked_question=masked,
-                elapsed=_oos_elapsed,
-                query_log_id=_qid,
-                confidence="high",
-            ))
-            return
 
     # 일반 모드 — streaming 진행
     cats: list[str] | None

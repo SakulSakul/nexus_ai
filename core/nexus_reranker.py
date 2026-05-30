@@ -311,3 +311,49 @@ def rerank_chunks(query: str, raw_chunks: list[dict]) -> list[dict]:
     )
 
     return reranked + tail
+
+
+# ── PR-OOS-Gate: Reranker-as-judge — 절대 관련도(0.0~1.0) ────────────────
+# rerank_chunks 는 순서만 바꾸므로 OOS 게이트용 절대 신호를 따로 산출한다.
+# 동일 _RERANK_MODEL / genai 클라이언트 재사용. 실패 시 1.0 (fail-open).
+_JUDGE_SYSTEM_TEXT = (
+    "당신은 DF COMPASS 사규(compliance) 앱의 관련도 심판입니다. "
+    "사용자 질문이 아래 사내 사규 청크들로 실제 답할 수 있는 주제인지 "
+    "relevance 0.0~1.0 으로 판정하세요. 청크가 질문 주제를 직접 다루면 "
+    "0.7~1.0, 스치면 0.4~0.6, 무관하면 0.0~0.3. "
+    'JSON 한 줄로만: {"relevance": <숫자>}'
+)
+
+
+def judge_relevance(query: str, chunks: list[dict]) -> float:
+    """질문 vs 사규 청크의 절대 관련도(0.0~1.0). OOS 게이트 전용.
+    실패(키 없음·API 오류·파싱 실패) → 1.0 (fail-open: OOS 취소 → 정상 파이프라인)."""
+    if not query or not chunks:
+        return 1.0
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception:
+        return 1.0
+    s = settings()
+    if not s.gemini_api_key:
+        return 1.0
+    try:
+        cli = genai.Client(api_key=s.gemini_api_key)
+        cfg = types.GenerateContentConfig(
+            system_instruction=_JUDGE_SYSTEM_TEXT,
+            temperature=0.0,
+            max_output_tokens=64,
+            response_mime_type="application/json",
+        )
+        res = cli.models.generate_content(
+            model=_RERANK_MODEL,
+            contents=_build_user_prompt(query, chunks[:3]),
+            config=cfg,
+        )
+        data = json.loads(_extract_response_text(res))
+        return max(0.0, min(1.0, float(data.get("relevance"))))
+    except Exception as e:
+        print(f"[oos-judge] FAILED -> fail-open 1.0: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+        return 1.0

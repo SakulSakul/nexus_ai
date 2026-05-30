@@ -64,3 +64,37 @@ def oos_routing_message(supabase: Any | None = None) -> str:
     except Exception:
         pass
     return _DEFAULT_OOS_MESSAGE
+
+
+# ── PR-OOS-Gate: Retrieval-gated OOS (Reranker-as-judge) ─────────────────
+# RRF 점수는 rank-fusion+boost 오염이라 임계치 부적합 → judge_relevance 사용.
+# ⚙ 임계치 — 🚦 회귀 콘솔(라이브)로 보정 필요. 시작값 0.6:
+#   "택시" 통과 / "회의실 예약"·"점심 메뉴" 차단 되도록 콘솔 돌려 조정.
+_OOS_OVERRIDE_THRESHOLD: float = 0.6
+
+
+def gated_oos_decision(supabase: Any, question: str) -> bool:
+    """분류기 out_of_scope 의 최종 게이트.
+    True = OOS 유지(라우팅) / False = OOS 취소(정상 in-scope override).
+      1) infer_categories 가 도메인 잡으면(무료 1차) -> in-scope(False)
+      2) hybrid_search(top_k=2) 프로브 -> 청크 0 이면 OOS 유지(True)
+      3) judge_relevance >= 임계치 -> in-scope(False), 미달 -> OOS 유지(True)
+    예외는 fail-open(False) -> 정상 파이프라인(기존 안전관 정합)."""
+    try:  # lazy import — chatbot<->oos_router 순환 회피
+        from .chatbot import infer_categories
+        if infer_categories(question):
+            return False
+    except Exception:
+        pass
+    try:
+        from .retriever import hybrid_search
+        from .nexus_reranker import judge_relevance
+        probe = hybrid_search(
+            supabase, question=question, raw_question=question,
+            categories=None, top_k=2,
+        ) or []
+        if not probe:
+            return True
+        return judge_relevance(question, probe) < _OOS_OVERRIDE_THRESHOLD
+    except Exception:
+        return False
