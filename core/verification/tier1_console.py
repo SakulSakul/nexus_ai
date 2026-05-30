@@ -54,6 +54,15 @@ def _route_only(question: str, supabase: Any, *, need_category: bool) -> dict:
     except Exception:
         classifier = ""
 
+    # PR-OOS-Gate: out_of_scope 면 실제 override 게이트까지 태워 라이브 정합
+    if classifier == "out_of_scope":
+        try:
+            from core.oos_router import gated_oos_decision
+            if not gated_oos_decision(supabase, question):
+                classifier = "standard"
+        except Exception:
+            pass
+
     nodes = set(nexus_classify_to_incident_nodes(question or ""))
     try:
         rew = rewrite_query_for_retrieval(question or "")
@@ -88,6 +97,8 @@ def _check_case(case: dict, routed: dict) -> list[str]:
     exp = case.get("expect") or {}
     if "classifier" in exp and routed["classifier"] != exp["classifier"]:
         failures.append(f"classifier 기대={exp['classifier']} 실제={routed['classifier'] or '_'}")
+    if "classifier_not" in exp and routed["classifier"] == exp["classifier_not"]:
+        failures.append(f"classifier 가 {exp['classifier_not']} 이면 안 됨 (실제={routed['classifier'] or '_'})")
     if "category" in exp and routed["category"] != exp["category"]:
         failures.append(f"category 기대={exp['category']} 실제={routed['category'] or '_'}")
     missing = [n for n in (exp.get("incident_nodes_include") or []) if n not in routed["incident_nodes"]]
