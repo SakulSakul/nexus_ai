@@ -1056,26 +1056,41 @@ def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None,
     )
 
 
-def _render_answer_meta(elapsed: float, model: str = "") -> None:
-    """답변 메타 가시성 (PR-Answer-Meta-Visibility).
+def _render_answer_meta(
+    elapsed: float | None, model: str = "", container=None,
+) -> None:
+    """답변 메타 가시성 (PR-Answer-Meta-Visibility + PR-Phase-18.7).
 
     응답 시간 + 모델명 표시. streaming 완료 + history replay 모두 일관 호출.
     미래 메트릭 (cache hit, token count) 추가 시 본 함수에 확장.
+
+    PR-Phase-18.7 변경:
+    - H1: elapsed=0 도 "⏱️ —" 로 표시 (#274 이전 OLD row 의 0 박힘 가시화).
+    - H2: container 인자 → streaming 완료 시 timer_placeholder 를 그대로
+      덮어써 시각 점프 / flicker 해소 (라이브 카운터 → 정적 meta 같은 자리).
+    - Fix-3: 시인성 강화 (#555 13px + border-top — 답변 본문과 분리).
     """
     parts: list[str] = []
-    if elapsed and elapsed > 0:
-        parts.append(f"⏱️ {elapsed:.1f}초")
+    if elapsed is not None:
+        if elapsed >= 0.1:
+            parts.append(f"⏱️ {elapsed:.1f}초")
+        elif elapsed > 0:
+            parts.append("⏱️ <0.1초")
+        else:
+            parts.append("⏱️ —")
     if model:
         parts.append(f"🤖 {model}")
     if not parts:
         return
     line = " · ".join(parts)
-    st.markdown(
-        f"<div style='color:#888;font-size:12px;padding:6px 0;"
+    html = (
+        f"<div style='color:#555;font-size:13px;"
+        f"padding:8px 0 6px;border-top:1px solid #eee;margin-top:6px;"
         f"font-family:-apple-system,Pretendard,sans-serif;'>"
-        f"{line}</div>",
-        unsafe_allow_html=True,
+        f"{line}</div>"
     )
+    target = container if container is not None else st
+    target.markdown(html, unsafe_allow_html=True)
 
 
 def _render_category_chip(
@@ -2786,13 +2801,13 @@ def _run_ask(
             _render_category_chip(ans.contexts, answer_text=ans.text)
             # PR-C1: 신뢰도 chip — 답변 본문 직후, contexts 펼침 직전.
             _render_confidence_chip(ans.confidence, ans.contexts, answer_text=ans.text)
-            # PR-Answer-Meta-Visibility: timer_placeholder 를 _render_answer_meta()
-            # 로 교체 — streaming 완료 + history replay 일관 표시. JS 카운터
-            # iframe 은 자동 cleanup (setInterval 도 함께 정리).
-            timer_placeholder.empty()
+            # PR-Phase-18.7 H2: timer_placeholder 에 직접 meta 를 덮어써
+            # 라이브 카운터 → 정적 meta 가 "같은 자리"에서 단일 갱신.
+            # 별도 .empty() 호출 불필요 (markdown 이 placeholder 내용을 교체).
             _render_answer_meta(
                 elapsed=ans.elapsed,
                 model=s.chat_model,
+                container=timer_placeholder,
             )
             _render_contexts(ans.contexts)
             # PR-Fun1 작업 3: 후속 질문 카드 (critical 시 비활성).
@@ -3193,7 +3208,10 @@ def main():
                 _render_category_chip(meta["contexts"], answer_text=content)
             # PR-C1: history replay 에도 chip 노출. 기존 entry (confidence 키 없음)
             # 는 'high' default 로 회귀 안전.
-            if role == "assistant" and meta.get("query_log_id") is not None:
+            # PR-Phase-18.7: query_log_id != None 가드 제거 — confidence 는
+            # query_log_id 와 독립 정보. RLS RETURNING 차단으로 query_log_id 가
+            # None 인 응답에도 chip 표시해 사용자 정보 일관성 ↑.
+            if role == "assistant":
                 _render_confidence_chip(
                     meta.get("confidence", "high"),
                     meta.get("contexts"),
