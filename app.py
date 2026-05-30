@@ -2413,6 +2413,18 @@ def _run_ask(
                     unsafe_allow_html=True,
                 )
                 progress_bar.progress(0.45, text="🔍 사규 의미 검색 중...")
+            elif stage == "synonym_substitution":
+                # PR-Phase-19.2.2: 사규 동의어 사전 매핑 안내.
+                # 사용자가 입력한 약어/속칭이 사규 정식 용어로 확장됐을 때
+                # st.info 로 1회 표시 (st.empty placeholder 활용해 동일 자리
+                # 갱신, 라이브 카운터 / 메타와 충돌 없음).
+                _subs = payload.get("substitutions") or []
+                if _subs:
+                    _subs_text = ", ".join(
+                        f"`{s}` → `{p}`" for s, p in _subs if s and p
+                    )
+                    if _subs_text:
+                        st.info(f"💡 다음 사규 용어로 검색했습니다: {_subs_text}")
             elif stage == "search_embed_done":
                 progress_placeholder.markdown(
                     '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '

@@ -80,19 +80,51 @@ def extract_regex_synonyms(
     return results
 
 
-_HAIKU_PROMPT_TEMPLATE = """다음은 신세계디에프 사규의 한 단락이다. 이 단락 내부에 \
-명시적으로 "X (이하 Y 라 한다)" / "X 또는 Y 라 함" / "X = Y" 식으로 정의된 \
-동의어 쌍만 추출하라.
+_OPUS_PROMPT_TEMPLATE = """다음은 신세계디에프 사규의 한 단락이다. 이 단락 내부에 \
+명시적으로 정의된 **1:1 동의어 쌍**만 추출하라.
 
-★★ 절대 금지:
-- 사규 외 지식·외부 LLM 학습 데이터 사용 금지.
-- 단락 내부에 정의되지 않은 추론·확장 금지.
-- 무관계한 단어쌍 묶음 금지.
+★ 추출 대상 (✅ Approve):
+1. 영문 약어 ↔ 한글 정의:
+   - "B/L (선하증권)"             → B/L ↔ 선하증권
+   - "FBS (Firm Banking System)"  → FBS ↔ Firm Banking System
+2. 정식명 ↔ 약칭:
+   - "외부감사 및 회계 등에 관한 규정(이하 '외감규정')"
+     → 외부감사 및 회계 등에 관한 규정 ↔ 외감규정
+3. 사규에 명시된 1:1 매핑:
+   - "통합물류창고(센터): ... 이하 '통물' 이라 한다" → 통합물류창고(센터) ↔ 통물
+
+★ 절대 금지 (❌ Reject):
+
+1) **정의문 추출 금지**:
+   - "X 란 ... 을 말한다" / "X 는 ... 를 의미한다" 의 정의 부분 추출 금지.
+   - synonym 길이 > 25자 = 정의문 가능성 → 추출 금지.
+   - 예: "침해사고" 의 정의("정보통신망 또는 정보시스템에 …") → 추출 금지.
+
+2) **1:N 예시 나열 금지**:
+   - "X = A, B, C, D" 패턴(1:N) 추출 금지.
+   - 동의어는 1:1 매핑만.
+   - 예: "사채(파생상품 / 금융상품 / 차입금)" → 추출 금지(예시 나열).
+
+3) **synonym 길이 제한**:
+   - synonym 25자 초과 = 추출 금지.
+   - 절(clause)·문장 형식 = 정의문 가능성 → 추출 금지.
+
+4) **문서 / 양식 번호 금지**:
+   - "SSGDF-J-GU-…" 같은 코드 형식 금지.
+   - 양식·보고서 번호 금지.
+
+5) **단방향 관계 금지**:
+   - "X 의 일부" / "X 의 종류" 관계 금지.
+   - "X 또는 Y" 에서 "Y 가 X 의 일종" 패턴 금지.
+
+6) **외부 지식 차단**:
+   - 사규 외 지식·외부 LLM 학습 데이터 사용 금지.
+   - 단락 내부에 정의되지 않은 추론·확장 금지.
 
 JSON 출력 (예시):
-{{"pairs": [{{"primary": "중간납품업자", "synonym": "벤더", "evidence": "중간납품업자(벤더)"}}]}}
+{{"pairs": [{{"primary": "외감규정", "synonym": "외부감사 및 회계 등에 관한 규정", "evidence": "외부감사 및 회계 등에 관한 규정(이하 '외감규정')"}}]}}
 
-단락에 정의가 없으면: {{"pairs": []}}
+단락에 명시적 동의어 정의가 없으면: {{"pairs": []}}
 
 [단락 본문]
 {chunk_text}
@@ -100,17 +132,21 @@ JSON 출력 (예시):
 JSON 출력:"""
 
 
-def extract_with_haiku(chunk_text: str, anthropic_client: Any) -> list[dict]:
-    """Claude Haiku 4.5 의 LLM 보조 추출 (외부 지식 차단 prompt)."""
+def extract_with_opus(chunk_text: str, anthropic_client: Any) -> list[dict]:
+    """Claude Opus 4.7 의 LLM 보조 추출 (강화된 prompt, 외부지식 차단).
+
+    PR-Phase-19.2.2: Haiku 4.5 → Opus 4.7 모델 변경 + prompt 6중 가드:
+      ① 정의문 ② 1:N 나열 ③ 25자 제한 ④ 양식 번호 ⑤ 단방향 ⑥ 외부 지식.
+    """
     if not chunk_text or anthropic_client is None:
         return []
     try:
         response = anthropic_client.messages.create(
-            model="claude-haiku-4-5",
+            model="claude-opus-4-7",
             max_tokens=1024,
             messages=[{
                 "role":    "user",
-                "content": _HAIKU_PROMPT_TEMPLATE.format(chunk_text=chunk_text),
+                "content": _OPUS_PROMPT_TEMPLATE.format(chunk_text=chunk_text),
             }],
         )
         raw = ""
@@ -128,17 +164,24 @@ def extract_with_haiku(chunk_text: str, anthropic_client: Any) -> list[dict]:
             synonym = (pair.get("synonym") or "").strip()
             if not primary or not synonym or primary == synonym:
                 continue
+            # 클라이언트측 25자 가드 (prompt 안전망 — LLM 이 룰 어겨도 차단)
+            if len(synonym) > 25 or len(primary) > 25:
+                continue
             evidence = (pair.get("evidence") or "")[:200]
             results.append({
                 "primary_term":      primary,
                 "synonym_term":      synonym,
                 "extraction_method": "llm_assisted",
-                "confidence":        0.85,
+                "confidence":        0.90,
                 "evidence_text":     evidence,
             })
         return results
     except Exception:
         return []
+
+
+# ── 19.2.1 호환 alias (extract_with_haiku 호출처를 깨지 않기 위함) ──
+extract_with_haiku = extract_with_opus
 
 
 def extract_synonyms_from_chunks(
@@ -157,7 +200,7 @@ def extract_synonyms_from_chunks(
             continue
         regex_hits = extract_regex_synonyms(text)
         llm_hits = (
-            extract_with_haiku(text, anthropic_client)
+            extract_with_opus(text, anthropic_client)
             if anthropic_client is not None else []
         )
         for r in regex_hits + llm_hits:
