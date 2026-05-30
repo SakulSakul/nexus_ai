@@ -4116,6 +4116,42 @@ def _tab_synonym_dictionary(sb):
     )
 
 
+def _tab_regression_console(sb) -> None:
+    """🚦 회귀 콘솔 — Tier-1 라우팅/배지/classifier 고속 회귀 (LLM 합성 없음)."""
+    st.subheader("🚦 회귀 콘솔 (Tier-1)")
+    st.caption(
+        "regression_cases.json 케이스를 분류+노드(+필요 시 검색·배지)까지만 실행해 "
+        "기대값 대조. Gemini 합성 없음 → 고속·저비용. 머지+reboot 후 1클릭 회귀 확인용."
+    )
+    from core.verification.tier1_console import load_cases, run_tier1
+    cases = load_cases()
+    st.metric("로드된 케이스", f"{len(cases)}건")
+    if not cases:
+        st.warning("케이스 없음 — tests/fixtures/regression_cases.json 확인.")
+        return
+    if st.button("🚦 Tier-1 회귀 실행", type="primary", key="reg_run"):
+        prog = st.progress(0.0, text=f"0 / {len(cases)}")
+        def _p(i, total, case):
+            prog.progress(i / max(total, 1), text=f"{i} / {total} · {case.get('query','')[:24]}")
+        summary = run_tier1(sb, cases, on_progress=_p)
+        prog.progress(1.0, text="완료")
+        if summary["failed"] == 0:
+            st.success(f"✅ PASS — {summary['passed']}/{summary['total']} 전부 통과")
+        else:
+            st.error(f"❌ FAIL — 실패 {summary['failed']} / {summary['total']}")
+        for r in summary["results"]:
+            mark = "✅" if r.passed else "❌"
+            with st.expander(f"{mark} {r.query} ({r.elapsed:.1f}s)", expanded=not r.passed):
+                st.write(
+                    f"category={r.actual_category or '_'} · "
+                    f"classifier={r.actual_classifier or '_'} · nodes={r.actual_nodes}"
+                )
+                if r.error:
+                    st.error(f"오류: {r.error}")
+                for f in r.failures:
+                    st.warning(f)
+
+
 def main():
     _require_auth()
 
@@ -4143,6 +4179,7 @@ def main():
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
         "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset", "🚨 Auto-Fixer",
         "🧭 Classifier Sim", "📦 FAQ Cache", "📊 운영 모니터링", "📚 동의어 사전",
+        "🚦 회귀 콘솔",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -4165,6 +4202,7 @@ def main():
     with tabs[18]: _tab_faq_cache_management(sb)
     with tabs[19]: _tab_ops_dashboard(sb)
     with tabs[20]: _tab_synonym_dictionary(sb)
+    with tabs[21]: _tab_regression_console(sb)
 
 
 def _tab_classifier_sim(sb):
