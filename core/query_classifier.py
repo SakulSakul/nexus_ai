@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import Literal
+from typing import Any, Literal
 
 from .config import get_secret, settings
 
@@ -89,18 +89,50 @@ Query: {question}
 Respond with ONE word only from these options: simple_faq, standard, complex, critical, out_of_scope. Do not add any explanation."""
 
 
-def classify_query(question: str) -> dict:
+def classify_query(question: str, supabase: Any = None) -> dict:
     """Query 를 5-way 분류.
 
     Returns: {"category": str, "elapsed": float, "model": str}
     호출 실패 시 category="standard" (안전 default) — 절대 raise 하지 않음
     (shadow mode 에서 본 흐름을 깨지 않기 위함).
 
+    PR-Phase-19.2.3: supabase 인자 (Optional) 추가. 전달 시 사규 동의어 사전
+    으로 query 를 확장한 후 Haiku 에 전달 → 사내 약어("통물","FBS","SHRS"
+    등) 도 OOS 가 아닌 standard/critical 로 정분류. supabase=None 시 기존
+    동작 (회귀 0). ENABLE_SYNONYM_EXPANSION=false 시 expand 가 input 그대로
+    반환 (이중 안전).
+
     Claude Haiku 4.5 (Anthropic SDK) — Critical Mode(core/chatbot.py:_gen_claude)
     와 동일 패턴. ANTHROPIC_API_KEY 재사용 (추가 secret 불필요).
     """
     start = time.perf_counter()
     category: str = "standard"
+
+    # PR-Phase-19.2.3: 분류 전 사규 동의어 확장 (silent fallback).
+    classify_question = question or ""
+    if supabase is not None and classify_question:
+        try:
+            from .synonym_expander import expand_query_with_synonyms
+            expanded, _subs = expand_query_with_synonyms(
+                classify_question, supabase,
+            )
+            if _subs:
+                classify_question = expanded
+                print(
+                    f"[SYN_DIAG:classifier:EXPANDED] "
+                    f"orig={(question or '')[:50]!r} "
+                    f"expanded={classify_question[:80]!r} "
+                    f"subs={_subs}",
+                    file=sys.stderr, flush=True,
+                )
+        except Exception as _exp_e:
+            print(
+                f"[SYN_DIAG:classifier:EXPAND_FAIL] "
+                f"err={type(_exp_e).__name__}: {_exp_e}",
+                file=sys.stderr, flush=True,
+            )
+            # silent fallback — original question 사용 (회귀 안전)
+
     try:
         import anthropic
 
@@ -114,7 +146,7 @@ def classify_query(question: str) -> dict:
             temperature=0.0,
             messages=[{
                 "role": "user",
-                "content": CLASSIFIER_PROMPT.format(question=question or ""),
+                "content": CLASSIFIER_PROMPT.format(question=classify_question),
             }],
         )
         raw = ""

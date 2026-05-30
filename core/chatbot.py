@@ -1042,7 +1042,8 @@ def ask(
     # ZERO regression. 실패해도 본 흐름 영향 없음 (classify_query 내부 흡수).
     if ENABLE_QUERY_CLASSIFIER_LOGGING:
         try:
-            classify_query(question)
+            # PR-Phase-19.2.3: 동의어 확장된 query 로 분류 (사내 약어 OOS 차단)
+            classify_query(question, supabase=supabase)
         except Exception as _qc_e:
             print(f"[query_classifier:shadow] error: {_qc_e}",
                   file=sys.stderr, flush=True)
@@ -1127,7 +1128,7 @@ def ask(
     #   4) _DEFAULT_OOS_MESSAGE 의 self-correction 문단 (사용자 재시도 가이드)
     # classify_query 실패 default="standard" → OOS 미진입 → 정상 pipeline (안전).
     if ENABLE_OOS_ROUTING and not detection.triggered:
-        _cls = classify_query(question)
+        _cls = classify_query(question, supabase=supabase)
         if _cls.get("category") == "out_of_scope":
             from .oos_router import oos_routing_message
             # PR-Phase-18.3.1: Option B — classifier-only 측정에서 ask 진입부
@@ -1592,7 +1593,8 @@ def ask_stream(
     # PR-Phase-17.1: Query Classifier Shadow Mode (ask_stream) — logging 전용.
     if ENABLE_QUERY_CLASSIFIER_LOGGING:
         try:
-            classify_query(question)
+            # PR-Phase-19.2.3: 동의어 확장된 query 로 분류 (사내 약어 OOS 차단)
+            classify_query(question, supabase=supabase)
         except Exception as _qc_e:
             print(f"[query_classifier:shadow] error: {_qc_e}",
                   file=sys.stderr, flush=True)
@@ -1662,7 +1664,7 @@ def ask_stream(
     # 위 critical 블록(streaming 비활성)에서 triggered 는 이미 ask() 위임 후
     # return → 여기 도달 = non-critical. 가드는 ask() 와 동일 4중 정합.
     if ENABLE_OOS_ROUTING and not detection.triggered:
-        _cls = classify_query(question)
+        _cls = classify_query(question, supabase=supabase)
         if _cls.get("category") == "out_of_scope":
             from .oos_router import oos_routing_message
             # PR-Phase-18.3.1: Option B — ask 진입 t0 기준 전체 시간.
