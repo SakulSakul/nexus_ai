@@ -373,8 +373,17 @@ def category_visual(
             if isinstance(un, list) and un:
                 nodes_union.update(un)
                 break  # 모든 chunks 동일 값
-        # 우선순위 2 (fallback): chunks 의 matched_incident_nodes (기존 로직)
-        if not nodes_union:
+        # 우선순위 2 (legacy fallback): chunks 의 matched_incident_nodes.
+        # PR-Phase-19.2.4: _user_incident_nodes 가 첨부돼 있으면([] 포함) 사용자
+        # query 노드 신호가 authoritative. [] = "도메인 노드 없음" 이므로 doc 의
+        # matched_incident_nodes 로 도메인을 날조하지 않는다 — 무관한 (정보보안)
+        # 광범위 noded doc 가 배지를 탈취하던 회귀(외감규정→정보보안) 차단. 빈손이면
+        # Step 1 force-include prefix(=재무 doc) 로 흘려 정답 도메인 회복.
+        # 속성 자체가 없을 때(legacy)만 doc-node fallback 유지.
+        _user_nodes_attached = any(
+            isinstance(c.get("_user_incident_nodes"), list) for c in contexts
+        )
+        if not nodes_union and not _user_nodes_attached:
             for c in contexts:
                 matched = c.get("matched_incident_nodes") or []
                 if isinstance(matched, list):
