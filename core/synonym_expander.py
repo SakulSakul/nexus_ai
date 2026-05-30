@@ -75,7 +75,12 @@ def expand_query_with_synonyms(
     uniq_tokens = list(dict.fromkeys(tokens))
 
     try:
-        result = (
+        # PR-Phase-19.2.3 핫픽스 — 양방향 lookup.
+        # 진단 결과: 기존 단방향(.in_("synonym_term", tokens))은 사용자가 약칭
+        # ("외감규정") 으로 검색 시 synonym_term 컬럼(=정식명)에 없어 rows=0.
+        # 해결: synonym_term + primary_term 양쪽 lookup 후 결과 union.
+        # 사용자가 어느 쪽을 입력해도 반대편 용어 추가됨.
+        result1 = (
             supabase.table("nexus_synonym_dictionary")
             .select("primary_term,synonym_term")
             .eq("approved", True)
@@ -83,9 +88,20 @@ def expand_query_with_synonyms(
             .in_("synonym_term", uniq_tokens)
             .execute()
         )
-        rows = result.data or []
+        result2 = (
+            supabase.table("nexus_synonym_dictionary")
+            .select("primary_term,synonym_term")
+            .eq("approved", True)
+            .eq("rejected", False)
+            .in_("primary_term", uniq_tokens)
+            .execute()
+        )
+        rows = (result1.data or []) + (result2.data or [])
         print(
-            f"[SYN_DIAG:expander:DB_LOOKUP] rows={len(rows)} "
+            f"[SYN_DIAG:expander:DB_LOOKUP] "
+            f"rows={len(rows)} "
+            f"by_synonym={len(result1.data or [])} "
+            f"by_primary={len(result2.data or [])} "
             f"sample={rows[:3]}",
             file=_sys.stderr, flush=True,
         )
@@ -103,16 +119,31 @@ def expand_query_with_synonyms(
               file=_sys.stderr, flush=True)
         return question, []
 
-    # 중복 제거 (같은 synonym_term 이 여러 row 인 경우 첫 매핑만)
+    # PR-Phase-19.2.3: 양방향 substitution
+    # - 사용자가 synonym 사용(정식명) → primary(약칭) 추가
+    # - 사용자가 primary 사용(약칭) → synonym(정식명) 추가
+    # tokens set 기준으로 어느 쪽이 query 에 있는지 판정. (token_norm, target)
+    # 중복 제거를 위한 seen 은 정규화된 (matched, target) 페어로 관리.
+    token_set = set(uniq_tokens)
     substitutions: list[tuple[str, str]] = []
-    seen_syn: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for row in rows:
-        syn = (row.get("synonym_term") or "").strip()
         pri = (row.get("primary_term") or "").strip()
-        if not syn or not pri or syn in seen_syn:
+        syn = (row.get("synonym_term") or "").strip()
+        if not pri or not syn or pri == syn:
             continue
-        seen_syn.add(syn)
-        substitutions.append((syn, pri))
+        # Case A: 사용자가 synonym(정식명) 사용 → primary(약칭) 추가
+        if syn in token_set:
+            key = (syn, pri)
+            if key not in seen:
+                substitutions.append(key)
+                seen.add(key)
+        # Case B: 사용자가 primary(약칭) 사용 → synonym(정식명) 추가
+        if pri in token_set:
+            key = (pri, syn)
+            if key not in seen:
+                substitutions.append(key)
+                seen.add(key)
 
     if not substitutions:
         print("[SYN_DIAG:expander:EXIT] reason=NO_SUBS_AFTER_DEDUP",
