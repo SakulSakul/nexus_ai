@@ -398,12 +398,14 @@ def _log_query_logs_insert_success(
 
 def _log_faq_cache_hit(
     supabase: Any, *, masked: str, category: str | None, s: Any,
+    elapsed_ms: int = 0,
 ) -> int | None:
     """PR-Phase-18.2: Fast Path cache hit 을 query_logs 에 경량 기록.
 
-    chat_provider="faq_cache" / elapsed_ms=0 으로 표시해 hit rate·👍/👎
-    피드백을 식별 가능하게 한다. 실패해도 응답 흐름 불변(try/except 흡수).
-    반환: query_logs.id 또는 None (피드백 update 용).
+    chat_provider="faq_cache" / elapsed_ms = ask 진입부터 cache hit 반환 직전
+    까지의 실측(Option B, PR-Phase-18.3.1) 으로 표시해 hit rate·👍/👎 피드백
+    과 사용자 체감 latency 를 진실하게 기록한다. 실패해도 응답 흐름 불변
+    (try/except 흡수). 반환: query_logs.id 또는 None (피드백 update 용).
     """
     _payload = {
         "category":            category if category and category != "전체" else None,
@@ -416,7 +418,7 @@ def _log_faq_cache_hit(
         "embed_model_version": s.embed_model,
         "chat_provider":       "faq_cache",
         "chat_model_version":  None,
-        "elapsed_ms":          0,
+        "elapsed_ms":          elapsed_ms,
         "used_fallback":       False,
     }
     try:
@@ -1030,6 +1032,10 @@ def ask(
             pass  # callback 실패가 ask 본 흐름을 깨면 안 됨
 
     s = settings()
+    # PR-Phase-18.3.1: Option B — t0 를 ask 진입부로 이동해 Fast Path /
+    # OOS Skip / 정상 pipeline 모두 동일한 "ask 진입~답변 반환" 전체 시간을
+    # elapsed_ms 로 측정. retrieval 직전(과거 위치) 의 t0 는 아래에서 제거.
+    t0 = time.perf_counter()
 
     # PR-Phase-17.1: Query Classifier Shadow Mode — logging 전용 (action 없음).
     # 기본 비활성(ENABLE_QUERY_CLASSIFIER_LOGGING=false) → 호출 자체 미실행 →
@@ -1096,7 +1102,11 @@ def ask(
     if ENABLE_FAST_PATH and not detection.triggered:
         _faq_hit = faq_cache_get(question)
         if _faq_hit:
-            _qid = _log_faq_cache_hit(supabase, masked=masked, category=category, s=s)
+            _fp_elapsed = time.perf_counter() - t0
+            _qid = _log_faq_cache_hit(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_fp_elapsed * 1000),
+            )
             _emit("complete")
             return Answer(
                 text=_faq_hit["answer_text"],
@@ -1104,7 +1114,7 @@ def ask(
                 critical_kind=None,
                 contexts=[],
                 masked_question=masked,
-                elapsed=0.0,
+                elapsed=_fp_elapsed,
                 query_log_id=_qid,
                 confidence="high",
             )
@@ -1120,10 +1130,12 @@ def ask(
         _cls = classify_query(question)
         if _cls.get("category") == "out_of_scope":
             from .oos_router import oos_routing_message
-            _cls_elapsed = float(_cls.get("elapsed", 0.0))
+            # PR-Phase-18.3.1: Option B — classifier-only 측정에서 ask 진입부
+            # t0 기준 전체 시간으로 교체 (사용자 체감 latency 정합).
+            _oos_elapsed = time.perf_counter() - t0
             _qid = _log_oos_skip(
                 supabase, masked=masked, category=category, s=s,
-                elapsed_ms=int(_cls_elapsed * 1000),
+                elapsed_ms=int(_oos_elapsed * 1000),
             )
             _emit("complete")
             return Answer(
@@ -1132,7 +1144,7 @@ def ask(
                 critical_kind=None,
                 contexts=[],
                 masked_question=masked,
-                elapsed=_cls_elapsed,
+                elapsed=_oos_elapsed,
                 query_log_id=_qid,
                 confidence="high",
             )
@@ -1159,7 +1171,8 @@ def ask(
         elif detection.kind == "harassment":
             cats = list(set((cats or []) + ["공통"]))
 
-    t0 = time.perf_counter()
+    # PR-Phase-18.3.1: t0 는 ask 진입부(상단)에서 정의됨 — 여기는 의도적
+    # 미정의 (Option B: 진입~retrieval 직전 elapsed 도 포함하기 위함).
 
     _emit("search_start")
     # doc_kind 분산: 큰 풀에서 검색 후 비율로 잘라냄. 한 doc_kind 가 풀에서
@@ -1573,6 +1586,8 @@ def ask_stream(
     검수 회차(run_review) 등 답변 완성본만 필요한 호출자는 기존 ask() 사용.
     """
     s = settings()
+    # PR-Phase-18.3.1: Option B — t0 를 진입부로 이동 (ask 와 동일 정합).
+    t0 = time.perf_counter()
 
     # PR-Phase-17.1: Query Classifier Shadow Mode (ask_stream) — logging 전용.
     if ENABLE_QUERY_CLASSIFIER_LOGGING:
@@ -1625,7 +1640,11 @@ def ask_stream(
     if ENABLE_FAST_PATH:
         _faq_hit = faq_cache_get(question)
         if _faq_hit:
-            _qid = _log_faq_cache_hit(supabase, masked=masked, category=category, s=s)
+            _fp_elapsed = time.perf_counter() - t0
+            _qid = _log_faq_cache_hit(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_fp_elapsed * 1000),
+            )
             _emit("complete")
             yield ("done", Answer(
                 text=_faq_hit["answer_text"],
@@ -1633,7 +1652,7 @@ def ask_stream(
                 critical_kind=None,
                 contexts=[],
                 masked_question=masked,
-                elapsed=0.0,
+                elapsed=_fp_elapsed,
                 query_log_id=_qid,
                 confidence="high",
             ))
@@ -1646,10 +1665,11 @@ def ask_stream(
         _cls = classify_query(question)
         if _cls.get("category") == "out_of_scope":
             from .oos_router import oos_routing_message
-            _cls_elapsed = float(_cls.get("elapsed", 0.0))
+            # PR-Phase-18.3.1: Option B — ask 진입 t0 기준 전체 시간.
+            _oos_elapsed = time.perf_counter() - t0
             _qid = _log_oos_skip(
                 supabase, masked=masked, category=category, s=s,
-                elapsed_ms=int(_cls_elapsed * 1000),
+                elapsed_ms=int(_oos_elapsed * 1000),
             )
             _emit("complete")
             yield ("done", Answer(
@@ -1658,7 +1678,7 @@ def ask_stream(
                 critical_kind=None,
                 contexts=[],
                 masked_question=masked,
-                elapsed=_cls_elapsed,
+                elapsed=_oos_elapsed,
                 query_log_id=_qid,
                 confidence="high",
             ))
@@ -1672,7 +1692,7 @@ def ask_stream(
         inferred = infer_categories(question)
         cats = list(set(inferred) | {"공통"}) if inferred else None
 
-    t0 = time.perf_counter()
+    # PR-Phase-18.3.1: t0 는 ask_stream 진입부에서 정의됨 — 의도적 미정의.
     _emit("search_start")
     pool_size = sum(_DOC_KIND_RATIOS.values()) + _POOL_SIZE_MARGIN
     # PR-UI-Sub-Stage-Visualization: hybrid_search 의 sub-stage emit pass.
