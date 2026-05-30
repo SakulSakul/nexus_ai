@@ -965,6 +965,20 @@ def hybrid_search(
             "enabled": USE_REWRITER,
         })
 
+        # PR-Phase-19.2.2: 사규 동의어 사전 기반 query 확장.
+        # ENABLE_SYNONYM_EXPANSION=false (기본) 시 input 그대로 → 회귀 0.
+        # true 시 vector(embed_one) + keyword(tsquery/pgroonga) 양측에 동의어
+        # primary_term 이 append 되어 18.6 의 vector gap 까지 해소.
+        try:
+            from .synonym_expander import expand_query_with_synonyms
+            retrieval_query_text, _syn_subs = expand_query_with_synonyms(
+                retrieval_query_text, supabase,
+            )
+        except Exception:
+            _syn_subs = []
+        if _syn_subs:
+            _emit_sub("synonym_substitution", {"substitutions": _syn_subs})
+
         _t_embed0 = _t_subprog.perf_counter()
         retrieval_embedding = embed_one(
             retrieval_query_text, task_type="RETRIEVAL_QUERY",
