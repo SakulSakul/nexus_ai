@@ -3898,6 +3898,224 @@ def _tab_ops_dashboard(sb):
         )
 
 
+# ── PR-Phase-19.2.1: 동의어 사전 (사규 자동 추출 + 검수) ─────────
+
+def _tab_synonym_dictionary(sb):
+    """📚 동의어 사전 — 사규 chunk 의 동의어 자동 추출 (regex + Haiku 4.5) + 검수.
+
+    18.6 _NEXUS_NL_TO_REGULATORY 하드코딩 dict 와 공존 (회귀 0). retrieval
+    통합은 PR 19.2.2 에서 ENABLE_SYNONYM_EXPANSION flag 로 활성화.
+    """
+    import streamlit as st
+    import datetime as _dt
+
+    from core.synonym_extractor import extract_synonyms_from_chunks
+    from core.synonym_expander import ENABLE_SYNONYM_EXPANSION
+    from core.config import get_secret
+
+    st.subheader("📚 동의어 사전 (Synonym Dictionary)")
+    st.caption(
+        "사규 chunk 의 명시적 동의어 정의 (regex 0.7+ · Claude Haiku 4.5) 자동 추출 + 검수.  "
+        f"ENABLE_SYNONYM_EXPANSION=`{ENABLE_SYNONYM_EXPANSION}` (PR 19.2.2 에서 retrieval 통합)."
+    )
+
+    sb_admin = _supabase_admin()
+    if sb_admin is None:
+        st.error("⚠️ SUPABASE_SERVICE_ROLE_KEY 미설정 — 동의어 사전 사용 불가.")
+        return
+
+    # ── 통계 4-metric ──
+    try:
+        total = (sb_admin.table("nexus_synonym_dictionary")
+                 .select("id", count="exact").execute().count or 0)
+        approved = (sb_admin.table("nexus_synonym_dictionary")
+                    .select("id", count="exact").eq("approved", True)
+                    .execute().count or 0)
+        rejected = (sb_admin.table("nexus_synonym_dictionary")
+                    .select("id", count="exact").eq("rejected", True)
+                    .execute().count or 0)
+        pending = total - approved - rejected
+    except Exception as e:
+        st.error(f"DB 조회 실패: {type(e).__name__}: {e}")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("총 추출", f"{total:,}건")
+    c2.metric("✅ Approved", f"{approved:,}건")
+    c3.metric("⏳ Pending", f"{pending:,}건")
+    c4.metric("❌ Rejected", f"{rejected:,}건")
+
+    st.divider()
+
+    # ── 사규 분석 실행 ──
+    st.markdown("### ▶️ 사규 분석 실행")
+    st.caption(
+        "active 청크 전체를 regex + Claude Haiku 4.5 로 분석.  "
+        "비용 ~$1 (1000 청크 가정), 시간 1-2분. UNIQUE(primary,synonym) 중복 자동 skip."
+    )
+
+    if st.button("🚀 사규 분석 시작", type="primary", key="syn_run"):
+        try:
+            chunks_resp = (
+                sb_admin.table("nexus_chunks")
+                .select("id, document_id, text")
+                .execute()
+            )
+            chunks = [
+                {
+                    "id":     c["id"],
+                    "doc_id": c.get("document_id"),
+                    "text":   c.get("text") or "",
+                }
+                for c in (chunks_resp.data or [])
+            ]
+            if not chunks:
+                st.warning("분석할 청크가 없습니다.")
+                return
+
+            api_key = get_secret("ANTHROPIC_API_KEY")
+            if not api_key:
+                st.error("ANTHROPIC_API_KEY 미설정 — regex 만 실행됩니다.")
+                anthropic_client = None
+            else:
+                try:
+                    from anthropic import Anthropic
+                    anthropic_client = Anthropic(api_key=api_key)
+                except Exception as e:
+                    st.error(f"Anthropic init 실패: {type(e).__name__}: {e}")
+                    anthropic_client = None
+
+            progress = st.progress(0.0, text=f"0 / {len(chunks)} chunks")
+            all_results: list = []
+            for i, chunk in enumerate(chunks):
+                chunk_results = extract_synonyms_from_chunks([chunk], anthropic_client)
+                all_results.extend(chunk_results)
+                progress.progress(
+                    (i + 1) / len(chunks),
+                    text=f"{i+1} / {len(chunks)} chunks (누적 {len(all_results)}건)",
+                )
+
+            inserted = 0
+            skipped = 0
+            failed = 0
+            for r in all_results:
+                try:
+                    sb_admin.table("nexus_synonym_dictionary").insert(r).execute()
+                    inserted += 1
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "duplicate" in msg or "unique" in msg or "23505" in msg:
+                        skipped += 1
+                    else:
+                        failed += 1
+            _audit(sb_admin, action="synonym_extract",
+                   target=f"chunks={len(chunks)}",
+                   details={"inserted": inserted, "skipped": skipped, "failed": failed})
+            st.toast(
+                f"✅ 추출 완료 — 신규 {inserted}건 · 중복 skip {skipped}건"
+                + (f" · 실패 {failed}건" if failed else ""),
+                icon="🎉",
+            )
+            st.rerun()
+        except Exception as e:
+            st.error(f"추출 실패: {type(e).__name__}: {e}")
+
+    st.divider()
+
+    # ── 검수 list + 필터 ──
+    st.markdown("### 📋 검수")
+    fc1, fc2, fc3 = st.columns(3)
+    status_filter = fc1.selectbox(
+        "상태", ["Pending", "Approved", "Rejected", "전체"], key="syn_status",
+    )
+    method_filter = fc2.selectbox(
+        "추출 방법", ["전체", "regex", "llm_assisted", "manual"], key="syn_method",
+    )
+    min_conf = fc3.slider("최소 confidence", 0.0, 1.0, 0.7, 0.05, key="syn_minconf")
+
+    try:
+        query = (sb_admin.table("nexus_synonym_dictionary")
+                 .select("*").gte("confidence", min_conf))
+        if status_filter == "Pending":
+            query = query.eq("approved", False).eq("rejected", False)
+        elif status_filter == "Approved":
+            query = query.eq("approved", True)
+        elif status_filter == "Rejected":
+            query = query.eq("rejected", True)
+        if method_filter != "전체":
+            query = query.eq("extraction_method", method_filter)
+        rows = (query.order("created_at", desc=True)
+                .limit(100).execute().data or [])
+    except Exception as e:
+        st.error(f"조회 실패: {type(e).__name__}: {e}")
+        rows = []
+
+    if not rows:
+        st.info("조건에 맞는 항목이 없습니다.")
+        return
+
+    st.caption(f"표시 {len(rows)}건 (최대 100)")
+    for row in rows:
+        rid = row["id"]
+        approved_v = bool(row.get("approved"))
+        rejected_v = bool(row.get("rejected"))
+        with st.container():
+            cols = st.columns([2, 2, 1, 1, 1, 1, 1])
+            cols[0].markdown(f"**primary** `{row.get('primary_term','')}`")
+            cols[1].markdown(f"**synonym** `{row.get('synonym_term','')}`")
+            cols[2].markdown(f"`{row.get('extraction_method','')}`")
+            cols[3].markdown(f"`{float(row.get('confidence') or 0):.2f}`")
+            if approved_v:
+                cols[4].success("✅ Approved")
+            elif rejected_v:
+                cols[4].error("❌ Rejected")
+            else:
+                cols[4].info("⏳ Pending")
+
+            if not approved_v and not rejected_v:
+                if cols[5].button("✅", key=f"syn_app_{rid}", help="Approve"):
+                    try:
+                        actor = (
+                            st.session_state.get("admin_actor")
+                            or "admin"
+                        )
+                        sb_admin.table("nexus_synonym_dictionary").update({
+                            "approved":    True,
+                            "approved_by": actor,
+                            "approved_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                            "updated_at":  _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                        }).eq("id", rid).execute()
+                        _audit(sb_admin, action="synonym_approve",
+                               target=f"{row.get('primary_term')}↔{row.get('synonym_term')}")
+                        st.toast("✅ Approved", icon="✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"승인 실패: {type(e).__name__}: {e}")
+                if cols[6].button("❌", key=f"syn_rej_{rid}", help="Reject"):
+                    try:
+                        sb_admin.table("nexus_synonym_dictionary").update({
+                            "rejected":    True,
+                            "rejected_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                            "updated_at":  _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                        }).eq("id", rid).execute()
+                        _audit(sb_admin, action="synonym_reject",
+                               target=f"{row.get('primary_term')}↔{row.get('synonym_term')}")
+                        st.toast("❌ Rejected", icon="❌")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"거부 실패: {type(e).__name__}: {e}")
+
+            ev = row.get("evidence_text")
+            if ev:
+                st.caption(f"💡 원문: {ev}")
+
+    st.divider()
+    st.caption(
+        "💡 18.6 `_NEXUS_NL_TO_REGULATORY` 하드코딩 dict 와 공존 (회귀 0). "
+        "차차 dict → DB migrate 예정 (PR 19.2.3)."
+    )
+
+
 def main():
     _require_auth()
 
@@ -3924,7 +4142,7 @@ def main():
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
         "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset", "🚨 Auto-Fixer",
-        "🧭 Classifier Sim", "📦 FAQ Cache", "📊 운영 모니터링",
+        "🧭 Classifier Sim", "📦 FAQ Cache", "📊 운영 모니터링", "📚 동의어 사전",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3946,6 +4164,7 @@ def main():
     with tabs[17]: _tab_classifier_sim(sb)
     with tabs[18]: _tab_faq_cache_management(sb)
     with tabs[19]: _tab_ops_dashboard(sb)
+    with tabs[20]: _tab_synonym_dictionary(sb)
 
 
 def _tab_classifier_sim(sb):

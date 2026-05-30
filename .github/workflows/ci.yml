@@ -64,6 +64,7 @@ jobs:
       ENABLE_OOS_ROUTING: "false"
       ENABLE_QUERY_CLASSIFIER_LOGGING: "false"
       ENABLE_QUERY_CLASSIFIER_ACTION: "false"
+      ENABLE_SYNONYM_EXPANSION: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -83,6 +84,8 @@ jobs:
           python -c "from core.oos_router import oos_routing_message, ENABLE_OOS_ROUTING; print('[IMPORT OK] oos_router')"
           python -c "from core.query_classifier import classify_query, SIM_DATASET, _VALID; print('[IMPORT OK] query_classifier')"
           python -c "from core.retriever import hybrid_search; print('[IMPORT OK] retriever.hybrid_search')"
+          python -c "from core.synonym_expander import ENABLE_SYNONYM_EXPANSION, expand_query_with_synonyms; print('[IMPORT OK] synonym_expander')"
+          python -c "from core.synonym_extractor import extract_regex_synonyms, extract_synonyms_from_chunks; print('[IMPORT OK] synonym_extractor')"
       - name: SIM·flag 정합성 spot-check
         run: |
           python - <<'PY'
@@ -92,7 +95,14 @@ jobs:
           assert sum(len(v) for v in SIM_DATASET.values()) >= 26, "SIM 합계 < 26 (회귀)"
           from core.faq_cache import ENABLE_FAST_PATH
           from core.oos_router import ENABLE_OOS_ROUTING
+          from core.synonym_expander import ENABLE_SYNONYM_EXPANSION
           assert ENABLE_FAST_PATH is False, "ENABLE_FAST_PATH 기본 OFF 깨짐"
           assert ENABLE_OOS_ROUTING is False, "ENABLE_OOS_ROUTING 기본 OFF 깨짐"
-          print("[SPOT OK] SIM 카테고리 ⊆ _VALID / out_of_scope 존재 / SIM>=26 / flag 기본 OFF")
+          assert ENABLE_SYNONYM_EXPANSION is False, "ENABLE_SYNONYM_EXPANSION 기본 OFF 깨짐"
+          # 19.2.1: regex 추출 단위 검증
+          from core.synonym_extractor import extract_regex_synonyms
+          hits = extract_regex_synonyms("중간납품업자(이하 '벤더' 라 한다)")
+          assert any(h["primary_term"]=="중간납품업자" and h["synonym_term"]=="벤더" for h in hits), \
+              f"regex high-confidence 패턴 실패: {hits}"
+          print("[SPOT OK] SIM⊆_VALID · OOS 존재 · SIM>=26 · 3 flag 기본 OFF · regex 매칭")
           PY
