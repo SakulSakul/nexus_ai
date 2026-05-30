@@ -3624,6 +3624,280 @@ def _tab_faq_cache_management(sb):
                     st.warning("한 번 더 누르면 삭제됩니다.")
 
 
+# ── PR-Phase-18.3.2: 운영 모니터링 Dashboard ─────────────────────────
+
+def _ops_percentiles(values: list) -> dict:
+    """list[int] → P50/P95/P99/n. statistics 미사용(빈 list 안전 처리)."""
+    if not values:
+        return {"p50": 0, "p95": 0, "p99": 0, "n": 0}
+    s = sorted(values)
+    n = len(s)
+    return {
+        "p50": s[n // 2],
+        "p95": s[min(int(n * 0.95), n - 1)],
+        "p99": s[min(int(n * 0.99), n - 1)],
+        "n":   n,
+    }
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _ops_fetch_logs(_sb, days: int) -> list:
+    """query_logs 최근 N일 raw 조회 (pagination 안전). 5분 cache.
+
+    `_sb` leading underscore = Streamlit cache 해싱 우회 (Client 는 unhashable).
+    시간 컬럼 = ts (db/01_schema.sql 정합, `created_at` 아님).
+    """
+    try:
+        from datetime import datetime, timedelta, timezone
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows: list = []
+        page_size = 1000
+        for page in range(10):       # 최대 10000건 safety cap
+            r = (
+                _sb.table("query_logs").select(
+                    "id,ts,chat_provider,elapsed_ms,is_critical,"
+                    "category,query_masked,used_fallback,critical_kind"
+                ).gte("ts", since)
+                .order("ts", desc=True)
+                .range(page * page_size, (page + 1) * page_size - 1)
+                .execute()
+            )
+            data = r.data or []
+            rows.extend(data)
+            if len(data) < page_size:
+                break
+        return rows
+    except Exception as e:
+        import sys as _sys
+        print(f"[ops_dashboard] fetch failed: {type(e).__name__}: {e}",
+              file=_sys.stderr, flush=True)
+        return []
+
+
+def _tab_ops_dashboard(sb):
+    """PR-Phase-18.3.2: 운영 모니터링 Dashboard — 응답시간·라우팅·안전·절약.
+
+    5 섹션 (A 응답시간 / B 라우팅 비율 / C 안전 모니터링 / D Adaptive Path
+    효과 + 절약 비용 / E Last Sim Result reserve). 모든 SQL = service_role
+    경유, query_masked 만 노출 (raw 질문 컬럼은 schema 에도 없음).
+    """
+    import streamlit as st
+    from collections import Counter, defaultdict
+
+    st.subheader("📊 운영 모니터링 Dashboard")
+    st.caption(
+        "응답 시간·라우팅 비율·안전·절약 효과 통합 모니터링.  "
+        "⚠️ **18.3.1 머지 이후 데이터만 elapsed_ms 정확** (이전 row 는 "
+        "faq_cache=0 박힘 · oos_skip classifier-only 포함).  "
+        "PII 마스킹된 query_masked 만 표시."
+    )
+
+    # 시간 범위 토글
+    days_map = {"24h": 1, "7d": 7, "30d": 30}
+    label = st.radio("기간", list(days_map.keys()),
+                     horizontal=True, index=1, key="ops_days")
+    days = days_map[label]
+
+    sb_admin = _supabase_admin()
+    if sb_admin is None:
+        st.error("⚠️ SUPABASE_SERVICE_ROLE_KEY 미설정 — Dashboard 사용 불가.")
+        return
+
+    rows = _ops_fetch_logs(sb_admin, days)
+    if not rows:
+        st.info(
+            "아직 데이터가 충분하지 않습니다. 라이브 트래픽 발생 후 "
+            "다시 확인해 주세요."
+        )
+        return
+
+    # 유효 elapsed_ms > 0 만 사용 (0 박힘 row 제외 — 18.3.1 이전 데이터 보호)
+    valid = [r for r in rows if (r.get("elapsed_ms") or 0) > 0]
+    by_provider: dict = {}
+    for r in valid:
+        cp = r.get("chat_provider") or "unknown"
+        by_provider.setdefault(cp, []).append(r["elapsed_ms"])
+
+    # 색상 통일 map
+    color_map = {
+        "faq_cache": "#2ecc71",   # 초록 (Fast Path)
+        "oos_skip":  "#3498db",   # 파랑 (OOS)
+        "gemini":    "#f39c12",   # 주황 (정상 LLM)
+        "claude":    "#e74c3c",   # 빨강 (Critical)
+        "blocked":   "#95a5a6",   # 회색 (Injection)
+        "unknown":   "#bdc3c7",
+    }
+
+    # ── 섹션 A: 응답 시간 분포 ──────────────────────────────
+    st.markdown("### A. 응답 시간 분포")
+    p_all  = _ops_percentiles([r["elapsed_ms"] for r in valid])
+    p_faq  = _ops_percentiles(by_provider.get("faq_cache", []))
+    p_oos  = _ops_percentiles(by_provider.get("oos_skip", []))
+    p_norm = _ops_percentiles(
+        (by_provider.get("gemini") or []) + (by_provider.get("claude") or [])
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("전체 P50",
+              f"{p_all['p50']/1000:.1f}s" if p_all['p50'] else "—",
+              help=f"P95={p_all['p95']/1000:.1f}s · "
+                   f"P99={p_all['p99']/1000:.1f}s · n={p_all['n']}")
+    c2.metric("Fast Path P50",
+              f"{p_faq['p50']}ms" if p_faq['p50'] else "—",
+              help=f"P95={p_faq['p95']}ms · n={p_faq['n']}")
+    c3.metric("OOS Skip P50",
+              f"{p_oos['p50']}ms" if p_oos['p50'] else "—",
+              help=f"P95={p_oos['p95']}ms · n={p_oos['n']}")
+    c4.metric("LLM pipeline P50",
+              f"{p_norm['p50']/1000:.1f}s" if p_norm['p50'] else "—",
+              help=f"P95={p_norm['p95']/1000:.1f}s · "
+                   f"P99={p_norm['p99']/1000:.1f}s · n={p_norm['n']}")
+
+    if by_provider:
+        try:
+            import plotly.express as px
+            box_data = [
+                {"chat_provider": cp, "elapsed_ms": v}
+                for cp, vals in by_provider.items() for v in vals
+            ]
+            fig = px.box(
+                box_data, x="chat_provider", y="elapsed_ms",
+                color="chat_provider", color_discrete_map=color_map,
+                title=f"chat_provider 별 응답 시간 분포 (ms · 최근 {label})",
+            )
+            fig.update_layout(showlegend=False, height=320,
+                              margin=dict(l=10, r=10, t=40, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"box plot 렌더 실패: {type(_e).__name__}")
+
+    # ── 섹션 B: 트래픽 라우팅 비율 ─────────────────────────
+    st.markdown("### B. 트래픽 라우팅 비율")
+    cp_counter = Counter(r.get("chat_provider") or "unknown" for r in rows)
+    total_rows = sum(cp_counter.values())
+    if total_rows:
+        try:
+            import plotly.express as px
+            labels = list(cp_counter.keys())
+            values = list(cp_counter.values())
+            fig2 = px.pie(
+                values=values, names=labels, hole=0.4,
+                color=labels, color_discrete_map=color_map,
+                title=f"chat_provider 라우팅 비율 (n={total_rows} · 최근 {label})",
+            )
+            fig2.update_layout(height=320,
+                               margin=dict(l=10, r=10, t=40, b=10))
+            st.plotly_chart(fig2, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"pie chart 렌더 실패: {type(_e).__name__}")
+
+    # ── 섹션 C: 안전 모니터링 ⭐ ─────────────────────────
+    st.markdown("### C. 안전 모니터링 ⭐")
+    n_critical = sum(1 for r in rows if r.get("is_critical"))
+    critical_fp_rows = [
+        r for r in rows
+        if r.get("is_critical")
+        and (r.get("chat_provider") in ("oos_skip", "faq_cache", "blocked"))
+    ]
+    n_fp = len(critical_fp_rows)
+    n_timeout = sum(1 for r in valid if (r.get("elapsed_ms") or 0) > 60000)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"Critical 빈도 ({label})", f"{n_critical}건")
+    c2.metric("Critical FP 위반 (★ 0 절대)",
+              f"{n_fp}건",
+              delta="안전 ✓" if n_fp == 0 else "⚠️ 위험",
+              delta_color="off" if n_fp == 0 else "inverse")
+    c3.metric(f"60s timeout 추정 ({label})",
+              f"{n_timeout}건",
+              help="elapsed_ms > 60000 = timeout 추정 "
+                   "(정확한 timeout 임계는 별도 조사).")
+
+    if critical_fp_rows:
+        st.error(f"⚠️ Critical FP {n_fp}건 발견 — 즉시 점검 필요")
+        st.dataframe([
+            {"id": r.get("id"), "ts": r.get("ts"),
+             "query_masked": r.get("query_masked"),
+             "chat_provider": r.get("chat_provider"),
+             "critical_kind": r.get("critical_kind")}
+            for r in critical_fp_rows[:50]
+        ], use_container_width=True, hide_index=True)
+    else:
+        st.success("✅ Critical FP = 0 (4중 안전 가드 정상 동작)")
+
+    timeout_rows = sorted(
+        [r for r in valid if (r.get("elapsed_ms") or 0) > 60000],
+        key=lambda r: r.get("elapsed_ms") or 0, reverse=True,
+    )[:20]
+    if timeout_rows:
+        with st.expander(f"⏱ Top 20 timeout 추정 query (elapsed_ms > 60000)"):
+            st.caption("정확한 timeout 임계 = 별도 조사. PII 마스킹된 텍스트만 표시.")
+            st.dataframe([
+                {"ts": r.get("ts"), "query_masked": r.get("query_masked"),
+                 "chat_provider": r.get("chat_provider"),
+                 "elapsed_ms": r.get("elapsed_ms")}
+                for r in timeout_rows
+            ], use_container_width=True, hide_index=True)
+
+    # ── 섹션 D: Adaptive Path 효과 + 절약 비용 ⭐ ──────────
+    st.markdown("### D. Adaptive Path 효과 + 절약 비용 ⭐")
+    faq_hits  = cp_counter.get("faq_cache", 0)
+    oos_hits  = cp_counter.get("oos_skip", 0)
+    llm_calls = cp_counter.get("gemini", 0) + cp_counter.get("claude", 0)
+    saved_calls = faq_hits + oos_hits
+    AVG_LLM_COST_KRW = 135            # Gemini 2.5 Pro 평균(추정) — 정밀 측정은 후속
+    saved_cost = saved_calls * AVG_LLM_COST_KRW
+    fp_pct  = (faq_hits / total_rows * 100) if total_rows else 0.0
+    oos_pct = (oos_hits / total_rows * 100) if total_rows else 0.0
+    saved_pct = (saved_calls / total_rows * 100) if total_rows else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Fast Path hit", f"{fp_pct:.1f}%",
+              help=f"{faq_hits} / {total_rows}건")
+    c2.metric("OOS Skip", f"{oos_pct:.1f}%",
+              help=f"{oos_hits} / {total_rows}건")
+    c3.metric("절약된 LLM 호출", f"{saved_calls:,}건",
+              delta=f"전체의 {saved_pct:.1f}%" if total_rows else None)
+    c4.metric("절약 비용 (추정)", f"₩{saved_cost:,}",
+              help=f"추정 단가 {AVG_LLM_COST_KRW}원/q × {saved_calls}건. "
+                   f"query_logs 에 cost_krw_total 컬럼 부재 → 실측 컬럼 "
+                   f"추가 시 정밀화.")
+    st.caption(
+        f"⚠️ 추정 단가 {AVG_LLM_COST_KRW}원/query (Gemini 2.5 Pro 평균). "
+        f"query_logs 의 cost 실측 컬럼 추가 시 정밀 계산 가능."
+    )
+
+    # 일별 트래픽 트렌드 — st.line_chart (가벼움)
+    daily: dict = {}
+    for r in rows:
+        day = (r.get("ts") or "")[:10]
+        if not day:
+            continue
+        daily.setdefault(day, Counter())[r.get("chat_provider") or "unknown"] += 1
+    if daily:
+        sorted_days = sorted(daily.keys())
+        try:
+            import pandas as pd
+            providers = sorted(cp_counter.keys())
+            df = pd.DataFrame(
+                {cp: [daily[d].get(cp, 0) for d in sorted_days] for cp in providers},
+                index=sorted_days,
+            )
+            st.markdown("**일별 라우팅 트래픽 추이**")
+            st.line_chart(df, height=220)
+        except Exception:
+            pass
+
+    # ── 섹션 E: Last Sim Result (Sprint 19 reserve) ───────
+    st.markdown("### E. Last Sim Result")
+    with st.expander("📋 Sprint 19 Option 2 예정 — 자리 reserve"):
+        st.info(
+            "Classifier Sim / Stress Test 의 최근 실행 결과를 "
+            "🟢 PASS / 🔴 FAIL 단일 메시지로 표시하는 영역입니다. "
+            "Sprint 19 의 Option 2 작업으로 구현 예정 — 본 PR(18.3.2)에서는 "
+            "UI 자리만 reserve."
+        )
+
+
 def main():
     _require_auth()
 
@@ -3650,7 +3924,7 @@ def main():
         "🔍 Eval", "🔐 PII 테스트",
         "🔬 검색 비교", "🧪 모델 테스트", "🛠 Validation",
         "🧰 Auto-Meta", "🧩 Chunk-Meta", "🧪 Auto-Testset", "🚨 Auto-Fixer",
-        "🧭 Classifier Sim", "📦 FAQ Cache",
+        "🧭 Classifier Sim", "📦 FAQ Cache", "📊 운영 모니터링",
     ])
     with tabs[0]: _tab_upload(sb)
     with tabs[1]: _tab_versions(sb)
@@ -3671,6 +3945,7 @@ def main():
     with tabs[16]: _tab_auto_fixer(sb)
     with tabs[17]: _tab_classifier_sim(sb)
     with tabs[18]: _tab_faq_cache_management(sb)
+    with tabs[19]: _tab_ops_dashboard(sb)
 
 
 def _tab_classifier_sim(sb):
