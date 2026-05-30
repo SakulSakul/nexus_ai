@@ -24,6 +24,7 @@ from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
 from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
+from .oos_router import ENABLE_OOS_ROUTING
 
 
 # ── Eval Mode: 모델 override (PR-Model-Self-Test) ──────────────
@@ -416,6 +417,41 @@ def _log_faq_cache_hit(
         "chat_provider":       "faq_cache",
         "chat_model_version":  None,
         "elapsed_ms":          0,
+        "used_fallback":       False,
+    }
+    try:
+        ins = supabase.table("query_logs").insert(_payload).execute()
+        _qid = ins.data[0].get("id") if ins.data else None
+        _log_query_logs_insert_success(_qid, list(_payload.keys()), supabase=supabase)
+        return _qid
+    except Exception as _e:
+        _log_query_logs_insert_failure(list(_payload.keys()), _e, supabase=supabase)
+        return None
+
+
+def _log_oos_skip(
+    supabase: Any, *, masked: str, category: str | None, s: Any,
+    elapsed_ms: int = 0,
+) -> int | None:
+    """PR-Phase-18.5.2: OOS Fast Skip 을 query_logs 에 경량 기록.
+
+    chat_provider="oos_skip" / elapsed_ms = classify_query 실측(Option B) →
+    18.3 모니터링 Dashboard 가 hit rate·실 latency 분포를 진실하게 표시.
+    query_log_id 반환 → 👍/👎 피드백 가능. _log_faq_cache_hit 패턴 미러링.
+    실패해도 응답 흐름 불변 (try/except 흡수).
+    """
+    _payload = {
+        "category":            category if category and category != "전체" else None,
+        "query_masked":        masked,
+        "is_critical":         False,
+        "critical_kind":       None,
+        "hit_chunk_ids":       [],
+        "hit_categories":      [],
+        "env":                 s.env_tag,
+        "embed_model_version": s.embed_model,
+        "chat_provider":       "oos_skip",
+        "chat_model_version":  None,
+        "elapsed_ms":          elapsed_ms,
         "used_fallback":       False,
     }
     try:
@@ -1073,6 +1109,34 @@ def ask(
                 confidence="high",
             )
 
+    # PR-Phase-18.5.2: OOS Fast Skip — 사규 범위 밖 query → 라우팅 안내.
+    # 안전 가드 (4중):
+    #   1) detect() 이후라 critical 키워드 매치는 위에서 triggered=True 로 우회
+    #   2) not detection.triggered 가드 (detect 통과한 critical-adjacent 도 차단)
+    #   3) CLASSIFIER_PROMPT Negative Prompting (#271, 21개 위험 키워드)
+    #   4) _DEFAULT_OOS_MESSAGE 의 self-correction 문단 (사용자 재시도 가이드)
+    # classify_query 실패 default="standard" → OOS 미진입 → 정상 pipeline (안전).
+    if ENABLE_OOS_ROUTING and not detection.triggered:
+        _cls = classify_query(question)
+        if _cls.get("category") == "out_of_scope":
+            from .oos_router import oos_routing_message
+            _cls_elapsed = float(_cls.get("elapsed", 0.0))
+            _qid = _log_oos_skip(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_cls_elapsed * 1000),
+            )
+            _emit("complete")
+            return Answer(
+                text=oos_routing_message(supabase),
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=_cls_elapsed,
+                query_log_id=_qid,
+                confidence="high",
+            )
+
     # 카테고리 필터:
     # 1) 명시 인자(category) 가 있으면 그것 + '공통' 합집합으로 폭 넓힘
     # 2) 명시 인자 없으면 질의에서 자동 추론(infer_categories) — 상위 3개
@@ -1570,6 +1634,31 @@ def ask_stream(
                 contexts=[],
                 masked_question=masked,
                 elapsed=0.0,
+                query_log_id=_qid,
+                confidence="high",
+            ))
+            return
+
+    # PR-Phase-18.5.2: OOS Fast Skip (streaming) — 단일 done yield.
+    # 위 critical 블록(streaming 비활성)에서 triggered 는 이미 ask() 위임 후
+    # return → 여기 도달 = non-critical. 가드는 ask() 와 동일 4중 정합.
+    if ENABLE_OOS_ROUTING and not detection.triggered:
+        _cls = classify_query(question)
+        if _cls.get("category") == "out_of_scope":
+            from .oos_router import oos_routing_message
+            _cls_elapsed = float(_cls.get("elapsed", 0.0))
+            _qid = _log_oos_skip(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_cls_elapsed * 1000),
+            )
+            _emit("complete")
+            yield ("done", Answer(
+                text=oos_routing_message(supabase),
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=_cls_elapsed,
                 query_log_id=_qid,
                 confidence="high",
             ))
