@@ -350,11 +350,14 @@ mechanical 하게 처리한다). 질문이 모호하면 ① 핵심 결론 자리
      (예: "외부 강의" query 에 '대외출강 운영 지침' 이 검색된 경우)
 
    [가이드라인 5] 사내 시스템 URL 명시 의무
-   답변 본문에서 다음 시스템 안내 시 URL 을 함께 명시한다:
-   - SRMS (Safety Risk Management System): https://rms.shinsegae.com/
+   답변 본문에서 다음 시스템 안내 시 URL 을 함께 명시한다.
+   ★ URL 은 반드시 마크다운 링크 [SRMS](https://rms.shinsegae.com/) 형식으로만 출력한다.
+     bare URL(https://...) 을 본문에 직접 쓰면 뒤따르는 닫는 괄호 ')' 나 조사(에/로/를
+     등)가 링크에 함께 묶여 렌더링이 깨지므로 절대 금지 — 항상 [표시텍스트](URL) 형식만 사용한다.
+   - SRMS (Safety Risk Management System): [SRMS](https://rms.shinsegae.com/)
    예시:
-   - "사고 발생 인지 즉시 SRMS (https://rms.shinsegae.com/) 등록"
-   - "24시간 이내 SRMS 등록 — https://rms.shinsegae.com/"
+   - "사고 발생 인지 즉시 [SRMS](https://rms.shinsegae.com/)에 등록"
+   - "24시간 이내 [SRMS](https://rms.shinsegae.com/) 등록"
    핫라인 URL 들은 답변 박스에 이미 표시되므로 본문 중복은 불필요하다.
 
    **★★ CRITICAL — 본문 인용 사규 우선순위 (PR-Phase-6-Fix-B) ★★**:
