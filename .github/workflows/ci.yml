@@ -1,0 +1,98 @@
+name: DF COMPASS CI
+
+# PR-Phase-19.1: Keyless GitHub Actions CI 파이프라인.
+#  - AST 검증 (stdlib only, 빠른 fail-fast) — 모든 .py 파일 ast.parse
+#  - Keyless Import 검증 — core/ 응답 경로 + 신규 모듈 (faq_cache, oos_router 등)
+#  - SIM·flag 정합성 spot-check — 향후 회귀 자동 차단
+# 코드 변경 0 / API 키 불필요 / 비용 0 (free tier 내).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ast:
+    name: AST 검증 (stdlib only · 빠른 fail-fast)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: AST compile all .py
+        run: |
+          set -e
+          fail=0
+          count=0
+          while IFS= read -r f; do
+            count=$((count+1))
+            if ! python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" 2>/dev/null; then
+              echo "::error file=$f::[AST FAIL]"
+              python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" || true
+              fail=1
+            fi
+          done < <(find . -name "*.py" \
+              -not -path "./.git/*" -not -path "./.venv/*" \
+              -not -path "./venv/*" -not -path "./__pycache__/*")
+          echo "AST 검증 완료: ${count} 파일 / fail=${fail}"
+          exit $fail
+
+  import:
+    name: Keyless Import 검증 (응답경로 + 신규 모듈)
+    runs-on: ubuntu-latest
+    needs: ast
+    timeout-minutes: 10
+    env:
+      # 모든 module-level get_secret 호출에는 default 가 있어 실제로는 미설정
+      # 이어도 import 안전. 안전망 + future-proof 위해 dummy 12종 주입.
+      SUPABASE_URL: "https://dummy.supabase.co"
+      SUPABASE_KEY: "dummy_anon_key"
+      SUPABASE_SERVICE_ROLE_KEY: "dummy_service_role_key"
+      GEMINI_API_KEY: "dummy_gemini_key"
+      ANTHROPIC_API_KEY: "dummy_anthropic_key"
+      NEXUS_CHAT_MODEL: "gemini-2.5-pro"
+      NEXUS_ENV: "beta-personal"
+      ENABLE_FAST_PATH: "false"
+      ENABLE_OOS_ROUTING: "false"
+      ENABLE_QUERY_CLASSIFIER_LOGGING: "false"
+      ENABLE_QUERY_CLASSIFIER_ACTION: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: pip install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Import keyless smoke (core modules)
+        run: |
+          set -e
+          python -c "from core import config; print('[IMPORT OK] config')"
+          python -c "from core.chatbot import ask, ask_stream, Answer; print('[IMPORT OK] chatbot.ask/ask_stream/Answer')"
+          python -c "from core.faq_cache import faq_cache_get, faq_cache_upsert, ENABLE_FAST_PATH; print('[IMPORT OK] faq_cache')"
+          python -c "from core.oos_router import oos_routing_message, ENABLE_OOS_ROUTING; print('[IMPORT OK] oos_router')"
+          python -c "from core.query_classifier import classify_query, SIM_DATASET, _VALID; print('[IMPORT OK] query_classifier')"
+          python -c "from core.retriever import hybrid_search; print('[IMPORT OK] retriever.hybrid_search')"
+      - name: SIM·flag 정합성 spot-check
+        run: |
+          python - <<'PY'
+          from core.query_classifier import SIM_DATASET, _VALID
+          assert set(SIM_DATASET.keys()) <= set(_VALID), "SIM 카테고리 토큰이 _VALID 와 불일치"
+          assert "out_of_scope" in _VALID, "out_of_scope 토큰 누락"
+          assert sum(len(v) for v in SIM_DATASET.values()) >= 26, "SIM 합계 < 26 (회귀)"
+          from core.faq_cache import ENABLE_FAST_PATH
+          from core.oos_router import ENABLE_OOS_ROUTING
+          assert ENABLE_FAST_PATH is False, "ENABLE_FAST_PATH 기본 OFF 깨짐"
+          assert ENABLE_OOS_ROUTING is False, "ENABLE_OOS_ROUTING 기본 OFF 깨짐"
+          print("[SPOT OK] SIM 카테고리 ⊆ _VALID / out_of_scope 존재 / SIM>=26 / flag 기본 OFF")
+          PY
