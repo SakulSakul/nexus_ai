@@ -119,11 +119,21 @@ def fill_meta_all_docs(
                 "meta": meta,
             })
 
-        # DB UPDATE
+        # DB UPDATE — auto_keywords 는 기존 ∪ 신규 merge (수동 패치/기존 키워드 보존)
         if not dry_run:
             try:
+                existing_kw = doc.get("auto_keywords") or []
+                new_kw = meta.get("auto_keywords", []) or []
+                seen: set[str] = set()
+                merged_kw: list[str] = []
+                for k in list(existing_kw) + list(new_kw):
+                    if isinstance(k, str):
+                        ks = k.strip()
+                        if ks and ks not in seen:
+                            seen.add(ks)
+                            merged_kw.append(ks)
                 sb.table("nexus_documents").update({
-                    "auto_keywords": meta.get("auto_keywords", []),
+                    "auto_keywords": merged_kw,
                     "auto_summary": meta.get("auto_summary", ""),
                     "auto_query_examples": meta.get("auto_query_examples", []),
                 }).eq("id", doc_id).execute()
