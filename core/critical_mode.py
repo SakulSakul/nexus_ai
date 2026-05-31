@@ -62,6 +62,21 @@ _INCIDENT_SIGNALS = (
     "다쳤", "다친", "다쳐",
 )
 
+# 코드 레벨 critical floor (PR-Critical-Floor / FMEA R2) — DB critical_keywords
+# 가용성·완전성과 무관하게 항상 critical 을 보장하는 최고위험 용어 집합.
+# 프롬프트 '초고위험 예외'(정보유출/중대재해/강력범죄/보안사고)와 동일 — phrasing
+# 무관(절차·방법 물어도 critical). 성희롱/폭행 등 phrasing 의존 항목은 제외(=DB+benign
+# 이 nuance 처리)해 과대 트리거(패턴 A) 재발 방지. (term, kind) — kind 는 scope 라우팅용.
+_CRITICAL_FLOOR: tuple[tuple[str, str], ...] = (
+    ("정보유출", "harassment"), ("정보 유출", "harassment"),
+    ("개인정보유출", "harassment"), ("개인정보 유출", "harassment"),
+    ("개인정보 노출", "harassment"),
+    ("기밀유출", "harassment"), ("기밀 유출", "harassment"),
+    ("보안사고", "harassment"), ("보안 사고", "harassment"),
+    ("중대재해", "safety"),
+    ("강력범죄", "safety"),
+)
+
 
 def _is_benign_query(text: str) -> bool:
     """질문 형식이 사규/규정 정보 요청이고, 실제 사건 신호가 없으면 True.
@@ -77,6 +92,14 @@ def _is_benign_query(text: str) -> bool:
 def detect(text: str, keywords: dict[str, list[str]]) -> CriticalDetection:
     if not text:
         return CriticalDetection(False, None, [])
+    # 코드 레벨 critical floor (PR-Critical-Floor / FMEA R2) — 최우선, DB·benign 무관.
+    # load_keywords 가 DB read 실패 시 빈 dict 반환(fail-open) → 아래 감지 루프
+    # 무력화로 critical 전체가 silent 하게 꺼지는 헛점 + 프롬프트 '초고위험 예외'
+    # (정보유출/중대재해/강력범죄/보안사고: 절차·방법 물어도 무조건 critical) 를
+    # 코드로 보장. DB 가 정상 매칭하는 케이스는 같은 kind 로 여기서 잡아 routing 보존.
+    for _ft, _fk in _CRITICAL_FLOOR:
+        if _ft in text:
+            return CriticalDetection(True, _fk, [_ft])
     benign = _is_benign_query(text)
     # 우선순위: harassment > safety (인사 라우팅 안내 필요)
     for kind in ("harassment", "safety"):
