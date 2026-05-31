@@ -1164,10 +1164,24 @@ def _render_category_chip(
     )
 
 
+def _domain_from_contexts(contexts: list[dict] | None) -> str | None:
+    """grounded 후속질문의 출처 도메인 — 첫 (도메인) prefix 보유 청크에서 추출.
+    클릭 시 그 도메인으로 검색을 강제(category 바인딩)해 답변 보장."""
+    if not contexts:
+        return None
+    import re as _re
+    for _c in contexts:
+        _m = _re.match(r"^\s*\(([^)]+)\)", _c.get("doc_title") or "")
+        if _m:
+            return _m.group(1).strip()
+    return None
+
+
 def _render_suggestion_cards(
     suggestions: list[str], *, is_critical: bool, msg_idx: int,
     ans_id: int | None = None,
     masked_question: str | None = None,
+    source_category: str | None = None,
 ) -> None:
     """PR-Fun1 작업 3: 답변 끝의 후속 질문 카드 3개.
 
@@ -1207,7 +1221,9 @@ def _render_suggestion_cards(
         ):
             # PR-Fun1.5: clicked_q 매개체로 분리 (SAMPLE_QUESTIONS 와 통일).
             # main() 입구 early exit 가 처리 — query carry-over issue 회피.
+            # PR-UI8: 출처 도메인 바인딩 — 클릭 시 그 도메인으로 검색 강제(답변 보장).
             st.session_state["clicked_q"] = q
+            st.session_state["clicked_cat"] = source_category
             st.rerun()
 
 
@@ -2873,6 +2889,7 @@ def _run_ask(
                 msg_idx=len(st.session_state["history"]),
                 ans_id=getattr(ans, "query_log_id", None),
                 masked_question=getattr(ans, "masked_question", None),
+                source_category=_domain_from_contexts(ans.contexts),
             )
             # PR-Fun1 작업 5: 랜덤 격려 멘트 (critical 시 critical_pool).
             _render_closing_remark(
@@ -3349,8 +3366,9 @@ def main():
     # → carry-over issue 회피. _run_ask 후 st.rerun() 으로 다음 cycle 에
     # main() 정상 흐름 복귀 (chat_input widget early 호출로 등록 보장).
     _clicked = st.session_state.pop("clicked_q", None)
+    _clicked_cat = st.session_state.pop("clicked_cat", None)
     if _clicked:
-        _run_ask(sb, _clicked, cat, hotlines)
+        _run_ask(sb, _clicked, _clicked_cat or cat, hotlines)
         st.rerun()
 
     # 🔄 다시 답변 — 액션 버튼 클릭 시 session_state 에 적재된 reroll request.
