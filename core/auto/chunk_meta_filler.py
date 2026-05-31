@@ -116,11 +116,20 @@ def fill_chunk_keywords_all(
                 "text_preview": chunk_text[:100],
             })
 
-        # DB UPDATE
+        # DB UPDATE — auto_keywords 는 기존 ∪ 신규 merge (수동 패치/기존 키워드 보존)
         if not dry_run:
             try:
+                existing_kw = chunk.get("auto_keywords") or []
+                seen: set[str] = set()
+                merged_kw: list[str] = []
+                for k in list(existing_kw) + list(keywords):
+                    if isinstance(k, str):
+                        ks = k.strip()
+                        if ks and ks not in seen:
+                            seen.add(ks)
+                            merged_kw.append(ks)
                 sb.table("nexus_chunks").update({
-                    "auto_keywords": keywords,
+                    "auto_keywords": merged_kw,
                 }).eq("id", chunk_id).execute()
                 updated += 1
             except Exception as e:
