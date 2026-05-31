@@ -25,6 +25,7 @@ from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
 from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
 from .oos_router import ENABLE_OOS_ROUTING
+from .grounded_suggestions import ENABLE_GROUNDED_SUGGESTIONS, grounded_suggestions
 
 
 # ── Eval Mode: 모델 override (PR-Model-Self-Test) ──────────────
@@ -1407,6 +1408,12 @@ def ask(
             list(_ask_payload.keys()), _e, supabase=supabase,
         )
 
+    # PR-UI1: 후속질문 출처를 검색 문서 auto_query_examples 로 교체 (grounded).
+    # critical 은 위에서 이미 []. 플래그 OFF / grounded 결과 없으면 기존 유지(회귀 안전).
+    if ENABLE_GROUNDED_SUGGESTIONS and not detection.triggered:
+        _g = grounded_suggestions(supabase, contexts, question)
+        if _g:
+            suggestions = _g
     _emit("complete")
     return Answer(
         text=final,
@@ -1826,6 +1833,11 @@ def ask_stream(
     # PR-Fun1: [SUGGESTIONS] 카드 분리. critical 흐름은 ask 동기로 위임된
     # 상태라 여기 도달은 is_critical=False — UI 단도 동일 분기.
     answer_text, suggestions = _split_suggestions(answer_text)
+    # PR-UI1: 정상 스트리밍 경로(is_critical=False)도 grounded 출처로 교체.
+    if ENABLE_GROUNDED_SUGGESTIONS:
+        _g = grounded_suggestions(supabase, contexts, question)
+        if _g:
+            suggestions = _g
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
     # Layer 3 (PR #83 → PR #84 → PR #86): 답변 사후 검증 + 구조화 사규 기준 주입.

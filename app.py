@@ -740,6 +740,28 @@ small {
     animation: nx-cycle 2s linear infinite;
     display: inline-block;
 }
+/* ── PR-UI1: 답변 본문 서체 정규화 (답변 유형 간 일관성) ───────── */
+[data-testid="stChatMessage"] .stMarkdown p,
+[data-testid="stChatMessage"] .stMarkdown li {
+    font-size: 0.95rem;
+    line-height: 1.72;
+}
+[data-testid="stChatMessage"] .stMarkdown h1,
+[data-testid="stChatMessage"] .stMarkdown h2,
+[data-testid="stChatMessage"] .stMarkdown h3,
+[data-testid="stChatMessage"] .stMarkdown h4,
+[data-testid="stChatMessage"] .stMarkdown h5 {
+    font-size: 1.03rem;
+    font-weight: 700;
+    line-height: 1.45;
+    margin: 0.95em 0 0.35em;
+}
+[data-testid="stChatMessage"] .stMarkdown ul,
+[data-testid="stChatMessage"] .stMarkdown ol {
+    margin: 0.3em 0 0.65em;
+    padding-left: 1.25em;
+}
+[data-testid="stChatMessage"] .stMarkdown strong { font-weight: 700; }
 </style>
 """
 
