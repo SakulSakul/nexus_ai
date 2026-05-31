@@ -396,14 +396,19 @@ html, body, .stApp {
   transform: none !important;
 }
 
-/* ── Chat messages ── */
+/* ── Chat messages (PR-UI7: warm 배경 위 가독성 — 흰 카드 부여) ── */
 [data-testid="stChatMessage"] {
   border: 1px solid var(--c-border) !important;
-  border-radius: 0 !important;
+  border-radius: 16px !important;
   padding: 1.25rem 1.5rem !important;
-  margin-bottom: 2px !important;
-  background: var(--c-bg) !important;
-  box-shadow: none !important;
+  margin-bottom: 0.6rem !important;
+  background: #FFFFFF !important;
+  box-shadow: 0 1px 3px rgba(31,30,29,0.05) !important;
+}
+/* user 질문 — 레드 계열 옅은 틴트로 구분 (Image 1 의 구분 버블) */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+  background: var(--c-accent-bg) !important;
+  border-color: #F1D5DB !important;
 }
 
 /* ── Chat input ── */
