@@ -340,6 +340,12 @@ html, body, .stApp {
 /* ── Main area ── */
 [data-testid="stMain"] { background: var(--c-bg) !important; }
 [data-testid="block-container"] { padding-top: 2rem !important; }
+/* ── PR-UI2: 답변 가독성 — 줄 길이(measure) 제한 ──────────────── */
+/* layout=wide 라 답변이 화면 폭 전체로 흘러 한 줄이 과도하게 길다(가독성 저하).
+   읽기 좋은 폭으로 제한 → 한 줄 ~40~50 한글자. stChatMessage 미사용 탭
+   (대시보드/도서관/admin)은 영향 없음. */
+[data-testid="stChatMessage"] { max-width: 880px; }
+[data-testid="stChatMessage"] .stMarkdown { max-width: 840px; }
 
 /* ── All buttons (default) ── */
 .stButton > button {
