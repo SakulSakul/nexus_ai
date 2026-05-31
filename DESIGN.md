@@ -7,23 +7,23 @@
 
 ## 0. 디자인 원칙 (제품 정체성)
 - **신뢰·공식·차분·가독.** 컴플라이언스 도구는 읽기 쉽고 권위 있어 보여야 한다.
-- **라이트 테마 고정.** 다크/그래디언트/개발툴룩 금지 — 장문 규정 가독성·신뢰감 저하.
+- **Warm editorial (라이트) 고정.** Parchment(`#F5F4ED`) 웜 크림 배경 + 웜 뉴트럴(황갈 언더톤) + 넉넉한 여백·행간. 다크/그래디언트/개발툴룩 금지. *서체는 Pretendard(sans) 유지 — Claude식 serif 헤드라인은 채택하지 않음.*
 - 신세계 시그니처 레드는 **액센트 전용**. 면적 채색 금지.
 - 화려함보다 여백·정렬·일관성. 절제가 기본값.
 
 ## 1. 색 토큰 (app.py `:root` — 신규 색 만들지 말고 이 변수 재사용)
 | 토큰 | 값 | 용도 |
 |---|---|---|
-| `--c-primary` | `#1A1A1A` | 본문/구조 무채색 |
-| `--c-accent` | `#C8102E` | 신세계 시그니처 레드 — **액센트 전용** |
+| `--c-primary` | `#1F1E1D` | 웜 near-black (구조) |
+| `--c-accent` | `#C8102E` | 신세계 시그니처 레드 — **액센트 전용** (Claude terracotta 대체) |
 | `--c-accent-dark` | `#9A0C24` | 호버 |
-| `--c-accent-bg` | `#FCEBEE` | 옅은 핑크 — 배너/하이라이트 배경 |
-| `--c-text` | `#333333` | 본문 |
-| `--c-caption` | `#767676` | 캡션/메타 |
-| `--c-muted` | `#AEAEAE` | 비활성/보조 |
-| `--c-border` | `#E0E0E0` | 경계선 |
-| `--c-surface` | `#F7F7F7` | 카드/표면 |
-| `--c-bg` | `#FFFFFF` | 배경 |
+| `--c-accent-bg` | `#FCEBEE` | 레드 계열 하이라이트 배경 |
+| `--c-text` | `#3D3C38` | 웜 그레이 본문 |
+| `--c-caption` | `#87867F` | 웜 그레이 캡션/메타 |
+| `--c-muted` | `#B5B3A9` | 웜 뉴트럴 |
+| `--c-border` | `#E8E6DC` | 크림 보더 |
+| `--c-surface` | `#FAF9F5` | 카드/표면 (옅은 크림) |
+| `--c-bg` | `#F5F4ED` | Parchment — 웜 크림 배경 |
 
 ## 2. 타이포그래피
 - 폰트: `var(--font)` = `Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`.
