@@ -356,6 +356,24 @@ def category_visual(
     """
     from collections import Counter
 
+    # -1. PR-Category-Citation-Authoritative: 답변이 특정 도메인(비-공통) 사규를
+    # 인용했으면 그 도메인이 authoritative — incident-node 추측(아래 Step 0
+    # Domain-Lock)보다 우선한다. rewriter 가 '택시'→'차량' 처럼 오확장해
+    # 차량사고 노드→안전 락이 걸려도, 답변이 실제 인용한 도메인(재무 시내교통비)
+    # 으로 칩을 표시한다. 인용이 전부 (공통) 이거나 없을 때만 기존 Step 0~
+    # fallback 으로 흘려 CSR/공정거래 등 도메인 추론을 보존 → incident 오분류
+    # 클래스 전체를 구조적으로 차단(트리거 단위 두더지잡기 대체).
+    # 콘솔 경로(answer_text=None)는 게이트로 스킵 → 회귀 영향 0.
+    if answer_text:
+        _cited_domain = [
+            c for c in _extract_categories_from_answer(answer_text) if c != "공통"
+        ]
+        if _cited_domain:
+            _primary_cited = Counter(_cited_domain).most_common(1)[0][0]
+            if _primary_cited in CATEGORY_VISUAL:
+                _icon, _color = CATEGORY_VISUAL.get(_primary_cited, _CATEGORY_DEFAULT)
+                return (_icon, _color, _primary_cited)
+
     # 0. PR-Phase-10-Fix-A + PR-Phase-10.2-Fix-E: Domain-Lock — user_incident_nodes
     # 의 명확 도메인 매칭 시 카테고리 강제 결정. chunks majority 의 ⚠️ 안전
     # 오인식 차단.
