@@ -339,12 +339,20 @@ html, body, .stApp {
 
 /* ── Main area ── */
 [data-testid="stMain"] { background: var(--c-bg) !important; }
+/* ── PR-UI5: 채팅 아바타 — 기본 색박스 제거 + 뉴트럴 디스크 (testid 버전 양쪽) ── */
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"],
+[data-testid="chatAvatarIcon-user"],
+[data-testid="chatAvatarIcon-assistant"] {
+    background-color: #f1f3f5 !important;
+    border: 1px solid #e5e8eb !important;
+}
 [data-testid="block-container"] { padding-top: 2rem !important; }
 /* ── PR-UI2: 답변 가독성 — 줄 길이(measure) 제한 ──────────────── */
 /* layout=wide 라 답변이 화면 폭 전체로 흘러 한 줄이 과도하게 길다(가독성 저하).
    읽기 좋은 폭으로 제한 → 한 줄 ~40~50 한글자. stChatMessage 미사용 탭
    (대시보드/도서관/admin)은 영향 없음. */
-[data-testid="stChatMessage"] { max-width: 880px; }
+[data-testid="stChatMessage"] { max-width: 880px; margin-left: auto; margin-right: auto; }
 [data-testid="stChatMessage"] .stMarkdown { max-width: 840px; }
 
 /* ── All buttons (default) ── */
@@ -2283,7 +2291,7 @@ def _run_ask(
         )
     if not _check_rate_limit():
         s = settings()
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🧭"):
             st.warning(
                 f"⚠️ 오늘 질의 한도({s.daily_query_limit}회)를 초과했습니다. "
                 "베타 비용 가드 정책입니다. 내일 다시 이용해 주세요."
@@ -2334,7 +2342,7 @@ def _run_ask(
 
     if reroll_of is None:
         _push_history(("user", q, {}))
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="👤"):
             st.markdown(q)
 
     ans = None
@@ -2350,7 +2358,7 @@ def _run_ask(
     # 진정한 token-append render 는 phase 4 (custom React component) 영역.
     _inject_streaming_visual_polish_once()
 
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar="🧭"):
         # 답변 본문 placeholder — streaming 점진 표시 + 후처리 단일 update.
         # status 컨테이너보다 위쪽 영역에 자리 잡아 사용자는 처리 단계 메시지
         # 위에서 답변이 점진적으로 그려지는 걸 본다. status 종료(collapsed)
@@ -3234,7 +3242,7 @@ def main():
     else:
         _start = 0
     for idx, (role, content, meta) in enumerate(_history[_start:], start=_start):
-        with st.chat_message(role):
+        with st.chat_message(role, avatar=("🧭" if role == "assistant" else "👤")):
             if role == "assistant" and meta.get("thinking"):
                 with st.expander("🧠 AI 검토 과정", expanded=False):
                     st.caption("AI가 답변을 생성한 검토 단계입니다. 답변 신뢰도 판단에 참고하세요.")
