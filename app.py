@@ -180,16 +180,17 @@ h6 > a.anchor-link {
 }
 
 :root {
-  --c-primary:    #1A1A1A;   /* 본문/구조용 무채색 — 변경 없음 */
-  --c-accent:     #C8102E;   /* 신세계 시그니처 레드 (액센트 전용) */
-  --c-accent-dark:#9A0C24;   /* 호버 상태용 짙은 레드 */
-  --c-accent-bg:  #FCEBEE;   /* 매우 옅은 핑크 — 배너/하이라이트 배경용 */
-  --c-text:     #333333;
-  --c-caption:  #767676;
-  --c-muted:    #AEAEAE;
-  --c-border:   #E0E0E0;
-  --c-surface:  #F7F7F7;
-  --c-bg:       #FFFFFF;
+  /* warm editorial (Claude 시스템) — accent 레드·font Pretendard 만 유지, 뉴트럴은 웜 톤 */
+  --c-primary:    #1F1E1D;   /* 웜 near-black (구조) */
+  --c-accent:     #C8102E;   /* 신세계 시그니처 레드 — 유지 (액센트 전용) */
+  --c-accent-dark:#9A0C24;   /* 호버 — 유지 */
+  --c-accent-bg:  #FCEBEE;   /* 레드 계열 하이라이트 배경 — 유지 */
+  --c-text:     #3D3C38;     /* 웜 그레이 본문 (황갈 언더톤) */
+  --c-caption:  #87867F;     /* 웜 그레이 캡션/메타 */
+  --c-muted:    #B5B3A9;     /* 웜 뉴트럴 */
+  --c-border:   #E8E6DC;     /* 크림 보더 */
+  --c-surface:  #FAF9F5;     /* 카드/표면 — 옅은 크림 */
+  --c-bg:       #F5F4ED;     /* Parchment — 웜 크림 배경 (editorial 핵심) */
   --font: 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
 }
 
