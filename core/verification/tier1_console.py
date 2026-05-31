@@ -40,7 +40,7 @@ def load_cases(path: Path | None = None) -> list[dict]:
         return []
 
 
-def _route_only(question: str, supabase: Any, *, need_category: bool) -> dict:
+def _route_only(question: str, supabase: Any, *, need_category: bool, need_retrieval: bool = False) -> dict:
     """ask() 의 합성 직전 상태만 재현 (Gemini 미실행).
     classifier + incident_nodes 는 항상, category 는 need_category 일 때만 검색 실행.
     """
@@ -73,7 +73,8 @@ def _route_only(question: str, supabase: Any, *, need_category: bool) -> dict:
     user_nodes = sorted(nodes)
 
     category = ""
-    if need_category:
+    retrieved_docs: list[str] = []
+    if need_category or need_retrieval:
         try:
             from core.retriever import hybrid_search
             from core.personality import category_visual
@@ -84,11 +85,19 @@ def _route_only(question: str, supabase: Any, *, need_category: bool) -> dict:
             for c in contexts:
                 if isinstance(c, dict):
                     c["_user_incident_nodes"] = list(user_nodes)
-            _icon, _color, category = category_visual(contexts)
+            retrieved_docs = sorted({
+                str(c.get("doc_title") or "") for c in contexts
+                if isinstance(c, dict) and c.get("doc_title")
+            })
+            if need_category:
+                _icon, _color, category = category_visual(contexts)
         except Exception:
             category = ""
 
-    return {"category": category, "classifier": classifier, "incident_nodes": user_nodes}
+    return {
+        "category": category, "classifier": classifier,
+        "incident_nodes": user_nodes, "retrieved_docs": retrieved_docs,
+    }
 
 
 def _check_case(case: dict, routed: dict) -> list[str]:
@@ -107,6 +116,17 @@ def _check_case(case: dict, routed: dict) -> list[str]:
     leaked = [n for n in (exp.get("incident_nodes_exclude") or []) if n in routed["incident_nodes"]]
     if leaked:
         failures.append(f"노드 오염={leaked} (실제={routed['incident_nodes']})")
+    # Tier-2 grounding: 기대 문서가 검색 top-k(contexts)에 실재하는지 (synthesis 불필요).
+    # 라우팅은 PASS인데 정답 사규 미검색으로 답이 틀리던 공백을 메움 (택시→시내교통비
+    # 사례). substring 매칭 — 제목 표기 차이에 관대.
+    exp_docs = exp.get("expect_retrieved_doc")
+    if exp_docs:
+        if isinstance(exp_docs, str):
+            exp_docs = [exp_docs]
+        got = routed.get("retrieved_docs") or []
+        for _d in exp_docs:
+            if not any(_d in g for g in got):
+                failures.append(f"기대 문서 미검색='{_d}' (실제 top-k={got[:8]})")
     return failures
 
 
@@ -127,8 +147,10 @@ def run_tier1(
                 pass
         t0 = time.perf_counter()
         try:
-            need_cat = "category" in (case.get("expect") or {})
-            routed = _route_only(case["query"], supabase, need_category=need_cat)
+            _exp = case.get("expect") or {}
+            need_cat = "category" in _exp
+            need_ret = "expect_retrieved_doc" in _exp
+            routed = _route_only(case["query"], supabase, need_category=need_cat, need_retrieval=need_ret)
             failures = _check_case(case, routed)
             results.append(CaseResult(
                 case_id=case.get("id", f"case_{i}"), query=case["query"],
