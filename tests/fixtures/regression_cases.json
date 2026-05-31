@@ -8,7 +8,7 @@
     { "id": "self_report_faq", "query": "자진 신고", "expect": { "classifier": "simple_faq" } },
     { "id": "harassment_hr", "query": "직장 내 괴롭힘", "expect": { "classifier": "standard", "incident_nodes_include": ["괴롭힘"], "category": "인사" }, "note": "주제어=standard (사건 프레이밍만 critical)" },
     { "id": "taxi_finance", "query": "택시 타도 됨?", "expect": { "classifier_not": "out_of_scope" }, "note": "OOS 오분류 -> 게이트가 시내교통비(재무)로 rescue" },
-    { "id": "parking_admin", "query": "회사 주차장", "expect": { "classifier_not": "out_of_scope" } },
+    { "id": "parking_admin", "query": "회사 주차장", "expect": { "classifier": "out_of_scope" }, "note": "주차 전용 사규 없음(급배기·실종아동 스치는 언급뿐). 게이트가 OOS 유지 = 정답. 스치는 언급에 과잉 rescue 안 하는지 지키는 가드" },
     { "id": "overtime_meal", "query": "야근 식대", "expect": { "classifier_not": "out_of_scope" } },
     { "id": "company_car_accident", "query": "법인차량 사고", "expect": { "classifier_not": "out_of_scope" } },
     { "id": "wedding_congrats", "query": "결혼 경조사비", "expect": { "classifier_not": "out_of_scope" } },
