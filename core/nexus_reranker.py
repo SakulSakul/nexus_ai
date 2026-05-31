@@ -18,6 +18,8 @@ Flash-Lite 에 전달해 의미 매칭 기반으로 재정렬한다. RRF + 어�
 
 from __future__ import annotations
 
+from . import helper_health  # FMEA R1: fail-open 가시화
+
 import json
 import sys
 import threading
@@ -274,12 +276,14 @@ def rerank_chunks(query: str, raw_chunks: list[dict]) -> list[dict]:
             f"fallback to original order",
             file=sys.stderr, flush=True,
         )
+        helper_health.record("reranker")
         return raw_chunks
 
     ranked_ids = result_holder[0] or []
 
     if not ranked_ids:
         # graceful fallback — 원본 순서 유지.
+        helper_health.record("reranker")
         return raw_chunks
 
     id_to_chunk: dict = {str(c.get("id") or ""): c for c in head}
@@ -354,6 +358,7 @@ def judge_relevance(query: str, chunks: list[dict]) -> float:
         data = json.loads(_extract_response_text(res))
         return max(0.0, min(1.0, float(data.get("relevance"))))
     except Exception as e:
+        helper_health.record("oos_judge")
         print(f"[oos-judge] FAILED -> fail-open 1.0: {type(e).__name__}: {e}",
               file=sys.stderr, flush=True)
         return 1.0

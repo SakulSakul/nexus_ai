@@ -3692,6 +3692,33 @@ def _tab_ops_dashboard(sb):
         "PII 마스킹된 query_masked 만 표시."
     )
 
+    # ── 헬퍼 LLM 상태 (FMEA R1) — fail-open 가시화 ──
+    # reranker/oos judge/rewriter 는 실패 시 예외 없이 fail-open(raw 순서/1.0/원문)
+    # 하므로 장애가 silent. helper_health 가 현 프로세스 수명 동안 실패를 집계.
+    # in-memory — reboot 시 리셋(프로덕션 episode 탐지용).
+    try:
+        from core import helper_health
+        _hh_labels = {"reranker": "Reranker", "oos_judge": "OOS Judge", "rewriter": "Rewriter"}
+        _hh_1h = helper_health.snapshot(3600.0)
+        _hh_1m = helper_health.snapshot(60.0)
+        st.markdown("**🩺 헬퍼 LLM 상태** (현 프로세스 · reboot 시 리셋)")
+        _hh_cols = st.columns(3)
+        for _i, (_k, _lab) in enumerate(_hh_labels.items()):
+            _open = helper_health.is_open(_k, threshold=3, window_s=60.0)
+            _hh_cols[_i].metric(
+                _lab,
+                f"{_hh_1h.get(_k, 0)} 실패/1h",
+                delta=("⚠ 회로 열림" if _open else f"{_hh_1m.get(_k, 0)}/1m"),
+                delta_color=("inverse" if _open else "off"),
+            )
+        if any(helper_health.is_open(_k, 3, 60.0) for _k in _hh_labels):
+            st.warning(
+                "헬퍼 LLM 연속 실패 감지 — Flash-Lite 지연/장애 의심. fail-open 으로 "
+                "응답은 계속되나 reranking·OOS 게이트·쿼리 재작성이 저하됐을 수 있습니다."
+            )
+    except Exception:
+        pass
+
     # 시간 범위 토글
     days_map = {"24h": 1, "7d": 7, "30d": 30}
     label = st.radio("기간", list(days_map.keys()),

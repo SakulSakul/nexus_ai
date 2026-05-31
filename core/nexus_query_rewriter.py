@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from . import helper_health  # FMEA R1: fail-open 가시화
+
 import functools
 import re
 import sys
@@ -235,6 +237,7 @@ def rewrite_query_for_retrieval(user_question: str, return_debug: bool = False):
     try:
         raw = _call_gemini_for_rewrite(user_question)
     except Exception:
+        helper_health.record("rewriter")
         raw = ""
     cleaned = _postprocess_rewritten(raw, fallback=user_question)
     return (cleaned, raw) if return_debug else cleaned
