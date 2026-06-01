@@ -2666,50 +2666,50 @@ def _run_ask(
         # PR-Fun1.6: st.empty placeholder + emoji progress 한 줄 패턴.
         # PR-Fun1.8: CSS keyframes (nx-spin / nx-pulse) class + st.progress
         # bar 단계별 갱신. emoji 자체 애니메이션 + 시각적 진행률.
+        # 목업 THINKING: 나침반 스피너 + 상태 한 줄. 진행 바는 CSS 로 숨기되
+        # progress_bar 변수는 후속 .progress()/.empty() 호환 위해 유지.
+        st.markdown(
+            "<style>"
+            '[data-testid="stProgress"]{display:none !important;}'
+            ".nx-think{display:flex;align-items:center;gap:14px;padding:16px 4px;}"
+            ".nx-think-spin{display:inline-flex;align-items:center;justify-content:center;"
+            "width:44px;height:44px;border-radius:50%;background:rgba(200,16,46,0.08);"
+            "font-size:22px;animation:nx-spin 2s linear infinite;}"
+            ".nx-think-txt{display:flex;flex-direction:column;gap:3px;}"
+            ".nx-think-line{font-size:15px;font-weight:600;color:var(--c-primary);}"
+            ".nx-think-sub{font-size:12.5px;color:#9A968D;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
         progress_placeholder = st.empty()
         progress_bar = st.progress(0, text="진행 중...")
+
+        def _spinner_html(line: str, sub: str = "") -> str:
+            _sub = f'<div class="nx-think-sub">{sub}</div>' if sub else ""
+            return (
+                '<div class="nx-think"><span class="nx-think-spin">🧭</span>'
+                '<div class="nx-think-txt">'
+                f'<div class="nx-think-line">{line}</div>{_sub}'
+                "</div></div>"
+            )
+
         progress_placeholder.markdown(
-            '<span class="nx-spin">🧭</span> 질문 분석  →  '
-            "⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
-            "⏳ 진행 중...",
+            _spinner_html("관련 사규 탐색 중…", "근거 조항 분석 · 판정 생성"),
             unsafe_allow_html=True,
         )
 
-        # 진행 단계 표시 callback. ask() 가 emit("analyze") → ("search_start") →
-        # ("search_done") → ("generate") → ("complete") 순으로 호출.
-        # injection early-exit 분기에서는 callback 미호출(정상).
         def _on_progress(stage: str, payload: dict) -> None:
             if stage == "analyze":
                 progress_placeholder.markdown(
-                    '<span class="nx-spin">🧭</span> 질문 분석  →  '
-                    "⚪ 사규 검색  →  ⚪ 답변 작성\n\n"
-                    "⏳ 질문 분석 중...",
+                    _spinner_html("질문 분석 중…", "핵심 쟁점·도메인 파악"),
                     unsafe_allow_html=True,
                 )
-                progress_bar.progress(0.15, text="🔍 질문 분석 중...")
             elif stage == "search_start":
                 progress_placeholder.markdown(
-                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
-                    "⚪ 답변 작성\n\n"
-                    "⏳ 사규 검색 중...",
+                    _spinner_html("관련 사규 탐색 중…", "근거 조항 검색"),
                     unsafe_allow_html=True,
                 )
-                progress_bar.progress(0.4, text="📚 관련 사규 검색 중...")
-            elif stage == "search_rewrite_done":
-                _elapsed = payload.get("elapsed_ms", 0) / 1000
-                progress_placeholder.markdown(
-                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
-                    "⚪ 답변 작성\n\n"
-                    f"  ✅ 📝 사규 키워드로 변환 · {_elapsed:.1f}초\n"
-                    f"  🔄 🔍 의미 검색 중...",
-                    unsafe_allow_html=True,
-                )
-                progress_bar.progress(0.45, text="🔍 사규 의미 검색 중...")
             elif stage == "synonym_substitution":
-                # PR-Phase-19.2.2: 사규 동의어 사전 매핑 안내.
-                # 사용자가 입력한 약어/속칭이 사규 정식 용어로 확장됐을 때
-                # st.info 로 1회 표시 (st.empty placeholder 활용해 동일 자리
-                # 갱신, 라이브 카운터 / 메타와 충돌 없음).
                 _subs = payload.get("substitutions") or []
                 if _subs:
                     _subs_text = ", ".join(
@@ -2717,77 +2717,37 @@ def _run_ask(
                     )
                     if _subs_text:
                         st.info(f"💡 다음 사규 용어로 검색했습니다: {_subs_text}")
-            elif stage == "search_embed_done":
-                progress_placeholder.markdown(
-                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
-                    "⚪ 답변 작성\n\n"
-                    f"  ✅ 📝 사규 키워드로 변환\n"
-                    f"  ✅ 🧮 의미 벡터 생성\n"
-                    f"  🔄 🔤 벡터 + 키워드 매칭 중...",
-                    unsafe_allow_html=True,
-                )
-                progress_bar.progress(0.5, text="🔤 벡터 + 키워드 매칭 중...")
             elif stage == "search_rpc_done":
                 _matched = payload.get("matched", 0)
-                _elapsed = payload.get("elapsed_ms", 0) / 1000
                 progress_placeholder.markdown(
-                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
-                    "⚪ 답변 작성\n\n"
-                    f"  ✅ 📝 사규 키워드로 변환\n"
-                    f"  ✅ 🔤 {_matched}개 사규 매칭 · {_elapsed:.1f}초\n"
-                    f"  🔄 🎯 의미 재정렬 (LLM) 중...",
+                    _spinner_html("관련 사규 탐색 중…", f"{_matched}개 사규 매칭 · 의미 재정렬"),
                     unsafe_allow_html=True,
                 )
-                progress_bar.progress(0.6, text="🎯 LLM 의미 재정렬 중...")
-            elif stage == "search_rerank_done":
-                _elapsed = payload.get("elapsed_ms", 0) / 1000
-                _titles = payload.get("top_titles", [])[:2]
-                _title_str = ", ".join(_titles) if _titles else ""
-                progress_placeholder.markdown(
-                    '✅ 질문 분석  →  <span class="nx-pulse">📚</span> 사규 검색  →  '
-                    "⚪ 답변 작성\n\n"
-                    f"  ✅ 📝 사규 키워드로 변환\n"
-                    f"  ✅ 🔤 사규 매칭\n"
-                    f"  ✅ 🎯 LLM 의미 재정렬 · {_elapsed:.1f}초\n"
-                    f"  🔄 ✨ 핵심 사규 선별 · {_title_str}",
-                    unsafe_allow_html=True,
-                )
-                progress_bar.progress(0.65, text="✨ 핵심 사규 선별 중...")
             elif stage == "search_done":
                 total = payload.get("total", 0)
                 if total == 0:
                     progress_placeholder.markdown(
-                        '✅ 질문 분석  →  ✅ 사규 검색  →  '
-                        '<span class="nx-cycle"></span> 답변 작성\n\n'
-                        "⏳ 검색 결과 없음 — 답변에 한계가 있을 수 있어요",
+                        _spinner_html("답변 작성 중…", "검색 결과 없음 — 답변에 한계가 있을 수 있어요"),
                         unsafe_allow_html=True,
                     )
-                    progress_bar.progress(0.7, text="✍️ 답변 작성 중...")
                     return
-                # 중복 doc_title 제거 + 첫 3개 + 외 N건
                 seen: set[str] = set()
                 unique_titles: list[str] = []
                 for t in payload.get("doc_titles", []):
                     if t and t not in seen:
                         unique_titles.append(t)
                         seen.add(t)
-                shown = unique_titles[:3]
+                shown = unique_titles[:2]
                 more = len(unique_titles) - len(shown)
                 title_str = ", ".join(shown)
                 if more > 0:
                     title_str += f" 외 {more}건"
                 progress_placeholder.markdown(
-                    '✅ 질문 분석  →  ✅ 사규 검색  →  '
-                    '<span class="nx-cycle"></span> 답변 작성\n\n'
-                    f"⏳ 보통 30초 안에 완료됩니다 · {title_str}",
+                    _spinner_html("답변 작성 중…", f"근거 사규: {title_str}"),
                     unsafe_allow_html=True,
                 )
-                progress_bar.progress(0.7, text="✍️ 답변 작성 중...")
-            elif stage == "generate":
-                # search_done 에서 이미 답변 작성 단계 표시됨. 추가 변경 X.
-                pass
             elif stage == "complete":
-                progress_bar.progress(1.0, text="✅ 답변 완료")
+                pass
 
         # ─────────────────────────────────────────────────
         # Phase 7.5 (PR #108): X+ structured_ask 분기 (최우선).
