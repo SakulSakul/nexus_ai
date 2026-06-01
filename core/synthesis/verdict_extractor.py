@@ -72,11 +72,11 @@ def _chunk_clause(c: dict) -> str:
     return _ck(c, ("clause", "article", "조항", "section"))
 
 
-def _pick_quote(chunk: dict, max_len: int = 140) -> str:
+def _pick_quote(chunk: dict, max_len: int = 170) -> str:
     text = _chunk_text(chunk).strip()
     if not text:
         return ""
-    # 선두 [문서 안내] 등 메타 헤더 스킵 — 실제 사규 본문 문장만 인용.
+    # 1) 선두 [문서 안내]·문서정보 메타 헤더 스킵.
     _meta = ("문서번호", "관리부서", "개정일자", "개정 1호", "개정일")
     _body = []
     _skipping = True
@@ -90,11 +90,23 @@ def _pick_quote(chunk: dict, max_len: int = 140) -> str:
             _skipping = False
         _body.append(_ls)
     body = " ".join(_body).strip() or text
-    for sep in ("다. ", "다.\n", "다.", ". ", ".\n"):
-        idx = body.find(sep)
-        if 0 < idx <= max_len:
-            return body[: idx + len(sep)].strip()
-    return body[:max_len].strip()
+    # 2) 문장 분할 (한국어 종결 '다.' / 마침표 / 줄바꿈).
+    import re as _re
+    sents = [x.strip() for x in _re.split(r"(?<=다\.)\s+|(?<=\.)\s+|\n", body) if x.strip()]
+    if not sents:
+        return body[:max_len].strip()
+    # 3) 규칙 신호 문장 우선 인용 — 행정·안내 문장은 회피.
+    _sig = ("금지", "할 수 없", "하여야", "하여서는", "해서는 안", "안 된다", "아니 된다",
+            "원칙으로", "위반", "수수", "신고", "보고", "준수", "징계")
+    _admin = ("문의", "양식", "서식", "사본", "최신본", "다운로드", "안내합니다")
+    for _s in sents:
+        if len(_s) <= max_len and any(g in _s for g in _sig) and not any(a in _s for a in _admin):
+            return _s
+    # 4) fallback: 행정 문장 제외 첫 적정 문장 → 그래도 없으면 첫 문장 절단.
+    for _s in sents:
+        if 10 <= len(_s) <= max_len and not any(a in _s for a in _admin):
+            return _s
+    return sents[0][:max_len].strip()
 
 
 def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None":
