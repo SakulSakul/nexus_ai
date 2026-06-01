@@ -784,7 +784,7 @@ small {
 [data-testid="stChatMessage"] .stMarkdown strong { font-weight: 700; }
 
 /* ── PR-UI2 (Stage 1): Empty-home hero 리디자인 — editorial + 나침반 마크 + 트러스트 스트립 ── */
-.nx-hero2 { padding: 40px 0 24px; border-bottom: 1px solid var(--c-border); margin-bottom: 32px; }
+.nx-hero2 { padding: 40px 0 24px; border-bottom: 1px solid var(--c-border); max-width: 880px; margin: 0 auto 32px; }
 .nx-hero2-mark { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
 .nx-compass { display: inline-block; width: 24px; height: 24px; flex: 0 0 24px; background: no-repeat center / contain; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.3' fill='none' stroke='%231F1E1D' stroke-width='1.5'/%3E%3Cpolygon points='12,3.8 9.6,12 14.4,12' fill='%23C8102E'/%3E%3Cpolygon points='12,20.2 9.6,12 14.4,12' fill='%23B5B3A9'/%3E%3Ccircle cx='12' cy='12' r='1.4' fill='%231F1E1D'/%3E%3C/svg%3E"); }
 .nx-hero2-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.26em; text-transform: uppercase; color: var(--c-accent); }
