@@ -39,8 +39,14 @@ AMBIGUOUS_BARE_TOKENS: dict[str, dict] = {
         "choices": [
             {"label": "내부회계 감사", "query": "내부회계관리제도 감사 절차", "cat": "재무"},
             {"label": "정보보호·보안 감사", "query": "정보보호 보안 감사 절차", "cat": "정보보안"},
-            {"label": "AEO 감사", "query": "AEO 내부심사 절차", "cat": "영업"},
-            {"label": "감사위원회", "query": "감사위원회 운영 절차", "cat": "총무"},
+            # AEO 내부심사 = (영업) AEO 내부통제활동평가규정. "내부심사" 문구가
+            # corpus doc 명칭과 불일치해 synthesizer "확인 안됨" 처리되던 것 →
+            # 실재 doc 주제어("내부통제활동 평가")로 query 정렬.
+            {"label": "AEO 감사", "query": "AEO 내부통제활동 평가 절차", "cat": "영업"},
+            # 감사위원회 선택지 제거: 독립 "감사위원회 운영규정" 사규가 corpus 에
+            # 부재(내부회계관리제도상 보고대상으로만 언급). 막다른 버튼 = false-
+            # negative 약속이므로 미제공. 직접 "감사위원회 운영" 질의 시 full RAG 가
+            # 정직하게 "독립 규정 없음" 안내함.
         ],
     },
 }
