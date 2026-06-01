@@ -1675,8 +1675,6 @@ def _render_empty_state(sb) -> None:
         <div class="nx-hero2">
           <p class="nx-hero2-eyebrow">사규의 나침반 · Compliance Compass</p>
           <h1 class="nx-hero2-title">무엇을 확인해 드릴까요<span class="nx-hero2-q">?</span></h1>
-          <p class="nx-hero2-sub">윤리·안전·정보보안·공정거래·재무·영업·총무·환경·CSR 전 영역의 사규를 통합 검색합니다. 답변마다 <strong>근거 사규</strong>와 <strong>신뢰도</strong>를 함께 표시합니다.</p>
-          <p class="nx-hero2-scope">휴가·평가·근태 등 인사 행정 문의는 인사교육팀으로 안내해 드립니다.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1715,42 +1713,28 @@ def _render_empty_state(sb) -> None:
                 st.session_state["clicked_q"] = _v
                 st.rerun()
 
+    # 목업 미니멀: 입력창 아래 작은 칩 3개만 (그룹·트러스트 제거).
+    # 라벨은 짧게, 실제 질의는 full question 으로 매핑.
     st.markdown(
-        """
-        <div class="nx-trust">
-          <span><span class="nx-dot nx-dot-g"></span>근거 사규 자동 표기</span>
-          <span><span class="nx-dot nx-dot-a"></span>불확실하면 담당부서 안내</span>
-          <span><span class="nx-dot nx-dot-r"></span>범위 밖이면 솔직히 안내</span>
-        </div>
-        """,
+        '<style>'
+        '[class*="st-key-hpill_"] button{min-height:36px !important;border-radius:999px !important;'
+        'border:1px solid var(--c-border) !important;background:#fff !important;color:#6B6760 !important;'
+        'font-size:13px !important;font-weight:500 !important;padding:6px 12px !important;'
+        'box-shadow:none !important;white-space:nowrap !important;}'
+        '[class*="st-key-hpill_"] button:hover{border-color:var(--c-accent) !important;color:var(--c-accent) !important;}'
+        '</style>',
         unsafe_allow_html=True,
     )
-
-    _hero_groups = [
-        ("자주 묻는 것", False, [
-            "법인카드를 개인 용도로 사용해도 되나요?",
-            "거래처에서 선물을 받아도 되나요?",
-            "신세계그룹의 핵심 가치 CREDO는 무엇인가요?",
-        ]),
-        ("신고 · 긴급", True, [
-            "직장 내에서 괴롭힘을 당했어요. 어떻게 신고하나요?",
-            "동료가 다쳤어요. 긴급 보고는 어떻게 하나요?",
-        ]),
-        ("도메인별", False, [
-            "매장 안전관리 책임자와 절차는 어떻게 되나요?",
-            "회사의 녹색 구매 기준은 어떻게 되나요?",
-            "고객이 매장에 두고 간 물건은 어떻게 처리하나요?",
-        ]),
+    _hero_pills = [
+        ("선물 받았어요", "거래처에서 선물을 받아도 되나요?"),
+        ("동료 부상", "동료가 다쳤어요. 긴급 보고는 어떻게 하나요?"),
+        ("법인카드", "법인카드를 개인 용도로 사용해도 되나요?"),
     ]
-    st.markdown('<div class="nx-chips-top"></div>', unsafe_allow_html=True)
-    for _gi, (_label, _urgent, _qs) in enumerate(_hero_groups):
-        _cls = "nx-grp nx-grp-urgent" if _urgent else "nx-grp"
-        st.markdown('<p class="' + _cls + '">' + _label + '</p>', unsafe_allow_html=True)
-        _cols = st.columns(len(_qs))
-        for _qi, _q in enumerate(_qs):
-            if _cols[_qi].button(_q, key="hchip_" + str(_gi) + "_" + str(_qi), use_container_width=True):
-                st.session_state["clicked_q"] = _q
-                st.rerun()
+    _pcols = st.columns(len(_hero_pills))
+    for _pi, (_plabel, _pq) in enumerate(_hero_pills):
+        if _pcols[_pi].button(_plabel, key="hpill_" + str(_pi), use_container_width=True):
+            st.session_state["clicked_q"] = _pq
+            st.rerun()
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
