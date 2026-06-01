@@ -3535,11 +3535,13 @@ def main():
     # chat_input 자체가 안 그려졌다 (사용자 다음 질문 불가). 원래 흐름
     # (chat_input 또는 pending_q 둘 중 하나 채워지면 _run_ask) 복구.
 
-    # PR-Fun1.4: hero section 을 _render_empty_state 안으로 이동.
-    # history 비어있을 때만 hero + personality 인사 + 답변 예시 expander.
-    # 한 번이라도 질문하면 일반 채팅 흐름으로 전환되어 자연스럽게 사라짐.
-    # "무엇을 도와드릴까요?" + chat 인사가 동시 노출되던 두 번 렌더링 issue 해결.
-    if not st.session_state.get("history") and not st.session_state.get("clicked_q"):
+    # chat_input 을 먼저 호출(하단 sticky) → 첫 질문이 하단 입력으로 와도
+    # 빈 홈이 답변과 동시에 렌더되지 않도록 게이트에 q_input 반영.
+    q_input = st.chat_input("질문을 입력하세요…", max_chars=2000)
+    # PR-Fun1.4: hero 는 history 비어있고 진행 중 질문(clicked_q·q_input) 없을 때만.
+    if (not st.session_state.get("history")
+            and not st.session_state.get("clicked_q")
+            and not q_input):
         _render_empty_state(sb)
 
     # Chat history replay — 최근 30 messages 만 렌더 (rerun 비용 제어).
@@ -3671,7 +3673,7 @@ def main():
     # 매 rerun 에 등록되도록 보장. streamlit chat_input 은 화면 하단
     # sticky 라 호출 위치와 무관하게 항상 동일 위치에 렌더된다.
     # max_chars=2000 — 사규 질문에 충분한 길이이며 메가바이트 페이로드 차단.
-    q_input = st.chat_input("질문을 입력하세요…", max_chars=2000)
+    # (q_input 은 빈 홈 게이트용으로 main 상단에서 미리 호출 — 여기서 재호출 금지)
 
     # PR-Fun1.5: SAMPLE_QUESTIONS chip / [SUGGESTIONS] 카드 click 의 매개체
     # session_state['clicked_q'] 처리. main 흐름 다른 분기보다 _먼저_ 처리
