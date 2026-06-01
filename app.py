@@ -3539,7 +3539,7 @@ def main():
     # history 비어있을 때만 hero + personality 인사 + 답변 예시 expander.
     # 한 번이라도 질문하면 일반 채팅 흐름으로 전환되어 자연스럽게 사라짐.
     # "무엇을 도와드릴까요?" + chat 인사가 동시 노출되던 두 번 렌더링 issue 해결.
-    if not st.session_state.get("history"):
+    if not st.session_state.get("history") and not st.session_state.get("clicked_q"):
         _render_empty_state(sb)
 
     # Chat history replay — 최근 30 messages 만 렌더 (rerun 비용 제어).
