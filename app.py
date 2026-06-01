@@ -1565,6 +1565,10 @@ def _build_structured_card_html(d) -> str:
     return "".join(parts)
 
 
+_ENABLE_VERDICT_SHADOW = get_secret("ENABLE_VERDICT_SHADOW", "false").lower() == "true"
+_ENABLE_VERDICT_CARD = get_secret("ENABLE_VERDICT_CARD", "false").lower() == "true"
+
+
 def _render_empty_state(sb) -> None:
     """첫 진입(빈 홈) — 목업 정렬: 상단 바 + 히어로 + 중앙 입력 + 트러스트 + 그룹 칩.
 
@@ -3045,6 +3049,13 @@ def _run_ask(
             # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
             # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
             answer_placeholder.markdown(ans.text)
+            # ── [Verdict Stage 1] Shadow: 로그만, UI 무영향 ──
+            if _ENABLE_VERDICT_SHADOW:
+                try:
+                    from core.synthesis.verdict_extractor import extract_verdict
+                    extract_verdict(effective_q, ans.text, list(getattr(ans, "contexts", []) or []))
+                except Exception:
+                    pass
             # PR-Coding-Policy-Defense: retrieval/LLM critical path 에서 silent
             # 처리된 내부 오류를 운영자에게 가시화 (접힌 expander). chunk_incident_nodes
             # 같은 스키마 오류가 force-include 를 무력화한 사고 재발 조기 감지.
