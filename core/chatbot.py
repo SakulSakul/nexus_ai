@@ -134,13 +134,13 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _shadow_log_multi_facet(contexts: list) -> None:
+def _shadow_log_multi_facet(contexts: list, tag: str = "balanced") -> None:
     """PR-MultiFacet-Shadow: 게이트 판정 로그만 (행동 변화 없음)."""
     import sys
     try:
         _mf = detect_multi_facet(contexts)
         print(
-            f"[multi_facet:shadow] is_mf={_mf.is_multi_facet} "
+            f"[multi_facet:shadow:{tag}] is_mf={_mf.is_multi_facet} "
             f"domains={_mf.distinct_domains} dominant={_mf.dominant_category} "
             f"facets={[f.category for f in _mf.facets]}",
             file=sys.stderr, flush=True,
@@ -1212,6 +1212,7 @@ def ask(
     )
     contexts = _balance_by_doc_kind(contexts_raw)
     _shadow_log_multi_facet(contexts)
+    _shadow_log_multi_facet(contexts_raw, "raw")
     # Phase 1.5 (PR #95) → Phase 6 (PR #101): universal SOP 청크 보존, _UNIVERSAL_SOP_MAX_CHUNKS 까지 cap.
     # _balance_by_doc_kind 의 rule=3 cap 으로 universal SOP 가 drop 되는 회귀 차단 +
     # 7 슬롯 모두 universal SOP 로 차서 카테고리 specific docs 누락하던 회귀 차단.
@@ -1745,6 +1746,7 @@ def ask_stream(
     )
     contexts = _balance_by_doc_kind(contexts_raw)
     _shadow_log_multi_facet(contexts)
+    _shadow_log_multi_facet(contexts_raw, "raw")
     # Phase 1.5 → Phase 6: universal SOP 청크 ratio cap 우회 보존 + max cap.
     _balanced_ids = {c.get("chunk_id") for c in contexts if c.get("chunk_id")}
     _sop_preserved = 0
