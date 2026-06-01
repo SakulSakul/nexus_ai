@@ -1778,32 +1778,8 @@ def hybrid_search(
                 str(c.get("id") or ""),
             )
         )
-        # 매칭 doc 가 TOP_K 보다 많으면 cap.
-        if hard_scope_category:
-            # PR-TopK-DocDiversity: 명시 도메인(역질문 클릭)에서 한 주제가 여러
-            # 사규로 분산된 경우(예: AEO 10개), 고밀도 doc 이 chunk-score top-K 를
-            # 독점해 핵심 doc 이 통째 탈락하던 구조 결함 fix. doc당 대표 1개를
-            # 정렬 순서대로 먼저 확보(breadth)한 뒤 남는 슬롯을 점수순 보충(depth —
-            # dominant doc 은 추가 청크 유지). hard_scope 미설정 시 기존 [:TOP_K]
-            # 경로로 byte-identical (회귀 0).
-            _seen_docs: set = set()
-            _reps: list = []
-            _rest: list = []
-            for _c in guaranteed_chunks:  # 이미 (prefix, 공통, rrf, ...) 정렬됨
-                _did = _c.get("document_id") or ""
-                if _did and _did not in _seen_docs:
-                    _seen_docs.add(_did)
-                    _reps.append(_c)
-                else:
-                    _rest.append(_c)
-            guaranteed_chunks = (_reps + _rest)[:TOP_K]
-            print(
-                f"[retriever:topk_doc_diversity] category={hard_scope_category} "
-                f"unique_docs={len(_seen_docs)} top_k={TOP_K}",
-                file=sys.stderr, flush=True,
-            )
-        else:
-            guaranteed_chunks = guaranteed_chunks[:TOP_K]
+        # 매칭 doc 가 TOP_K 보다 많으면 점수 순 cap (방어 코드).
+        guaranteed_chunks = guaranteed_chunks[:TOP_K]
 
         # 로깅 — dominant prefixes 결정 진단
         if dominant_prefixes:
