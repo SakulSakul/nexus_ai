@@ -2156,12 +2156,19 @@ def _render_action_buttons(
             else "📞 신고 방법 안내"
         )
 
-    col_a, col_b = st.columns(2)
-    hr_clicked = col_a.button(
-        hr_label, key=f"hr_btn_{msg_idx}", use_container_width=True,
+    # 목업 PROACTIVE DOCK: "다음 단계" 라벨 + 굵은 빨간 주 액션(full-width) +
+    # 보조 다시답변. 컬럼 2분할 → 세로 스택으로 주 액션 강조. 분기 logic 동일.
+    st.markdown(
+        '<div style="font-size:11.5px;font-weight:700;letter-spacing:0.06em;'
+        'color:#9A968D;margin:8px 0 6px 2px;">다음 단계</div>',
+        unsafe_allow_html=True,
+    )
+    hr_clicked = st.button(
+        hr_label, key=f"hr_btn_{msg_idx}", type="primary",
+        use_container_width=True,
     )
     if can_reroll:
-        reroll_clicked = col_b.button(
+        reroll_clicked = st.button(
             "🔄 다시 답변",
             key=f"reroll_btn_{msg_idx}",
             use_container_width=True,
@@ -2169,10 +2176,10 @@ def _render_action_buttons(
     else:
         # disabled 인자를 쓰지 않고 markdown placeholder 로 회색 표기.
         # 이미 다시 답변 받았거나 history meta 가 누락된 fallback 메시지.
-        col_b.markdown(
+        st.markdown(
             "<div style='text-align:center; padding:8px 0; "
             "color:#aaa; font-size:14px; border:1px solid #eee; "
-            "border-radius:4px; background:#fafafa;'>"
+            "border-radius:8px; background:#fafafa;'>"
             "🔄 다시 답변 받음"
             "</div>",
             unsafe_allow_html=True,
