@@ -101,7 +101,7 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
             f"[근거 chunks]\n{listing}\n\n"
             "위를 근거로 판정 JSON 을 출력하세요."
         )
-        from .chatbot import _gen_claude
+        from core.chatbot import _gen_claude
         text, _, _ = _gen_claude(system=_SYSTEM, user=user, include_thinking=False)
 
         s, e = text.find("{"), text.rfind("}")
