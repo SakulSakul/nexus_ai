@@ -1062,6 +1062,7 @@ def ask(
     extra_pii_terms: list[str] | None = None,
     progress_callback: Callable[[str, dict], None] | None = None,
     prev_turn: dict | None = None,
+    hard_category: str | None = None,
 ) -> Answer:
     """답변 생성 entry point.
 
@@ -1244,7 +1245,11 @@ def ask(
     #    + '공통' 합집합. retrieval 정확도 향상 목표
     # 3) 추론도 실패하면 None (전체 검색) — 기존 동작 fallback
     cats: list[str] | None
-    if category and category != "전체":
+    if hard_category and not detection.triggered:
+        # PR-Hard-Scope: 명시적 도메인 선택 → base 검색도 {공통, cat} 로 스코프
+        # (force-include 단계는 hybrid_search 내부 hard_scope_category 가 처리).
+        cats = list({"공통", hard_category})
+    elif category and category != "전체":
         cats = list({"공통", category})
     else:
         inferred = infer_categories(question)
@@ -1271,6 +1276,7 @@ def ask(
     contexts_raw = hybrid_search(
         supabase, question=masked, raw_question=question, categories=cats,
         top_k=pool_size, progress_callback=progress_callback,
+        hard_scope_category=(hard_category if not detection.triggered else None),
     )
     contexts = _balance_by_doc_kind(contexts_raw)
     _shadow_log_multi_facet(contexts)
@@ -1671,6 +1677,7 @@ def ask_stream(
     extra_pii_terms: list[str] | None = None,
     progress_callback: Callable[[str, dict], None] | None = None,
     prev_turn: dict | None = None,
+    hard_category: str | None = None,
 ) -> Iterator[tuple[str, Any]]:
     """Streaming 답변. yield 프로토콜:
         ("chunk", str)   — 점진 표시할 본문 토큰
@@ -1710,6 +1717,7 @@ def ask_stream(
             extra_pii_terms=extra_pii_terms,
             progress_callback=progress_callback,
             prev_turn=prev_turn,
+            hard_category=hard_category,
         ))
         return
 
@@ -1728,6 +1736,7 @@ def ask_stream(
             extra_pii_terms=extra_pii_terms,
             progress_callback=progress_callback,
             prev_turn=prev_turn,
+            hard_category=hard_category,
         )
         yield ("done", ans)
         return
@@ -1817,7 +1826,9 @@ def ask_stream(
 
     # 일반 모드 — streaming 진행
     cats: list[str] | None
-    if category and category != "전체":
+    if hard_category and not detection.triggered:
+        cats = list({"공통", hard_category})
+    elif category and category != "전체":
         cats = list({"공통", category})
     else:
         inferred = infer_categories(question)
@@ -1830,6 +1841,7 @@ def ask_stream(
     contexts_raw = hybrid_search(
         supabase, question=masked, raw_question=question, categories=cats,
         top_k=pool_size, progress_callback=progress_callback,
+        hard_scope_category=(hard_category if not detection.triggered else None),
     )
     contexts = _balance_by_doc_kind(contexts_raw)
     _shadow_log_multi_facet(contexts)
@@ -1929,6 +1941,7 @@ def ask_stream(
             extra_pii_terms=extra_pii_terms,
             progress_callback=progress_callback,
             prev_turn=prev_turn,
+            hard_category=hard_category,
         )
         yield ("done", ans)
         return

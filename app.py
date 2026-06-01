@@ -1265,10 +1265,10 @@ def _render_clarify_choices(
             label, key=f"clarify_{key_id}_{msg_idx}_{i}", use_container_width=True,
         ):
             st.session_state["clicked_q"] = query
-            # PR-Ambiguity-Askback-Fix: 선택지를 타깃 도메인으로 스코프 — UNSCOPED
-            # 재질의는 동의어 사전(발주→구매)에 cross-domain hijack 당함(녹색구매·AEO).
-            # cat 바인딩 시 hybrid_search 가 {공통, cat} 로 필터 → 정상 도착.
-            st.session_state["clicked_cat"] = ch.get("cat")
+            # PR-Hard-Scope: 명시 선택을 hard 제약으로 — 별도 키(clicked_hard_cat)로
+            # 전달해 retriever 가 force-include·incident 위에서 {공통,cat} 강제.
+            # clicked_cat(soft)과 분리 → suggestion 클릭 동작 무영향.
+            st.session_state["clicked_hard_cat"] = ch.get("cat")
             st.rerun()
 
 
@@ -2323,6 +2323,7 @@ def _run_ask(
     sb, q: str, cat: str, hotlines: dict,
     *,
     reroll_of: dict | None = None,
+    hard_category: str | None = None,
 ) -> None:
     """답변 생성. reroll_of={"original_q","prev_answer"} 면 다시 답변 모드.
 
@@ -2818,6 +2819,7 @@ def _run_ask(
                     category=cat,
                     progress_callback=cb,
                     prev_turn=prev_turn,
+                    hard_category=hard_category,
                 )
                 stream_buffer = answer_placeholder.write_stream(
                     _chunks_to_str_stream(_stream_iter, _stream_holder)
@@ -3443,8 +3445,10 @@ def main():
     # main() 정상 흐름 복귀 (chat_input widget early 호출로 등록 보장).
     _clicked = st.session_state.pop("clicked_q", None)
     _clicked_cat = st.session_state.pop("clicked_cat", None)
+    _clicked_hard = st.session_state.pop("clicked_hard_cat", None)
     if _clicked:
-        _run_ask(sb, _clicked, _clicked_cat or cat, hotlines)
+        _run_ask(sb, _clicked, _clicked_cat or cat, hotlines,
+                 hard_category=_clicked_hard)
         st.rerun()
 
     # 🔄 다시 답변 — 액션 버튼 클릭 시 session_state 에 적재된 reroll request.

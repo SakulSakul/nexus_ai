@@ -923,6 +923,28 @@ def _shadow_log_auto_keywords_match(
         )
 
 
+def _apply_hard_scope(chunks: list[dict], category: str) -> list[dict]:
+    """PR-Hard-Scope: 명시적 도메인 선택(역질문 클릭 등)을 hard 제약으로 강제.
+
+    force-include(incident node·auto_keyword)·동의어 확장이 주입한 out-of-scope
+    청크를 domain_quota 진입 *전에* 제거 — {공통, category} 만 유지. categories
+    필드 우선, 비어있으면 doc_title prefix("(재무) …")로 fallback 판정.
+    전부 제거되면(방어) 원본 유지해 빈 답 방지. hard_scope_category 미설정 시
+    호출 안 됨 → 기존 호출 byte-identical (회귀 0).
+    """
+    allowed = {"공통", category}
+    kept: list[dict] = []
+    for c in chunks:
+        cset = set(c.get("categories") or [])
+        if cset & allowed:
+            kept.append(c)
+            continue
+        title = str(c.get("doc_title") or "")
+        if title.startswith(f"({category})") or title.startswith("(공통)"):
+            kept.append(c)
+    return kept or chunks
+
+
 def hybrid_search(
     supabase: Any,
     *,
@@ -932,6 +954,7 @@ def hybrid_search(
     top_k: int | None = None,
     progress_callback=None,
     raw_question: str | None = None,
+    hard_scope_category: str | None = None,
 ) -> list[dict]:
     """PR-UI-Sub-Stage-Visualization: progress_callback(stage, payload).
     각 sub-stage 의 elapsed_ms / metadata 를 emit 하여 UI 의 sub-message
@@ -1683,6 +1706,18 @@ def hybrid_search(
         # 전부 guaranteed 로 채택. best_chunk_per_doc(1/doc)·MAX_CHUNKS_PER_DOC
         # (2/doc) 같은 per-doc cap 이 force chunks(정산·일당 등 본문)를 떨어뜨려
         # LLM 답변 fail 하던 구조적 root cause fix. 상한은 아래 TOP_K cap 하나만.
+        # PR-Hard-Scope: 명시적 도메인 hard 제약 — force-include·incident node 가
+        # 주입한 out-of-scope 청크를 domain_quota/top_k 진입 *전에* 제거해 타깃
+        # 도메인 doc 생존 보장. 미설정 시 미적용(byte-identical, 회귀 0).
+        if hard_scope_category:
+            _before = len(raw_chunks)
+            raw_chunks = _apply_hard_scope(raw_chunks, hard_scope_category)
+            print(
+                f"[retriever:hard_scope] category={hard_scope_category} "
+                f"kept={len(raw_chunks)}/{_before}",
+                file=sys.stderr, flush=True,
+            )
+
         guaranteed_chunks = [
             c for c in raw_chunks if c.get("force_included_by_intent")
         ]
