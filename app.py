@@ -1265,7 +1265,10 @@ def _render_clarify_choices(
             label, key=f"clarify_{key_id}_{msg_idx}_{i}", use_container_width=True,
         ):
             st.session_state["clicked_q"] = query
-            st.session_state["clicked_cat"] = None
+            # PR-Ambiguity-Askback-Fix: 선택지를 타깃 도메인으로 스코프 — UNSCOPED
+            # 재질의는 동의어 사전(발주→구매)에 cross-domain hijack 당함(녹색구매·AEO).
+            # cat 바인딩 시 hybrid_search 가 {공통, cat} 로 필터 → 정상 도착.
+            st.session_state["clicked_cat"] = ch.get("cat")
             st.rerun()
 
 
@@ -2892,6 +2895,7 @@ def _run_ask(
             # 생략. 선택지 클릭 → clicked_q 재질의 → 정상 RAG (loop 없음).
             if getattr(ans, "clarify_choices", None):
                 answer_placeholder.markdown(ans.text)
+                timer_placeholder.empty()  # PR-Ambiguity-Askback-Fix: 라이브 카운터 정지(역질문은 즉시 반환)
                 _ab_idx = len(st.session_state["history"])
                 _render_clarify_choices(
                     ans.clarify_choices,
