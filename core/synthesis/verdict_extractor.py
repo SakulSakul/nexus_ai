@@ -76,11 +76,25 @@ def _pick_quote(chunk: dict, max_len: int = 140) -> str:
     text = _chunk_text(chunk).strip()
     if not text:
         return ""
-    for sep in (". ", ".\n", "다.", "\n"):
-        idx = text.find(sep)
+    # 선두 [문서 안내] 등 메타 헤더 스킵 — 실제 사규 본문 문장만 인용.
+    _meta = ("문서번호", "관리부서", "개정일자", "개정 1호", "개정일")
+    _body = []
+    _skipping = True
+    for _ln in text.split("\n"):
+        _ls = _ln.strip()
+        if _skipping:
+            if not _ls:
+                continue
+            if _ls.startswith("[") or any(_m in _ls for _m in _meta):
+                continue
+            _skipping = False
+        _body.append(_ls)
+    body = " ".join(_body).strip() or text
+    for sep in ("다. ", "다.\n", "다.", ". ", ".\n"):
+        idx = body.find(sep)
         if 0 < idx <= max_len:
-            return text[: idx + len(sep)].strip()
-    return text[:max_len].strip()
+            return body[: idx + len(sep)].strip()
+    return body[:max_len].strip()
 
 
 def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None":
