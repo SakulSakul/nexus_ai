@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from .cache import _get_sb
 from .auto_tagger import extract_chunk_keywords
+from .bare_token import inject_bare_domain_tokens
 
 
 def fill_chunk_keywords_all(
@@ -128,6 +129,7 @@ def fill_chunk_keywords_all(
                         if ks and ks not in seen:
                             seen.add(ks)
                             merged_kw.append(ks)
+                merged_kw = inject_bare_domain_tokens(merged_kw)
                 sb.table("nexus_chunks").update({
                     "auto_keywords": merged_kw,
                 }).eq("id", chunk_id).execute()

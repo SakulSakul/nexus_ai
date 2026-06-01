@@ -12,6 +12,7 @@ from typing import Callable, Optional
 
 from .cache import _get_sb
 from .auto_tagger import extract_doc_full_meta
+from .bare_token import inject_bare_domain_tokens
 
 
 def fetch_doc_text_sample(supabase, doc_id: str, max_chars: int = 3000) -> str:
@@ -132,6 +133,7 @@ def fill_meta_all_docs(
                         if ks and ks not in seen:
                             seen.add(ks)
                             merged_kw.append(ks)
+                merged_kw = inject_bare_domain_tokens(merged_kw)
                 sb.table("nexus_documents").update({
                     "auto_keywords": merged_kw,
                     "auto_summary": meta.get("auto_summary", ""),
