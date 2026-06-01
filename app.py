@@ -782,6 +782,23 @@ small {
     padding-left: 1.25em;
 }
 [data-testid="stChatMessage"] .stMarkdown strong { font-weight: 700; }
+
+/* ── PR-UI2 (Stage 1): Empty-home hero 리디자인 — editorial + 나침반 마크 + 트러스트 스트립 ── */
+.nx-hero2 { padding: 40px 0 24px; border-bottom: 1px solid var(--c-border); margin-bottom: 32px; }
+.nx-hero2-mark { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
+.nx-compass { display: inline-block; width: 24px; height: 24px; flex: 0 0 24px; background: no-repeat center / contain; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.3' fill='none' stroke='%231F1E1D' stroke-width='1.5'/%3E%3Cpolygon points='12,3.8 9.6,12 14.4,12' fill='%23C8102E'/%3E%3Cpolygon points='12,20.2 9.6,12 14.4,12' fill='%23B5B3A9'/%3E%3Ccircle cx='12' cy='12' r='1.4' fill='%231F1E1D'/%3E%3C/svg%3E"); }
+.nx-hero2-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.26em; text-transform: uppercase; color: var(--c-accent); }
+.nx-hero2-title { font-size: 32px; font-weight: 700; color: var(--c-primary); letter-spacing: -0.02em; line-height: 1.16; margin: 0 0 13px; }
+.nx-hero2-q { color: var(--c-accent); }
+.nx-hero2-sub { font-size: 14.5px; color: #4A483F; line-height: 1.7; margin: 0 0 7px; max-width: 640px; }
+.nx-hero2-sub strong { color: var(--c-primary); font-weight: 700; }
+.nx-hero2-scope { font-size: 12.5px; color: var(--c-caption); line-height: 1.6; margin: 0; }
+.nx-trust { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 18px; font-size: 12px; color: #5F5E5A; }
+.nx-trust > span { display: inline-flex; align-items: center; }
+.nx-trust .nx-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+.nx-dot-g { background: #1f7a3a; }
+.nx-dot-a { background: #C58A14; }
+.nx-dot-r { background: #A93226; }
 </style>
 """
 
@@ -1500,12 +1517,19 @@ def _render_empty_state(sb) -> None:
     # personality 인사는 chat_message 안에. 두 번 렌더링 방지.
     st.markdown(
         """
-        <div class="nx-hero">
-          <p class="nx-hero-eyebrow">DF COMPASS · Compliance Intelligence</p>
-          <h1 class="nx-hero-title">신세계디에프 윤리·컴플라이언스 가이드</h1>
-          <p class="nx-hero-sub">
-            사규/윤리강령/사례집/징계규정을 통합 검색합니다. (출처 자동 표기)
-          </p>
+        <div class="nx-hero2">
+          <div class="nx-hero2-mark">
+            <span class="nx-compass"></span>
+            <span class="nx-hero2-eyebrow">사규의 나침반 · Compliance Compass</span>
+          </div>
+          <h1 class="nx-hero2-title">무엇을 확인해 드릴까요<span class="nx-hero2-q">?</span></h1>
+          <p class="nx-hero2-sub">윤리·안전·정보보안·공정거래·재무·영업·총무·환경·CSR 전 영역의 사규를 통합 검색합니다. 답변마다 <strong>근거 사규</strong>와 <strong>신뢰도</strong>를 함께 표시합니다.</p>
+          <p class="nx-hero2-scope">휴가·평가·근태 등 인사 행정 문의는 인사교육팀으로 안내해 드립니다.</p>
+          <div class="nx-trust">
+            <span><span class="nx-dot nx-dot-g"></span>근거 사규 자동 표기</span>
+            <span><span class="nx-dot nx-dot-a"></span>불확실하면 담당부서 안내</span>
+            <span><span class="nx-dot nx-dot-r"></span>범위 밖이면 솔직히 안내</span>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
