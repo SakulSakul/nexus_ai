@@ -799,6 +799,18 @@ small {
 .nx-dot-g { background: #1f7a3a; }
 .nx-dot-a { background: #C58A14; }
 .nx-dot-r { background: #A93226; }
+
+/* ── PR-UI3 (Stage 1-full): 상단 바 + 그룹 칩 + 중앙 입력 — 빈 홈 목업 정렬 ── */
+.nx-topbar2 { display: flex; align-items: center; justify-content: space-between; padding: 6px 0 14px; border-bottom: 1px solid var(--c-border); margin-bottom: 4px; }
+.nx-topbar2-brand { display: flex; align-items: center; gap: 9px; }
+.nx-topbar2-name { font-size: 16px; font-weight: 700; color: var(--c-primary); letter-spacing: -0.01em; }
+.nx-topbar2-tag { font-size: 12.5px; color: #A8654E; }
+.nx-topbar2-beta { font-size: 11px; color: var(--c-caption); border: 1px solid var(--c-border); border-radius: 14px; padding: 4px 11px; }
+.nx-hero2 { padding: 24px 0 0; border-bottom: none; margin-bottom: 18px; }
+.nx-chips-top { height: 14px; border-top: 1px solid var(--c-border); margin-top: 22px; }
+.nx-grp { font-size: 10.5px; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; color: #A8654E; margin: 16px 0 8px; }
+.nx-grp-urgent { color: #A93226; }
+[data-testid="stTextInput"] input { border-radius: 10px !important; }
 </style>
 """
 
@@ -1470,115 +1482,107 @@ def _cached_daily_tip(_date_iso: str, doc_title: str) -> str:
 
 
 def _render_empty_state(sb) -> None:
-    """첫 진입 화면 — hero + personality 인사 + 답변 예시 expander.
+    """첫 진입(빈 홈) — 목업 정렬: 상단 바 + 히어로 + 중앙 입력 + 트러스트 + 그룹 칩.
 
-    PR-Fun1.4: 빠른 액션 카드·Daily Tip 제거. main() 의 hero section 도
-    본 함수 안으로 흡수해 history 있을 때 자동 사라지도록 (이전엔 hero +
-    personality 인사가 동시 노출되어 "두 번 렌더링" issue 였음).
-
-    유지된 fun: 시간대 personality LLM 인사 (`_cached_dynamic_greeting`).
-    제거: Daily Tip box / 빠른 액션 카드 4개.
-    `_cached_daily_tip` / `pick_random_doc_title` / `QUICK_ACTIONS` 등
-    core.personality 함수·변수는 보존 (미래 부활 여지).
+    옛 날씨·인사 카드와 평면 SAMPLE_QUESTIONS 는 빈 홈 렌더에서 제외(목업 일치).
+    `_cached_dynamic_greeting` / `get_daily_tip` / `_show_example_questions` 등
+    함수·로직은 코드에 보존 — 미래 재배치 여지.
     """
-    from datetime import datetime as _dt
-    # PR #111: KST timezone 명시 — 시스템 timezone 영향 zero.
-    try:
-        from zoneinfo import ZoneInfo
-        now = _dt.now(ZoneInfo("Asia/Seoul"))
-    except Exception:
-        now = _dt.now()
-    greeting = _cached_dynamic_greeting(now.hour, now.weekday())
-
-    # 날씨 헤더 — 서울 + 인천 동시 표시 (silent fail, 30분 cache).
-    _weather_parts: list = []
-    try:
-        from core.utils.weather import get_all_weather
-        for _city, _w in (get_all_weather() or {}).items():
-            if _w:
-                _weather_parts.append(
-                    f"**{_city}** {_w['emoji']} {_w['description']} :grey[{_w['temperature']}°C]"
-                )
-    except Exception:
-        pass
-    _weather_line = " · ".join(_weather_parts)
-
-    # 오늘의 사규 한 줄 (silent fail) — DF COMPASS 본질 = 컴플라이언스 교육.
-    _tip_line: str = ""
-    try:
-        from core.utils.compliance_tips import get_daily_tip
-        _tip = get_daily_tip()
-        if _tip:
-            _tip_line = f'💡 **오늘의 한 줄:** :violet[*"{_tip}"*]'
-    except Exception:
-        pass
-
-    # Hero (empty state 일 때만) — H1 은 brand statement (안정), 동적
-    # personality 인사는 chat_message 안에. 두 번 렌더링 방지.
+    # 빈 홈 한정 CSS: 본문 880px 가운데 정렬(전 요소 정렬) + 하단 chat_input 숨김
+    # (중앙 입력과 중복 방지). 답변 화면에선 본 함수 미호출 → 자동 원복.
     st.markdown(
         """
-        <div class="nx-hero2">
-          <div class="nx-hero2-mark">
+        <style>
+        [data-testid="block-container"]{max-width:880px;margin-left:auto;margin-right:auto;}
+        [data-testid="stChatInput"]{display:none !important;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="nx-topbar2">
+          <div class="nx-topbar2-brand">
             <span class="nx-compass"></span>
-            <span class="nx-hero2-eyebrow">사규의 나침반 · Compliance Compass</span>
+            <span class="nx-topbar2-name">DF COMPASS</span>
+            <span class="nx-topbar2-tag">사규의 나침반</span>
           </div>
-          <h1 class="nx-hero2-title">무엇을 확인해 드릴까요<span class="nx-hero2-q">?</span></h1>
-          <p class="nx-hero2-sub">윤리·안전·정보보안·공정거래·재무·영업·총무·환경·CSR 전 영역의 사규를 통합 검색합니다. 답변마다 <strong>근거 사규</strong>와 <strong>신뢰도</strong>를 함께 표시합니다.</p>
-          <p class="nx-hero2-scope">휴가·평가·근태 등 인사 행정 문의는 인사교육팀으로 안내해 드립니다.</p>
-          <div class="nx-trust">
-            <span><span class="nx-dot nx-dot-g"></span>근거 사규 자동 표기</span>
-            <span><span class="nx-dot nx-dot-a"></span>불확실하면 담당부서 안내</span>
-            <span><span class="nx-dot nx-dot-r"></span>범위 밖이면 솔직히 안내</span>
-          </div>
+          <span class="nx-topbar2-beta">베타 · 입력 내용 학습 안 함</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    with st.chat_message("assistant", avatar="🧭"):
-        # 헤더 / 팁 / 인사 — 3-layer 조합 (각 layer 비어있으면 자동 skip).
-        # PR #111: ISO date → "5월 12일 화요일" 한국어 포맷.
-        _weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
-        _date_str = f"{now.month}월 {now.day}일 {_weekday_kr}요일"
-        _header = (
-            f"오늘은 {_date_str}, 날씨는 {_weather_line} 입니다."
-            if _weather_line
-            else f"오늘은 {_date_str}입니다."
-        )
-        _greeting_block_parts = [_header]
-        if _tip_line:
-            _greeting_block_parts.append(_tip_line)
-        _greeting_block_parts.append("")  # blank line
-        _greeting_block_parts.append(greeting)
-        _greeting_block = "  \n".join(
-            p for p in _greeting_block_parts if p is not None
-        )
-        st.markdown(
-            f"{_greeting_block}\n\n"
-            "💡 답변에는 항상 :orange[**출처 사규**] 가 함께 표시됩니다."
-        )
-        # PR-Fun1.4 작업 4: PR-3 의 답변 예시 expander 복구.
-        with st.expander("💡 답변이 어떻게 나오는지 미리 보기", expanded=False):
-            st.markdown(
-                "**질문:** 법인카드를 개인 용도로 사용해도 되나요?\n\n"
-                "**답변:** 법인카드의 개인 용도 사용은 어떠한 경우라도 금지됩니다.\n\n"
-                "📋 **사규 기준**\n"
-                "법인카드는 업무상 사용을 원칙으로 하며, 개인적인 용도로 사용하는 것은 "
-                "금지됩니다. 또한 법인카드 사용 후 개인 포인트 카드에 포인트를 임의로 "
-                "적립하는 행위도 금지됩니다.\n\n"
-                "⚖️ **징계 기준**\n"
-                "회사 자산을 개인적인 목적으로 사용했을 경우 사안에 따라 다음과 같은 "
-                "징계 처분을 받을 수 있습니다.\n"
-                "- 단순/일회성인 경우: 서면경고, 견책, 감급\n"
-                "- 고의/반복적인 경우: 감급, 감봉\n\n"
-                "📎 **참고 사규:** (재무) 법인카드 관리 지침, (공통) 임직원 징계기준"
-            )
+    st.markdown(
+        """
+        <div class="nx-hero2">
+          <p class="nx-hero2-eyebrow">사규의 나침반 · Compliance Compass</p>
+          <h1 class="nx-hero2-title">무엇을 확인해 드릴까요<span class="nx-hero2-q">?</span></h1>
+          <p class="nx-hero2-sub">윤리·안전·정보보안·공정거래·재무·영업·총무·환경·CSR 전 영역의 사규를 통합 검색합니다. 답변마다 <strong>근거 사규</strong>와 <strong>신뢰도</strong>를 함께 표시합니다.</p>
+          <p class="nx-hero2-scope">휴가·평가·근태 등 인사 행정 문의는 인사교육팀으로 안내해 드립니다.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # PR-Fun1.4 작업 4: SAMPLE_QUESTIONS 8개 chip 부활. chat_message 바깥
-    # (empty state 의 chat 흐름 다음) 에 노출 — 사쿨 명세 "챗봇 인사 아래".
-    # 8개 hardcode (_EXAMPLE_QUESTIONS) 그대로 보존. 클릭은 pending_q 패턴
-    # 으로 통일되어 main() 의 clicked_q 흐름이 처리.
-    _show_example_questions()
+    def _hero_submit() -> None:
+        _v = (st.session_state.get("hero_ask_input") or "").strip()
+        if _v:
+            st.session_state["clicked_q"] = _v
+
+    _ic1, _ic2 = st.columns([20, 3])
+    with _ic1:
+        st.text_input(
+            "질문 입력",
+            key="hero_ask_input",
+            label_visibility="collapsed",
+            placeholder="사규·윤리 관련 무엇이든 물어보세요…",
+            on_change=_hero_submit,
+        )
+    with _ic2:
+        if st.button("↑", key="hero_send_btn", type="primary", use_container_width=True):
+            _v = (st.session_state.get("hero_ask_input") or "").strip()
+            if _v:
+                st.session_state["clicked_q"] = _v
+                st.rerun()
+
+    st.markdown(
+        """
+        <div class="nx-trust">
+          <span><span class="nx-dot nx-dot-g"></span>근거 사규 자동 표기</span>
+          <span><span class="nx-dot nx-dot-a"></span>불확실하면 담당부서 안내</span>
+          <span><span class="nx-dot nx-dot-r"></span>범위 밖이면 솔직히 안내</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _hero_groups = [
+        ("자주 묻는 것", False, [
+            "법인카드를 개인 용도로 사용해도 되나요?",
+            "거래처에서 선물을 받아도 되나요?",
+            "신세계그룹의 핵심 가치 CREDO는 무엇인가요?",
+        ]),
+        ("신고 · 긴급", True, [
+            "직장 내에서 괴롭힘을 당했어요. 어떻게 신고하나요?",
+            "동료가 다쳤어요. 긴급 보고는 어떻게 하나요?",
+        ]),
+        ("도메인별", False, [
+            "매장 안전관리 책임자와 절차는 어떻게 되나요?",
+            "회사의 녹색 구매 기준은 어떻게 되나요?",
+            "고객이 매장에 두고 간 물건은 어떻게 처리하나요?",
+        ]),
+    ]
+    st.markdown('<div class="nx-chips-top"></div>', unsafe_allow_html=True)
+    for _gi, (_label, _urgent, _qs) in enumerate(_hero_groups):
+        _cls = "nx-grp nx-grp-urgent" if _urgent else "nx-grp"
+        st.markdown('<p class="' + _cls + '">' + _label + '</p>', unsafe_allow_html=True)
+        _cols = st.columns(len(_qs))
+        for _qi, _q in enumerate(_qs):
+            if _cols[_qi].button(_q, key="hchip_" + str(_gi) + "_" + str(_qi), use_container_width=True):
+                st.session_state["clicked_q"] = _q
+                st.rerun()
 
 
 _PROD_ENV_VALUES = {"prod", "production"}
