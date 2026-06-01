@@ -1493,7 +1493,7 @@ def _render_empty_state(sb) -> None:
     st.markdown(
         """
         <style>
-        [data-testid="block-container"]{max-width:880px;margin-left:auto;margin-right:auto;}
+        [data-testid="stMainBlockContainer"], .block-container{max-width:880px !important;margin-left:auto !important;margin-right:auto !important;}
         [data-testid="stChatInput"]{display:none !important;}
         </style>
         """,
