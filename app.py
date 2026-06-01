@@ -2531,6 +2531,11 @@ def _run_ask(
     core/chatbot.ask 시그니처는 무수정 (temperature/system_prompt override
     인자가 없어 호출 측 차선책).
     """
+    # 채팅 활성 sticky 플래그 — 질문 처리가 시작되면(스트리밍 중단·재진입
+    # 무관) 빈 홈을 다시 그리지 않도록. user 메시지 history push 보다 _먼저_
+    # 세팅 → interrupt 로 history 가 빈 채로 재렌더돼도 빈 홈 재등장·칩
+    # 재클릭 루프 차단. 새 세션(history init)에서만 False 로 리셋.
+    st.session_state["_chat_active"] = True
     import sys
     import traceback
     # ── 진단 로그 (PR fix/run-ask-answer-display) ──
@@ -3524,6 +3529,7 @@ def main():
 
     if "history" not in st.session_state:
         st.session_state["history"] = []
+        st.session_state["_chat_active"] = False
 
     hotlines = load_hotlines(sb)
     cat = _sidebar(sb, hotlines)
@@ -3541,7 +3547,8 @@ def main():
     # PR-Fun1.4: hero 는 history 비어있고 진행 중 질문(clicked_q·q_input) 없을 때만.
     if (not st.session_state.get("history")
             and not st.session_state.get("clicked_q")
-            and not q_input):
+            and not q_input
+            and not st.session_state.get("_chat_active")):
         _render_empty_state(sb)
 
     # Chat history replay — 최근 30 messages 만 렌더 (rerun 비용 제어).
