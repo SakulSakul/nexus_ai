@@ -1689,15 +1689,17 @@ def _render_empty_state(sb) -> None:
 
     st.markdown(  # 히어로 입력창 확대 — st-key 스코프(빈 홈 전용)
         "<style>"
-        '.st-key-hero_ask_input div[data-baseweb="input"]{border-radius:14px !important;border:1.5px solid var(--c-border) !important;background:#fff !important;box-shadow:0 2px 12px rgba(31,30,29,0.06) !important;}'
+        '.st-key-hero_ask_input div[data-baseweb="input"]{border-radius:14px !important;border:1.5px solid var(--c-border) !important;background:#fff !important;box-shadow:0 2px 12px rgba(31,30,29,0.06) !important;min-height:58px !important;display:flex !important;align-items:center !important;}'
         '.st-key-hero_ask_input div[data-baseweb="input"]:focus-within{border-color:var(--c-accent) !important;box-shadow:0 0 0 3px rgba(200,16,46,0.12) !important;}'
-        '.st-key-hero_ask_input input{height:58px !important;font-size:17px !important;padding:0 22px !important;color:var(--c-primary) !important;}'
+        '.st-key-hero_ask_input div[data-baseweb="base-input"]{height:100% !important;background:transparent !important;}'
+        '.st-key-hero_ask_input input{height:56px !important;font-size:17px !important;padding:0 22px !important;color:var(--c-primary) !important;}'
         '.st-key-hero_ask_input input::placeholder{font-size:15.5px !important;color:#9A968D !important;}'
-        '.st-key-hero_send_btn button{height:58px !important;border-radius:14px !important;font-size:21px !important;font-weight:700 !important;}'
+        '.st-key-hero_send_btn button{height:58px !important;min-height:58px !important;border-radius:14px !important;font-size:21px !important;font-weight:700 !important;}'
+        '[class*="st-key-hchip_"] button{min-height:60px !important;display:flex !important;align-items:center !important;justify-content:center !important;text-align:center !important;white-space:normal !important;line-height:1.45 !important;padding:8px 14px !important;}'
         "</style>",
         unsafe_allow_html=True,
     )
-    _ic1, _ic2 = st.columns([20, 3])
+    _ic1, _ic2 = st.columns([20, 3], vertical_alignment="center")
     with _ic1:
         st.text_input(
             "질문 입력",
