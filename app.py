@@ -3545,11 +3545,16 @@ def main():
     # 빈 홈이 답변과 동시에 렌더되지 않도록 게이트에 q_input 반영.
     q_input = st.chat_input("질문을 입력하세요…", max_chars=2000)
     # PR-Fun1.4: hero 는 history 비어있고 진행 중 질문(clicked_q·q_input) 없을 때만.
+    # 빈 홈을 placeholder 에 렌더 → 같은 run 에서 질문이 처리되면 _home_ph.empty()
+    # 로 즉시 제거. chip 의 st.rerun() 이 run 을 못 끊는 경우에도 답변과 동시
+    # 노출되지 않게 하는 구조 가드 (게이트로 못 막던 single-run co-render 해결).
+    _home_ph = st.empty()
     if (not st.session_state.get("history")
             and not st.session_state.get("clicked_q")
             and not q_input
             and not st.session_state.get("_chat_active")):
-        _render_empty_state(sb)
+        with _home_ph.container():
+            _render_empty_state(sb)
 
     # Chat history replay — 최근 30 messages 만 렌더 (rerun 비용 제어).
     # 50건 넘어가면 매 입력 후 응답 표시까지 lag 발생 → 윈도우 30 권장.
@@ -3690,6 +3695,7 @@ def main():
     _clicked_cat = st.session_state.pop("clicked_cat", None)
     _clicked_hard = st.session_state.pop("clicked_hard_cat", None)
     if _clicked:
+        _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
         _run_ask(sb, _clicked, _clicked_cat or cat, hotlines,
                  hard_category=_clicked_hard)
         st.rerun()
@@ -3706,6 +3712,7 @@ def main():
     if not q_input:
         return
 
+    _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
     _run_ask(sb, q_input, cat, hotlines)
 
 
