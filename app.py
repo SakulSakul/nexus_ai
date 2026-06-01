@@ -1569,6 +1569,58 @@ _ENABLE_VERDICT_SHADOW = get_secret("ENABLE_VERDICT_SHADOW", "false").lower() ==
 _ENABLE_VERDICT_CARD = get_secret("ENABLE_VERDICT_CARD", "false").lower() == "true"
 
 
+def _build_verdict_card_html(d) -> str:
+    """Verdict dict → 목업형 판정 카드(stance pill·grounded 세리프 인용·출처·신뢰도).
+    데이터/stance 없으면 기존 브랜드 헤더로 fallback. 색상은 안전쪽(금지·신고대상=레드).
+    """
+    if not d or not isinstance(d, dict):
+        return _answer_card_header_html()
+    import html as _h
+    stance = str(d.get("stance") or "").strip()
+    if not stance:
+        return _answer_card_header_html()
+    tone = {
+        "금지": ("#C8102E", "#FCEEF0"),
+        "신고대상": ("#C8102E", "#FCEEF0"),
+        "조건부": ("#B7791F", "#FBF3E2"),
+        "허용": ("#2F7A4D", "#EAF5EE"),
+        "확인필요": ("#6B6A66", "#F0EFEC"),
+    }.get(stance, ("#6B6A66", "#F0EFEC"))
+    color, bg = tone
+    label = _h.escape(str(d.get("label") or stance)[:40])
+    badge = _h.escape(str(d.get("badge") or "")[:24])
+    quote = _h.escape(str(d.get("quote") or ""))
+    cite = _h.escape(" ".join(p for p in (str(d.get("doc_title") or ""), str(d.get("clause") or "")) if p))
+    conf = str(d.get("confidence") or "")
+    conf_label = {"high": "높은 신뢰도", "medium": "보통 신뢰도", "low": "낮은 신뢰도"}.get(conf, "")
+    css = (
+        "<style>"
+        ".nx-vd{margin:2px 0 14px;}"
+        ".nx-vd-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:11px;border:1px solid " + color + ";background:" + bg + ";}"
+        ".nx-vd-pill .ico{width:8px;height:8px;border-radius:50%;background:" + color + ";flex:0 0 8px;}"
+        ".nx-vd-pill b{font-size:13.5px;font-weight:700;color:" + color + ";}"
+        ".nx-vd-badge{font-size:11px;font-weight:700;color:" + color + ";background:rgba(255,255,255,0.62);border-radius:6px;padding:2px 8px;}"
+        ".nx-vd-quote{border-left:3px solid " + color + ";padding:3px 0 3px 14px;margin:13px 0 9px;}"
+        ".nx-vd-quote p{font-family:'Nanum Myeongjo',serif;font-size:14px;line-height:1.7;color:#2C2B28;margin:0;}"
+        ".nx-vd-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface,#F4F1EB);border-radius:6px;padding:3px 9px;margin-top:7px;}"
+        ".nx-vd-foot{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:11.5px;color:var(--c-caption,#7A766E);}"
+        ".nx-vd-foot .dot{width:7px;height:7px;border-radius:50%;background:" + color + ";flex:0 0 7px;}"
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
+        "</style>"
+    )
+    parts = [css, '<div class="nx-vd">',
+             '<span class="nx-vd-pill"><span class="ico"></span><b>' + label + '</b>'
+             + ('<span class="nx-vd-badge">' + badge + '</span>' if badge else '') + '</span>']
+    if quote:
+        parts.append('<div class="nx-vd-quote"><p>' + quote + '</p></div>')
+        if cite:
+            parts.append('<span class="nx-vd-cite">📕 ' + cite + '</span>')
+    if conf_label:
+        parts.append('<div class="nx-vd-foot"><span class="dot"></span>' + conf_label + '</div>')
+    parts.append('</div>')
+    return "".join(parts)
+
+
 def _answer_card_header_html() -> str:
     """답변 카드 상단 브랜드 헤더(레드 점 + 라벨 + 헤어라인) + 답변 카드 좌측 레드 액센트.
     답변 본문과 독립적으로 prepend 되는 HTML — 내용/색상/리스트 구조에 영향 없음.
@@ -1635,6 +1687,16 @@ def _render_empty_state(sb) -> None:
         if _v:
             st.session_state["clicked_q"] = _v
 
+    st.markdown(  # 히어로 입력창 확대 — st-key 스코프(빈 홈 전용)
+        "<style>"
+        '.st-key-hero_ask_input div[data-baseweb="input"]{border-radius:14px !important;border:1.5px solid var(--c-border) !important;background:#fff !important;box-shadow:0 2px 12px rgba(31,30,29,0.06) !important;}'
+        '.st-key-hero_ask_input div[data-baseweb="input"]:focus-within{border-color:var(--c-accent) !important;box-shadow:0 0 0 3px rgba(200,16,46,0.12) !important;}'
+        '.st-key-hero_ask_input input{height:58px !important;font-size:17px !important;padding:0 22px !important;color:var(--c-primary) !important;}'
+        '.st-key-hero_ask_input input::placeholder{font-size:15.5px !important;color:#9A968D !important;}'
+        '.st-key-hero_send_btn button{height:58px !important;border-radius:14px !important;font-size:21px !important;font-weight:700 !important;}'
+        "</style>",
+        unsafe_allow_html=True,
+    )
     _ic1, _ic2 = st.columns([20, 3])
     with _ic1:
         st.text_input(
@@ -2546,6 +2608,7 @@ def _run_ask(
             st.markdown(q)
 
     ans = None
+    _verdict_dict = None
     last_err: Exception | None = None
     tb_str = ""
     friendly_msg = ""
@@ -2563,7 +2626,8 @@ def _run_ask(
         # status 컨테이너보다 위쪽 영역에 자리 잡아 사용자는 처리 단계 메시지
         # 위에서 답변이 점진적으로 그려지는 걸 본다. status 종료(collapsed)
         # 후에도 placeholder 는 그대로 답변 본문을 유지.
-        st.markdown(_answer_card_header_html(), unsafe_allow_html=True)
+        _hdr_ph = st.empty()
+        _hdr_ph.markdown(_answer_card_header_html(), unsafe_allow_html=True)
         answer_placeholder = st.empty()
         # Timer placeholder — status 밖에 자리 잡아 status collapsed 후에도
         # 그대로 보이도록. 답변 진행 중에는 components.html 의 JS 카운터,
@@ -3070,9 +3134,12 @@ def _run_ask(
             if _ENABLE_VERDICT_SHADOW:
                 try:
                     from core.synthesis.verdict_extractor import extract_verdict
-                    extract_verdict(effective_q, ans.text, list(getattr(ans, "contexts", []) or []))
+                    _v = extract_verdict(effective_q, ans.text, list(getattr(ans, "contexts", []) or []))
+                    if _v is not None and getattr(_v, "stance", ""):
+                        _verdict_dict = _v.to_dict()
+                        _hdr_ph.markdown(_build_verdict_card_html(_verdict_dict), unsafe_allow_html=True)
                 except Exception:
-                    pass
+                    _verdict_dict = None
             # PR-Coding-Policy-Defense: retrieval/LLM critical path 에서 silent
             # 처리된 내부 오류를 운영자에게 가시화 (접힌 expander). chunk_incident_nodes
             # 같은 스키마 오류가 force-include 를 무력화한 사고 재발 조기 감지.
@@ -3184,6 +3251,7 @@ def _run_ask(
             "query_log_id": ans.query_log_id,
             "original_q": _saved_orig_q,
             "confidence": getattr(ans, "confidence", "high"),
+            "verdict": _verdict_dict,
             "suggestions": list(getattr(ans, "suggestions", []) or []),
             # PR-Fun1.5: query_log_id None (RLS RETURNING 차단) 시 피드백
             # update fallback 매칭 식별자.
@@ -3497,7 +3565,11 @@ def main():
                 except Exception:
                     _vc_html = ""
             if role == "assistant":
-                st.markdown(_answer_card_header_html(), unsafe_allow_html=True)
+                _vd = meta.get("verdict")
+                if _vd:
+                    st.markdown(_build_verdict_card_html(_vd), unsafe_allow_html=True)
+                else:
+                    st.markdown(_answer_card_header_html(), unsafe_allow_html=True)
             if _vc_html:
                 st.markdown(_vc_html, unsafe_allow_html=True)
             else:
