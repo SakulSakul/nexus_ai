@@ -25,6 +25,7 @@ from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
 from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
+from .ambiguity import detect_bare_ambiguity, ENABLE_AMBIGUITY_ASKBACK
 from .oos_router import ENABLE_OOS_ROUTING
 from .grounded_suggestions import ENABLE_GROUNDED_SUGGESTIONS, grounded_suggestions
 
@@ -448,6 +449,38 @@ def _log_faq_cache_hit(
         return None
 
 
+def _log_ambiguity_askback(
+    supabase: Any, *, masked: str, category: str | None, s: Any,
+    elapsed_ms: int = 0,
+) -> int | None:
+    """PR-Ambiguity-Askback: 모호 bare 토큰 역질문 short-circuit 을 query_logs
+    에 경량 기록. chat_provider="ambiguity_askback" 로 라우팅 비율·빈도를
+    Dashboard 에서 가시화. 실패해도 응답 흐름 불변 (try/except 흡수).
+    """
+    _payload = {
+        "category":            category if category and category != "전체" else None,
+        "query_masked":        masked,
+        "is_critical":         False,
+        "critical_kind":       None,
+        "hit_chunk_ids":       [],
+        "hit_categories":      [],
+        "env":                 s.env_tag,
+        "embed_model_version": s.embed_model,
+        "chat_provider":       "ambiguity_askback",
+        "chat_model_version":  None,
+        "elapsed_ms":          elapsed_ms,
+        "used_fallback":       False,
+    }
+    try:
+        ins = supabase.table("query_logs").insert(_payload).execute()
+        _qid = ins.data[0].get("id") if ins.data else None
+        _log_query_logs_insert_success(_qid, list(_payload.keys()), supabase=supabase)
+        return _qid
+    except Exception as _e:
+        _log_query_logs_insert_failure(list(_payload.keys()), _e, supabase=supabase)
+        return None
+
+
 def _log_oos_skip(
     supabase: Any, *, masked: str, category: str | None, s: Any,
     elapsed_ms: int = 0,
@@ -505,6 +538,10 @@ class Answer:
     # critical 답변에는 빈 list (prompts.py 가 생성 자체 차단). UI 가
     # ans.is_critical 분기로 추가 방어.
     suggestions: list[str] = field(default_factory=list)
+    # PR-Ambiguity-Askback: 의도 명확화 역질문 선택지. 비어있지 않으면 UI 가
+    # 일반 답변 chrome 대신 선택지 버튼을 렌더 (클릭 → sub-intent 재질의).
+    # 각 항목 = {"label": 버튼 텍스트, "query": 재질의 문구}.
+    clarify_choices: list[dict] = field(default_factory=list)
 
 
 # ── PR-C1: Confidence-aware 단호도 ───────────────────────────
@@ -1114,6 +1151,31 @@ def ask(
     if not detection.triggered:
         detection = detect(masked, keywords)
 
+    # PR-Ambiguity-Askback: 내용 없는 모호 bare 토큰("발주"/"감사") → 검색·합성
+    # 전에 short-circuit 하여 의도 명확화 역질문 반환 (거짓 "없음" 환각 차단 +
+    # 자원 절약). detect() 이후라 critical 은 위에서 triggered=True → 이 gate
+    # 우회. 사용자가 선택지 클릭 → 구체 sub-intent 재질의 → 정상 RAG. flag OFF 기본.
+    if ENABLE_AMBIGUITY_ASKBACK and not detection.triggered:
+        _ambig = detect_bare_ambiguity(question)
+        if _ambig:
+            _ab_elapsed = time.perf_counter() - t0
+            _log_ambiguity_askback(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_ab_elapsed * 1000),
+            )
+            _emit("complete")
+            return Answer(
+                text=_ambig["prompt"],
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=_ab_elapsed,
+                query_log_id=None,
+                confidence="high",
+                clarify_choices=_ambig["choices"],
+            )
+
     # PR-Phase-18.2: FAQ Fast Path — 승인된 비-critical 캐시 hit 시 즉시 반환.
     # detect() 이후라 critical 쿼리는 위에서 detection.triggered=True 로 판정 →
     # 이 gate 우회 → 정상 critical pipeline(핫라인) 진입 보장. 또한 faq_cache_get
@@ -1669,6 +1731,31 @@ def ask_stream(
         )
         yield ("done", ans)
         return
+
+    # PR-Ambiguity-Askback (streaming): 모호 bare 토큰 → 단일 ("done", Answer)
+    # yield 후 return (합성·스트리밍 미진입). 위 critical 블록에서 triggered 는
+    # 이미 ask() 위임 return → 여기 도달 = non-critical. flag OFF 기본.
+    if ENABLE_AMBIGUITY_ASKBACK and not detection.triggered:
+        _ambig = detect_bare_ambiguity(question)
+        if _ambig:
+            _ab_elapsed = time.perf_counter() - t0
+            _log_ambiguity_askback(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_ab_elapsed * 1000),
+            )
+            _emit("complete")
+            yield ("done", Answer(
+                text=_ambig["prompt"],
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=_ab_elapsed,
+                query_log_id=None,
+                confidence="high",
+                clarify_choices=_ambig["choices"],
+            ))
+            return
 
     # PR-Phase-18.2: FAQ Fast Path (streaming) — cache hit 시 단일 done.
     # 위 critical 블록에서 triggered 는 이미 위임 return → 여기 도달 = non-critical.

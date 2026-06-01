@@ -1227,6 +1227,48 @@ def _render_suggestion_cards(
             st.rerun()
 
 
+def _render_clarify_choices(
+    choices: list[dict], *, msg_idx: int,
+    masked_question: str | None = None,
+) -> None:
+    """PR-Ambiguity-Askback: 의도 명확화 역질문 선택지 버튼.
+
+    클릭 시 session_state['clicked_q'] = 선택지의 sub-intent query 적재 +
+    st.rerun() → main 입구 early exit 가 정상 RAG 로 재질의 (suggestion cards
+    와 동일 매개체). 라벨(label)과 재질의 query 분리 — 라벨은 친화 텍스트,
+    query 는 정상 라우팅되는 구체 문구.
+
+    button key 안정화: masked_question md5 8자(없으면 msg_idx) + msg_idx + i
+    → live(msg_idx=len(history)) 와 replay(msg_idx=idx) 동일 key.
+    """
+    if not choices:
+        return
+    st.markdown(
+        "<div style='font-size:12px;color:#475569;padding:8px 0 4px;"
+        "font-family:-apple-system,Pretendard,sans-serif;'>"
+        "💡 <strong>어느 쪽인지 선택해 주세요</strong></div>",
+        unsafe_allow_html=True,
+    )
+    if masked_question:
+        import hashlib as _hashlib
+        key_id = _hashlib.md5(masked_question.encode("utf-8")).hexdigest()[:8]
+    else:
+        key_id = str(msg_idx)
+    _items = [c for c in (choices or []) if (c.get("label") or c.get("query"))][:4]
+    if not _items:
+        return
+    cols = st.columns(len(_items))
+    for i, ch in enumerate(_items):
+        label = (ch.get("label") or ch.get("query") or "").strip()
+        query = (ch.get("query") or ch.get("label") or "").strip()
+        if cols[i].button(
+            label, key=f"clarify_{key_id}_{msg_idx}_{i}", use_container_width=True,
+        ):
+            st.session_state["clicked_q"] = query
+            st.session_state["clicked_cat"] = None
+            st.rerun()
+
+
 def _render_closing_remark(is_critical: bool, *, msg_idx: int | None = None) -> None:
     """PR-Fun1 작업 5: 답변 후 random 격려 멘트 1줄.
 
@@ -2845,6 +2887,27 @@ def _run_ask(
                 st.code(tb_str or str(last_err) or "(no traceback)", language="python")
         else:
             s = settings()
+            # PR-Ambiguity-Askback: 모호성 역질문 — 본문 + 선택지 버튼만 렌더,
+            # 일반 chrome(카테고리/신뢰도 chip·contexts·suggestions·액션·피드백)
+            # 생략. 선택지 클릭 → clicked_q 재질의 → 정상 RAG (loop 없음).
+            if getattr(ans, "clarify_choices", None):
+                answer_placeholder.markdown(ans.text)
+                _ab_idx = len(st.session_state["history"])
+                _render_clarify_choices(
+                    ans.clarify_choices,
+                    msg_idx=_ab_idx,
+                    masked_question=getattr(ans, "masked_question", None),
+                )
+                _push_history((
+                    "assistant", ans.text,
+                    {"contexts": [], "critical": False, "kind": None,
+                     "thinking": "", "elapsed": getattr(ans, "elapsed", 0.0),
+                     "query_log_id": None, "original_q": q,
+                     "confidence": "high", "suggestions": [],
+                     "masked_question": getattr(ans, "masked_question", None),
+                     "clarify_choices": list(ans.clarify_choices)},
+                ))
+                return
             if ans.thinking:
                 with st.expander("🧠 AI 검토 과정", expanded=False):
                     st.caption("AI가 답변을 생성한 검토 단계입니다. 답변 신뢰도 판단에 참고하세요.")
@@ -3273,6 +3336,15 @@ def main():
             if role == "assistant" and meta.get("critical"):
                 _render_critical_banner()
             st.markdown(content)
+            # PR-Ambiguity-Askback: 모호성 역질문 turn replay — 선택지 버튼만,
+            # 일반 chrome 생략 (continue 로 이하 chip/contexts/suggestions/피드백 skip).
+            if role == "assistant" and meta.get("clarify_choices"):
+                _render_clarify_choices(
+                    list(meta.get("clarify_choices") or []),
+                    msg_idx=idx,
+                    masked_question=meta.get("masked_question"),
+                )
+                continue
             # PR-Fun1 작업 4: 카테고리 chip — replay 시 contexts 있으면 표시.
             # PR-Fix-Category-Citation-Based: content (답변 본문) 전달 → 인용 prefix 기반 결정.
             if role == "assistant" and meta.get("contexts"):
