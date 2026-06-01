@@ -20,6 +20,7 @@ from .config import settings, load_hotlines
 from .critical_mode import CriticalDetection, detect, enforce_structure, load_keywords
 from .pii_filter import mask_pii
 from .prompts import SYSTEM_PROMPT, build_user_prompt
+from .multi_facet import detect_multi_facet  # PR-MultiFacet shadow gate
 from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
@@ -131,6 +132,21 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "환경 리스크", "환경운영", "환경 사건",
     ),
 }
+
+
+def _shadow_log_multi_facet(contexts: list) -> None:
+    """PR-MultiFacet-Shadow: 게이트 판정 로그만 (행동 변화 없음)."""
+    import sys
+    try:
+        _mf = detect_multi_facet(contexts)
+        print(
+            f"[multi_facet:shadow] is_mf={_mf.is_multi_facet} "
+            f"domains={_mf.distinct_domains} dominant={_mf.dominant_category} "
+            f"facets={[f.category for f in _mf.facets]}",
+            file=sys.stderr, flush=True,
+        )
+    except Exception as _e:
+        print(f"[multi_facet:shadow] err={_e}", file=sys.stderr, flush=True)
 
 
 def infer_categories(question: str, max_cats: int = 3) -> list[str] | None:
@@ -1195,6 +1211,7 @@ def ask(
         top_k=pool_size, progress_callback=progress_callback,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
+    _shadow_log_multi_facet(contexts)
     # Phase 1.5 (PR #95) → Phase 6 (PR #101): universal SOP 청크 보존, _UNIVERSAL_SOP_MAX_CHUNKS 까지 cap.
     # _balance_by_doc_kind 의 rule=3 cap 으로 universal SOP 가 drop 되는 회귀 차단 +
     # 7 슬롯 모두 universal SOP 로 차서 카테고리 specific docs 누락하던 회귀 차단.
@@ -1727,6 +1744,7 @@ def ask_stream(
         top_k=pool_size, progress_callback=progress_callback,
     )
     contexts = _balance_by_doc_kind(contexts_raw)
+    _shadow_log_multi_facet(contexts)
     # Phase 1.5 → Phase 6: universal SOP 청크 ratio cap 우회 보존 + max cap.
     _balanced_ids = {c.get("chunk_id") for c in contexts if c.get("chunk_id")}
     _sop_preserved = 0
