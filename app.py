@@ -1481,6 +1481,90 @@ def _cached_daily_tip(_date_iso: str, doc_title: str) -> str:
         return ""
 
 
+def _slim_structured(sa) -> dict | None:
+    """StructuredAnswer → 카드 렌더용 슬림 dict (raw_json 제외 → session_state 경량). 없으면 None."""
+    if sa is None:
+        return None
+    try:
+        d = sa.to_dict() if hasattr(sa, "to_dict") else dict(sa)
+    except Exception:
+        return None
+    secs = []
+    for s in (d.get("sections") or []):
+        claims = []
+        for c in (s.get("claims") or []):
+            claims.append({
+                "text": c.get("text", ""),
+                "verbatim_quote": c.get("verbatim_quote", ""),
+                "doc_title": c.get("doc_title", ""),
+                "clause": c.get("clause", ""),
+            })
+        secs.append({"title": s.get("title", ""), "claims": claims})
+    if not secs:
+        return None
+    return {
+        "sections": secs,
+        "unsupported_topics": d.get("unsupported_topics") or [],
+        "data_gaps": d.get("data_gaps") or [],
+    }
+
+
+def _build_structured_card_html(d) -> str:
+    """슬림 structured dict → 목업형 답변 카드 HTML. 없으면 빈 문자열(→ 호출측 markdown fallback).
+
+    데이터에 verdict(금지/허용) 필드가 없으므로 거짓 pill 미생성 — 중립 헤더.
+    CSS 는 자체 <style> 동봉(정적 _CSS 무수정).
+    """
+    if not d or not isinstance(d, dict):
+        return ""
+    import html as _h
+    secs = d.get("sections") or []
+    if not secs:
+        return ""
+    css = (
+        "<style>"
+        ".nx-vc{font-family:var(--font);}"
+        ".nx-vc-head{display:flex;align-items:center;gap:9px;padding-bottom:12px;margin-bottom:4px;border-bottom:1px solid var(--c-border);}"
+        ".nx-vc-head .nx-compass{width:22px;height:22px;flex:0 0 22px;}"
+        ".nx-vc-head b{font-size:14px;font-weight:700;color:var(--c-primary);}"
+        ".nx-vc-sec{margin-top:16px;}"
+        ".nx-vc-sectitle{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#A8654E;margin-bottom:8px;}"
+        ".nx-vc-claim{font-size:14px;line-height:1.7;color:var(--c-text);margin:0 0 8px;}"
+        ".nx-vc-quote{border-left:3px solid var(--c-accent);padding:2px 0 2px 13px;margin:4px 0 10px;}"
+        ".nx-vc-quote p{font-family:'Nanum Myeongjo',serif;font-size:13.5px;line-height:1.7;color:#2C2B28;margin:0;}"
+        ".nx-vc-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface);border-radius:6px;padding:3px 9px;margin-top:6px;}"
+        ".nx-vc-note{font-size:12.5px;color:var(--c-caption);border-top:1px solid var(--c-border);margin-top:14px;padding-top:10px;}"
+        "</style>"
+    )
+    parts = [css, '<div class="nx-vc">',
+             '<div class="nx-vc-head"><span class="nx-compass"></span><b>DF COMPASS 답변</b></div>']
+    for s in secs:
+        claims = s.get("claims") or []
+        if not claims:
+            continue
+        title = _h.escape(str(s.get("title") or ""))
+        parts.append('<div class="nx-vc-sec">')
+        if title:
+            parts.append('<p class="nx-vc-sectitle">' + title + '</p>')
+        for c in claims:
+            txt = _h.escape(str(c.get("text") or ""))
+            if txt:
+                parts.append('<p class="nx-vc-claim">' + txt + '</p>')
+            q = _h.escape(str(c.get("verbatim_quote") or ""))
+            if q:
+                parts.append('<div class="nx-vc-quote"><p>' + q + '</p></div>')
+                cite_raw = " ".join(p for p in (str(c.get("doc_title") or ""), str(c.get("clause") or "")) if p)
+                if cite_raw:
+                    parts.append('<span class="nx-vc-cite">📎 ' + _h.escape(cite_raw) + '</span>')
+        parts.append('</div>')
+    for t in (d.get("unsupported_topics") or []):
+        parts.append('<p class="nx-vc-note">ℹ️ 사규에서 직접 확인 안 됨 — ' + _h.escape(str(t)) + '</p>')
+    for g in (d.get("data_gaps") or []):
+        parts.append('<p class="nx-vc-note">⚠️ 필수 문서 누락 — ' + _h.escape(str(g)) + '</p>')
+    parts.append('</div>')
+    return "".join(parts)
+
+
 def _render_empty_state(sb) -> None:
     """첫 진입(빈 홈) — 목업 정렬: 상단 바 + 히어로 + 중앙 입력 + 트러스트 + 그룹 칩.
 
@@ -2696,7 +2780,15 @@ def _run_ask(
                 else:
                     st.error("🔥 검증 시스템 오류")
                 # [PR-Fix-Render-Final] re-enabled — safety net 은 spinner 안이라 collapsed. spinner-외부 호출 필요.
-                answer_placeholder.markdown(xres.rendered_markdown)
+                _vc_html = ""
+                try:
+                    _vc_html = _build_structured_card_html(_slim_structured(getattr(xres, "structured_answer", None)))
+                except Exception:
+                    _vc_html = ""
+                if _vc_html:
+                    answer_placeholder.markdown(_vc_html, unsafe_allow_html=True)
+                else:
+                    answer_placeholder.markdown(xres.rendered_markdown)
                 with st.expander(
                     f"🔬 상세 검증 정보 "
                     f"(⏱️ 전체 {xres.elapsed_total_ms}ms / Gemini {xres.elapsed_gemini_ms}ms / "
@@ -2737,6 +2829,7 @@ def _run_ask(
                         "query_log_id": None,
                         "original_q": q,
                         "confidence": "high",
+                        "structured": _slim_structured(getattr(xres, "structured_answer", None)),
                     },
                 ))
                 # === [PR-Fix-History-Push] 끝 ===
@@ -3369,7 +3462,16 @@ def main():
                     st.markdown(meta["thinking"])
             if role == "assistant" and meta.get("critical"):
                 _render_critical_banner()
-            st.markdown(content)
+            _vc_html = ""
+            if role == "assistant":
+                try:
+                    _vc_html = _build_structured_card_html(meta.get("structured"))
+                except Exception:
+                    _vc_html = ""
+            if _vc_html:
+                st.markdown(_vc_html, unsafe_allow_html=True)
+            else:
+                st.markdown(content)
             # PR-Ambiguity-Askback: 모호성 역질문 turn replay — 선택지 버튼만,
             # 일반 chrome 생략 (continue 로 이하 chip/contexts/suggestions/피드백 skip).
             if role == "assistant" and meta.get("clarify_choices"):
