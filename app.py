@@ -1569,6 +1569,22 @@ _ENABLE_VERDICT_SHADOW = get_secret("ENABLE_VERDICT_SHADOW", "false").lower() ==
 _ENABLE_VERDICT_CARD = get_secret("ENABLE_VERDICT_CARD", "false").lower() == "true"
 
 
+def _answer_card_header_html() -> str:
+    """답변 카드 상단 브랜드 헤더(레드 점 + 라벨 + 헤어라인) + 답변 카드 좌측 레드 액센트.
+    답변 본문과 독립적으로 prepend 되는 HTML — 내용/색상/리스트 구조에 영향 없음.
+    """
+    return (
+        "<style>"
+        ".nx-ach{display:flex;align-items:center;gap:8px;margin:2px 0 14px;}"
+        ".nx-ach .dot{width:7px;height:7px;border-radius:50%;background:var(--c-accent,#C8102E);flex:0 0 7px;}"
+        ".nx-ach b{font-size:11.5px;font-weight:700;letter-spacing:.07em;color:var(--c-primary,#1F1E1D);white-space:nowrap;}"
+        ".nx-ach .rule{flex:1;height:1px;background:var(--c-border,#E7E3DC);}"
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
+        "</style>"
+        '<div class="nx-ach"><span class="dot"></span><b>DF COMPASS 답변</b><span class="rule"></span></div>'
+    )
+
+
 def _render_empty_state(sb) -> None:
     """첫 진입(빈 홈) — 목업 정렬: 상단 바 + 히어로 + 중앙 입력 + 트러스트 + 그룹 칩.
 
@@ -2547,6 +2563,7 @@ def _run_ask(
         # status 컨테이너보다 위쪽 영역에 자리 잡아 사용자는 처리 단계 메시지
         # 위에서 답변이 점진적으로 그려지는 걸 본다. status 종료(collapsed)
         # 후에도 placeholder 는 그대로 답변 본문을 유지.
+        st.markdown(_answer_card_header_html(), unsafe_allow_html=True)
         answer_placeholder = st.empty()
         # Timer placeholder — status 밖에 자리 잡아 status collapsed 후에도
         # 그대로 보이도록. 답변 진행 중에는 components.html 의 JS 카운터,
@@ -3479,6 +3496,8 @@ def main():
                     _vc_html = _build_structured_card_html(meta.get("structured"))
                 except Exception:
                     _vc_html = ""
+            if role == "assistant":
+                st.markdown(_answer_card_header_html(), unsafe_allow_html=True)
             if _vc_html:
                 st.markdown(_vc_html, unsafe_allow_html=True)
             else:
