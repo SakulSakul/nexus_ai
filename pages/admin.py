@@ -3595,6 +3595,10 @@ def _tab_faq_cache_management(sb):
                             source="precompute",
                         )
                         if ok:
+                            # Pre-compute 는 프로그램이 answer_text 를 채우므로,
+                            # value+key textarea 의 stale session_state 를 비워
+                            # rerun 시 새 DB 값으로 재초기화 (화면 desync 수정).
+                            st.session_state.pop(f"faq_ans_{fid}", None)
                             _audit(sb_admin, action="faq_precompute",
                                    target=row["query_display"])
                             st.toast("답변 생성·저장됨. 검토 후 Approve.", icon="✅")
