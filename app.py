@@ -3713,6 +3713,31 @@ def main():
                     and meta.get("query_log_id") is not None):
                 _render_mode_buttons(idx)
 
+    # PR-retry-dangling: 답변이 안 만들어진 채 끝난 턴 감지 → 재실행 버튼.
+    # 긴 RAG 생성(30~60초)이 Streamlit rerun/취소로 인터럽트되면 user 턴만
+    # history 에 남고 assistant 턴이 없어 화면이 백지가 된다(에러 메시지조차
+    # 없음). 이 경우 마지막 history 가 "user" 로 끝나므로 감지 가능. 새 질문
+    # 처리 중(clicked_q/reroll/q_input)이면 곧 정상 답변이 push 되므로 미표시.
+    # 재실행은 댕글링 user 턴 제거 후 기존 clicked_q 재질의 경로 재사용.
+    _hist_now = st.session_state.get("history", [])
+    if (
+        _hist_now
+        and _hist_now[-1][0] == "user"
+        and not st.session_state.get("clicked_q")
+        and not st.session_state.get("_pending_reroll")
+        and not q_input
+    ):
+        st.warning("\u26a0\ufe0f 답변 생성이 중단된 것 같습니다. 아래 버튼으로 다시 시도해 주세요.")
+        if st.button(
+            "\U0001f504 이 질문 다시 실행",
+            use_container_width=True,
+            key=f"_retry_dangling_{len(_hist_now)}",
+        ):
+            _dangling_q = _hist_now[-1][1]
+            st.session_state["history"] = _hist_now[:-1]  # 댕글링 user 턴 제거(중복 방지)
+            st.session_state["clicked_q"] = _dangling_q
+            st.rerun()
+
     # PR-Fun1.5: pending_q 매개체 폐기. clicked_q 매개체는 main() 입구의
     # early exit 가 별도 처리. 여기엔 chat_input 만 처리.
     st.markdown(
