@@ -187,7 +187,8 @@ def faq_cache_list(
         q = sb.table("nexus_faq_cache").select(
             "id,query_display,answer_text,category,is_critical,"
             "approved,approved_by,approved_at,hit_count,last_hit_at,"
-            "source,created_at,updated_at"
+            "source,created_at,updated_at,"
+            "show_on_home,home_label,home_order"
         )
         if approved_only:
             q = q.eq("approved", True)
@@ -258,6 +259,54 @@ def faq_cache_stats() -> dict:
         "total_hits": total_hits,
         "top": top,
     }
+
+
+def faq_cache_home_chips(limit: int = 3) -> list[dict]:
+    """홈 칩용: approved AND NOT is_critical AND show_on_home, home_order 오름차순 상위 N.
+
+    실패/빈 결과 시 [] (홈 렌더 측 하드코딩 fallback). query_display/home_label/home_order 반환.
+    """
+    sb = _get_sb()
+    if not sb:
+        return []
+    try:
+        r = (
+            sb.table("nexus_faq_cache")
+            .select("query_display,home_label,home_order")
+            .eq("approved", True)
+            .eq("is_critical", False)
+            .eq("show_on_home", True)
+            .order("home_order", desc=False)
+            .order("hit_count", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return r.data or []
+    except Exception as e:
+        print(f"[faq_cache] home_chips failed: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+        return []
+
+
+def faq_cache_set_home(
+    faq_id: str, *, show_on_home: bool, home_label: str = "", home_order: int = 0,
+) -> bool:
+    """홈 칩 노출 설정 (Admin). approved/is_critical/answer_text 는 건드리지 않음."""
+    sb = _get_sb()
+    if not sb:
+        return False
+    try:
+        sb.table("nexus_faq_cache").update({
+            "show_on_home": bool(show_on_home),
+            "home_label": ((home_label or "").strip() or None),
+            "home_order": int(home_order or 0),
+            "updated_at": _now_iso(),
+        }).eq("id", faq_id).execute()
+        return True
+    except Exception as e:
+        print(f"[faq_cache] set_home failed: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+        return False
 
 
 # ── Phase 2 Hook (베타 단계 미활성화) ────────────────────────
