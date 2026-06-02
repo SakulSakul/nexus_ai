@@ -893,6 +893,29 @@ def _prepend_question_quote(answer: str, question: str) -> str:
     return f"질문하신 내용: '{q}'\n\n{answer.lstrip()}"
 
 
+def _normalize_hr_dept_name(text: str) -> str:
+    """rule 4-1-A 결정적 강제: 사용자 안내·권장·신고 문구의 '인사팀' →
+    '인사교육팀' (조직개편 현행 조직명). 단, 사규-필드 직접 인용
+    ("관리부서: 인사팀" 등 옛 표기)은 '사규 본문이 진실' 원칙대로 보존.
+    LLM 이 프롬프트 룰(4-1-A)을 누락해 안내문에 '인사팀'을 흘리는 누출의
+    결정적 안전망 — 본문 최종 조립 직후 단일 지점에서 강제. '인사교육팀'은
+    '인사팀'을 부분문자열로 포함하지 않아 이중변환 없음."""
+    if not text or "인사팀" not in text:
+        return text
+    _PROTECT = ("관리부서: 인사팀", "관리부서:인사팀", "관리부서 인사팀")
+    _saved = {}
+    out = text
+    for _i, _pat in enumerate(_PROTECT):
+        if _pat in out:
+            _tok = "ZZHRFIELDZZ%d" % _i
+            _saved[_tok] = _pat
+            out = out.replace(_pat, _tok)
+    out = out.replace("인사팀", "인사교육팀")
+    for _tok, _pat in _saved.items():
+        out = out.replace(_tok, _pat)
+    return out
+
+
 def _ensure_citation(answer: str, contexts: list[dict]) -> str:
     if "[참조:" in answer:
         return answer
@@ -1511,6 +1534,7 @@ def ask(
         # grounded 결과 무조건 채택 — 비면 [] (ungrounded LLM 폴백 차단, 기만 방지)
         suggestions = grounded_suggestions(supabase, contexts, question)
     _emit("complete")
+    final = _normalize_hr_dept_name(final)
     return Answer(
         text=final,
         is_critical=detection.triggered,
@@ -2061,6 +2085,7 @@ def ask_stream(
         print(f"[disambiguation] WARN skipped: {_e_amb}", file=sys.stderr, flush=True)
 
     _emit("complete")
+    answer_text = _normalize_hr_dept_name(answer_text)
     yield ("done", Answer(
         text=answer_text,
         is_critical=False,
