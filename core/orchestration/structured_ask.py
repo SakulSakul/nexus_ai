@@ -131,7 +131,7 @@ def structured_ask(
             incident_nodes=incident_nodes,
             retrieved_chunk_ids=chunk_ids,
             retrieved_chunk_count=len(chunks),
-            gemini_model_id="gemini-2.5-pro-structured",
+            gemini_model_id="gemini-3.5-flash-structured",
             gemini_answer=rendered[:5000],
             gemini_latency_ms=elapsed_gemini_ms,
             claude_verdict=verification.verdict,

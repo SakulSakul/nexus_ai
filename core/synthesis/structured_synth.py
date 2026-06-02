@@ -45,7 +45,7 @@ def ask_structured(query: str, chunks: list) -> tuple:
             max_output_tokens=8192,
         )
         res = cli.models.generate_content(
-            model="gemini-2.5-pro",
+            model="gemini-3.5-flash",
             contents=user_text,
             config=cfg,
         )

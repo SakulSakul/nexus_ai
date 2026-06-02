@@ -5,6 +5,19 @@ from __future__ import annotations
 import streamlit as st
 import streamlit.components.v1 as components
 
+
+def _nx_iframe(html: str, *, height: int = 0) -> None:
+    """st.components.v1.html (2026-06-01 이후 제거 예정) -> st.iframe 마이그레이션.
+
+    버전 안전: st.iframe 가 있으면 사용, 없으면 구 components.html fallback.
+    둘 다 HTML 문자열을 iframe 으로 렌더 -> 내부 JS sandbox 동작 보존.
+    """
+    _fn = getattr(st, "iframe", None)
+    if _fn is not None:
+        _fn(html, height=height)
+    else:
+        components.html(html, height=height)
+
 import datetime as _dt
 import time as _time
 
@@ -1869,7 +1882,7 @@ def _inject_streaming_scroll_js_once() -> None:
     if st.session_state.get("_nx_scroll_js_injected"):
         return
     st.session_state["_nx_scroll_js_injected"] = True
-    components.html(
+    _nx_iframe(
         """
 <script>
   (function() {
@@ -1925,7 +1938,7 @@ def _inject_streaming_visual_polish_once() -> None:
     if st.session_state.get("_nx_visual_polish_injected"):
         return
     st.session_state["_nx_visual_polish_injected"] = True
-    components.html(
+    _nx_iframe(
         """
 <style id="nx-visual-polish-injected">
   /* Korean text rendering polish — line-height·letter-spacing·word-break */
@@ -2703,7 +2716,7 @@ def _run_ask(
         # 답변 완료 시 timer_placeholder.markdown(...) 으로 정적 메시지 교체
         # → iframe 자체가 사라지면서 setInterval 도 자동 cleanup.
         with timer_placeholder.container():
-            components.html(
+            _nx_iframe(
                 f"""
 <div id="dfc-elapsed-wrap" style="background:#FAF6F1;padding:10px 14px;
      border-radius:10px;font-family:-apple-system,'Segoe UI',sans-serif;
