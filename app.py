@@ -3783,7 +3783,13 @@ def main():
         return
 
     _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
-    _run_ask(sb, q_input, cat, hotlines)
+    # PR-fix-home-firstask: 질문창 입력을 검증된 clicked_q 경로로 수렴.
+    # st.chat_input 제출 run 에서 곧바로 긴 스트리밍 _run_ask 를 돌리면 홈
+    # 게이트 전이 + chat_input 위젯 상태변화가 스트림 도중 rerun 을 유발해
+    # 답변이 중단된다. 칩 경로처럼 clicked_q + st.rerun 으로 _run_ask 를
+    # '제출 run 바깥의 깨끗한 rerun' 에서 실행 → 중단 없음. 모든 진입점 단일화.
+    st.session_state["clicked_q"] = q_input
+    st.rerun()
 
 
 if __name__ == "__main__":
