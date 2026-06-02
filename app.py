@@ -445,7 +445,10 @@ html, body, .stApp {
   border-top: 1px solid var(--c-border) !important;
   border-radius: 0 !important;
   background: var(--c-bg) !important;
-  font-size: 13px !important;
+  font-size: 14.5px !important;
+  line-height: 1.6 !important;
+  min-height: 54px !important;
+  padding: 14px 16px !important;
   color: var(--c-text) !important;
   box-shadow: none !important;
   resize: none !important;
@@ -1627,8 +1630,8 @@ def _build_verdict_card_html(d) -> str:
         ".nx-vd-pill .ico{width:8px;height:8px;border-radius:50%;background:" + color + ";flex:0 0 8px;}"
         ".nx-vd-pill b{font-size:13.5px;font-weight:700;color:" + color + ";}"
         ".nx-vd-badge{font-size:11px;font-weight:700;color:" + color + ";background:rgba(255,255,255,0.62);border-radius:6px;padding:2px 8px;}"
-        ".nx-vd-quote{border-left:3px solid " + color + ";padding:3px 0 3px 14px;margin:13px 0 9px;}"
-        ".nx-vd-quote p{font-family:'SDDOES Myeongjo','Nanum Myeongjo',serif;font-size:14px;line-height:1.7;color:#2C2B28;margin:0;}"
+        ".nx-vd-quote{border-left:3px solid " + color + ";padding:5px 0 5px 16px;margin:14px 0 10px;}"
+        ".nx-vd-quote p{font-family:'SDDOES Myeongjo','Nanum Myeongjo',serif;font-size:15.5px;font-weight:600;line-height:1.85;letter-spacing:-0.1px;color:#1F1D1A;margin:0;}"
         ".nx-vd-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface,#F4F1EB);border-radius:6px;padding:3px 9px;margin-top:7px;}"
         ".nx-vd-foot{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:11.5px;color:var(--c-caption,#7A766E);}"
         ".nx-vd-foot .dot{width:7px;height:7px;border-radius:50%;background:" + color + ";flex:0 0 7px;}"
