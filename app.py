@@ -1211,7 +1211,7 @@ def _render_answer_meta(
     line = " · ".join(parts)
     html = (
         f"<div style='color:#555;font-size:13px;"
-        f"padding:8px 0 6px;border-top:1px solid #eee;margin-top:6px;"
+        f"padding:8px 0 6px;border-top:1px solid var(--c-border);margin-top:6px;"
         f"font-family:-apple-system,Pretendard,sans-serif;'>"
         f"{line}</div>"
     )
@@ -3678,7 +3678,7 @@ def main():
     # early exit 가 별도 처리. 여기엔 chat_input 만 처리.
     st.markdown(
         '<div style="text-align:center; color:#888; font-size:11px; '
-        'padding:24px 0 8px 0; border-top:1px solid #eee; margin-top:32px;">'
+        'padding:24px 0 8px 0; border-top:1px solid var(--c-border); margin-top:32px;">'
         '© 2026 신세계디에프 (Shinsegae Duty Free) · 인사담당 CSR팀<br>'
         '본 답변은 사규 해석 보조 도구이며 법적 효력은 없습니다. '
         '인사·신고 행정 사항은 인사교육팀에 직접 문의하세요.'
