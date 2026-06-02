@@ -1408,17 +1408,14 @@ def ask(
         import sys as _sys
         from .citation_verifier import log_verification_result
         from .synthesis_validator import validate_and_repair_answer
-        from .nexus_query_rewriter import (
-            nexus_classify_to_incident_nodes, rewrite_query_for_retrieval,
-        )
-        _question_nodes = set(nexus_classify_to_incident_nodes(question or ""))
-        try:
-            _rewritten = rewrite_query_for_retrieval(masked or question or "")
-            if _rewritten:
-                _question_nodes |= set(nexus_classify_to_incident_nodes(_rewritten))
-        except Exception:
-            pass
-        _user_nodes = sorted(_question_nodes)
+        from .nexus_query_rewriter import nexus_classify_to_incident_nodes
+        # PR-root-domain-coherence: 합성 단계 노드셋은 사용자 raw 질문의 결정적
+        # 분류만 권위로 사용. LLM 재작성 분류 union 은 도메인 드리프트(예:
+        # "협력사원" 재작성 시 "갑질/괴롭힘" 유입 → 괴롭힘 incident 노드)를 일으켜
+        # STRUCTURED_INJECT·Domain-Lock·카테고리를 한꺼번에 오염시키므로 합성
+        # 노드셋에서 제외. 검색 단계(L1_RPC) broad union 은 그대로 — "검색은 넓게,
+        # 합성은 정합하게". 태거 내부 synonym 확장으로 약어 surfacing 회귀 없음.
+        _user_nodes = sorted(set(nexus_classify_to_incident_nodes(question or "")))
         # PR-Phase-10.2-Fix-E: Domain-Lock 의 chunk matched 의존성 제거 위해
         # contexts_raw 의 모든 chunks 에 _user_incident_nodes 첨부. balanced
         # contexts 는 동일 dict 참조라 category_visual 0순위 Domain-Lock 이 활용.
@@ -1978,17 +1975,14 @@ def ask_stream(
         import sys as _sys
         from .citation_verifier import log_verification_result
         from .synthesis_validator import validate_and_repair_answer
-        from .nexus_query_rewriter import (
-            nexus_classify_to_incident_nodes, rewrite_query_for_retrieval,
-        )
-        _question_nodes = set(nexus_classify_to_incident_nodes(question or ""))
-        try:
-            _rewritten = rewrite_query_for_retrieval(masked or question or "")
-            if _rewritten:
-                _question_nodes |= set(nexus_classify_to_incident_nodes(_rewritten))
-        except Exception:
-            pass
-        _user_nodes = sorted(_question_nodes)
+        from .nexus_query_rewriter import nexus_classify_to_incident_nodes
+        # PR-root-domain-coherence: 합성 단계 노드셋은 사용자 raw 질문의 결정적
+        # 분류만 권위로 사용. LLM 재작성 분류 union 은 도메인 드리프트(예:
+        # "협력사원" 재작성 시 "갑질/괴롭힘" 유입 → 괴롭힘 incident 노드)를 일으켜
+        # STRUCTURED_INJECT·Domain-Lock·카테고리를 한꺼번에 오염시키므로 합성
+        # 노드셋에서 제외. 검색 단계(L1_RPC) broad union 은 그대로 — "검색은 넓게,
+        # 합성은 정합하게". 태거 내부 synonym 확장으로 약어 surfacing 회귀 없음.
+        _user_nodes = sorted(set(nexus_classify_to_incident_nodes(question or "")))
         # PR-Phase-10.2-Fix-E: Domain-Lock 의 chunk matched 의존성 제거 위해
         # contexts_raw 의 모든 chunks 에 _user_incident_nodes 첨부. balanced
         # contexts 는 동일 dict 참조라 category_visual 0순위 Domain-Lock 이 활용.
