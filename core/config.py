@@ -92,7 +92,7 @@ def settings() -> Settings:
         supabase_service_role_key=get_secret("SUPABASE_SERVICE_ROLE_KEY"),
         gemini_api_key=get_secret("GEMINI_API_KEY"),
         # 모델 버전은 운영 시점 최신 안정본으로 외부에서 갱신.
-        chat_model=get_secret("NEXUS_CHAT_MODEL", "gemini-2.5-pro"),
+        chat_model=get_secret("NEXUS_CHAT_MODEL", "gemini-3.5-flash"),
         embed_model=get_secret("NEXUS_EMBED_MODEL", "gemini-embedding-001"),
         embed_dim=int(get_secret("NEXUS_EMBED_DIM", "768")),
         top_k=int(get_secret("NEXUS_TOP_K", "3")),

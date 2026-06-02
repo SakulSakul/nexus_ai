@@ -28,7 +28,7 @@ import time
 from .config import get_secret, settings
 
 
-_RERANK_MODEL = get_secret("NEXUS_RERANK_MODEL", "gemini-2.5-flash-lite")
+_RERANK_MODEL = get_secret("NEXUS_RERANK_MODEL", "gemini-3.5-flash")
 # PR-Reranker-Top15: top_n 30→15 으로 reranker latency -2.4초.
 # Risk: Q13 fix (공정거래 doc) 가 top 15 안에 포함되는지 검증.
 _RERANK_TOP_N = 15          # reranker 가 평가할 raw_chunks 상위 N
