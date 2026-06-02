@@ -41,6 +41,14 @@ _CSS = """
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+@import url('https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700;800&display=swap');
+@font-face {
+  font-family: 'SDDOES Myeongjo';
+  src: url('https://www.shinsegae.com/resources/site/fonts/SDDOESMyeongjoNeoaTTF-dMd.woff') format('woff');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* 사이드바 close X 만 숨겨 사용자가 능동적으로 사이드바를 닫지 못하게 함.
    Streamlit 일부 버전에서 사이드바를 닫으면 [data-testid="stSidebar"]
@@ -1545,7 +1553,7 @@ def _build_structured_card_html(d) -> str:
         ".nx-vc-sectitle{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#A8654E;margin-bottom:8px;}"
         ".nx-vc-claim{font-size:14px;line-height:1.7;color:var(--c-text);margin:0 0 8px;}"
         ".nx-vc-quote{border-left:3px solid var(--c-accent);padding:2px 0 2px 13px;margin:4px 0 10px;}"
-        ".nx-vc-quote p{font-family:'Nanum Myeongjo',serif;font-size:13.5px;line-height:1.7;color:#2C2B28;margin:0;}"
+        ".nx-vc-quote p{font-family:'SDDOES Myeongjo','Nanum Myeongjo',serif;font-size:13.5px;line-height:1.7;color:#2C2B28;margin:0;}"
         ".nx-vc-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface);border-radius:6px;padding:3px 9px;margin-top:6px;}"
         ".nx-vc-note{font-size:12.5px;color:var(--c-caption);border-top:1px solid var(--c-border);margin-top:14px;padding-top:10px;}"
         "</style>"
@@ -1615,7 +1623,7 @@ def _build_verdict_card_html(d) -> str:
         ".nx-vd-pill b{font-size:13.5px;font-weight:700;color:" + color + ";}"
         ".nx-vd-badge{font-size:11px;font-weight:700;color:" + color + ";background:rgba(255,255,255,0.62);border-radius:6px;padding:2px 8px;}"
         ".nx-vd-quote{border-left:3px solid " + color + ";padding:3px 0 3px 14px;margin:13px 0 9px;}"
-        ".nx-vd-quote p{font-family:'Nanum Myeongjo',serif;font-size:14px;line-height:1.7;color:#2C2B28;margin:0;}"
+        ".nx-vd-quote p{font-family:'SDDOES Myeongjo','Nanum Myeongjo',serif;font-size:14px;line-height:1.7;color:#2C2B28;margin:0;}"
         ".nx-vd-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface,#F4F1EB);border-radius:6px;padding:3px 9px;margin-top:7px;}"
         ".nx-vd-foot{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:11.5px;color:var(--c-caption,#7A766E);}"
         ".nx-vd-foot .dot{width:7px;height:7px;border-radius:50%;background:" + color + ";flex:0 0 7px;}"
