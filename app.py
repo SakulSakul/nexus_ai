@@ -413,8 +413,9 @@ html, body, .stApp {
   background: #FFFFFF !important;
   box-shadow: 0 1px 3px rgba(31,30,29,0.05) !important;
 }
-/* user 질문 — 목업: 오른쪽 진한 말풍선 + 아바타 숨김 (PR-UI8) */
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+/* user 질문 — 목업: 오른쪽 진한 말풍선 + 아바타 숨김 (PR-UI8b: testid 양규약 커버) */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]),
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
   background: #2C2B28 !important;
   border-color: #2C2B28 !important;
   width: fit-content !important;
@@ -425,10 +426,14 @@ html, body, .stApp {
   border-radius: 16px !important;
   box-shadow: 0 1px 3px rgba(31,30,29,0.12) !important;
 }
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageAvatarUser"] { display: none !important; }
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="chatAvatarIcon-user"] { display: none !important; }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown,
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown p,
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown li {
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown li,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) .stMarkdown,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) .stMarkdown p,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) .stMarkdown li {
   color: #FFFFFF !important;
   max-width: none !important;
 }
@@ -1627,7 +1632,7 @@ def _build_verdict_card_html(d) -> str:
         ".nx-vd-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface,#F4F1EB);border-radius:6px;padding:3px 9px;margin-top:7px;}"
         ".nx-vd-foot{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:11.5px;color:var(--c-caption,#7A766E);}"
         ".nx-vd-foot .dot{width:7px;height:7px;border-radius:50%;background:" + color + ";flex:0 0 7px;}"
-        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]),[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
         "</style>"
     )
     parts = [css, '<div class="nx-vd">',
@@ -1653,7 +1658,7 @@ def _answer_card_header_html() -> str:
         ".nx-ach .dot{width:7px;height:7px;border-radius:50%;background:var(--c-accent,#C8102E);flex:0 0 7px;}"
         ".nx-ach b{font-size:11.5px;font-weight:700;letter-spacing:.07em;color:var(--c-primary,#1F1E1D);white-space:nowrap;}"
         ".nx-ach .rule{flex:1;height:1px;background:var(--c-border,#E7E3DC);}"
-        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]),[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
         "</style>"
         '<div class="nx-ach"><span class="dot"></span><b>DF COMPASS 답변</b><span class="rule"></span></div>'
     )
