@@ -1497,9 +1497,8 @@ def ask(
     # PR-UI1: 후속질문 출처를 검색 문서 auto_query_examples 로 교체 (grounded).
     # critical 은 위에서 이미 []. 플래그 OFF / grounded 결과 없으면 기존 유지(회귀 안전).
     if ENABLE_GROUNDED_SUGGESTIONS and not detection.triggered:
-        _g = grounded_suggestions(supabase, contexts, question)
-        if _g:
-            suggestions = _g
+        # grounded 결과 무조건 채택 — 비면 [] (ungrounded LLM 폴백 차단, 기만 방지)
+        suggestions = grounded_suggestions(supabase, contexts, question)
     _emit("complete")
     return Answer(
         text=final,
@@ -1955,9 +1954,8 @@ def ask_stream(
     answer_text, suggestions = _split_suggestions(answer_text)
     # PR-UI1: 정상 스트리밍 경로(is_critical=False)도 grounded 출처로 교체.
     if ENABLE_GROUNDED_SUGGESTIONS:
-        _g = grounded_suggestions(supabase, contexts, question)
-        if _g:
-            suggestions = _g
+        # grounded 결과 무조건 채택 — 비면 [] (ungrounded LLM 폴백 차단, 기만 방지)
+        suggestions = grounded_suggestions(supabase, contexts, question)
     answer_text = _ensure_citation(answer_text, contexts)
     answer_text = _normalize_citation_block(answer_text, contexts)
     # Layer 3 (PR #83 → PR #84 → PR #86): 답변 사후 검증 + 구조화 사규 기준 주입.
