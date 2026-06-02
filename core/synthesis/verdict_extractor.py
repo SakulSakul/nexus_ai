@@ -146,8 +146,26 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
 
         quote = doc_title = clause = ""
         ev = parsed.get("evidence_index")
-        if isinstance(ev, int) and 0 <= ev < len(top):
-            ch = top[ev]
+        # LLM evidence_index 는 ev=0 고정 편향이 잦음(같은 doc 의 첫 청크만 지목).
+        # → badge/label 키워드와 본문 겹침이 가장 큰 chunk 를 결정적으로 우선 채택.
+        #   (안전 판정 stance/conf 는 위에서 이미 확정 — 여기는 인용 문장 선택만)
+        import re as _re2
+        _cand = ev if (isinstance(ev, int) and 0 <= ev < len(top)) else None
+        _kw = [w for w in _re2.findall(
+            r"[가-힣A-Za-z0-9]+",
+            f"{parsed.get('label') or ''} {parsed.get('badge') or ''}",
+        ) if len(w) >= 2]
+        if _kw:
+            _bi, _bs = None, 0
+            for _i, _c in enumerate(top):
+                _ct = _chunk_text(_c)
+                _sc = sum(1 for _w in _kw if _w in _ct)
+                if _sc > _bs:
+                    _bi, _bs = _i, _sc
+            if _bi is not None and _bs >= 1:
+                _cand = _bi
+        if _cand is not None:
+            ch = top[_cand]
             quote, doc_title, clause = _pick_quote(ch), _chunk_title(ch), _chunk_clause(ch)
 
         v = Verdict(
@@ -159,7 +177,7 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
             rationale=str(parsed.get("rationale") or "")[:200],
         )
         print(f"[verdict_extractor] stance={v.stance} conf={v.confidence} "
-              f"badge={v.badge!r} ev={ev} q_len={len(v.quote)}",
+              f"badge={v.badge!r} ev={ev} pick={_cand} q_len={len(v.quote)}",
               file=sys.stderr, flush=True)
         return v
     except Exception as e:
