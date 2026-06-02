@@ -3388,6 +3388,7 @@ def _tab_faq_cache_management(sb):
         faq_cache_peek,
         faq_cache_stats,
         faq_cache_upsert,
+        faq_cache_set_home,
     )
 
     st.subheader("📦 FAQ Cache Management (Phase-18.1)")
@@ -3548,6 +3549,35 @@ def _tab_faq_cache_management(sb):
                 ),
                 key=f"faq_cat_{fid}",
             )
+
+            # 홈 칩 노출 큐레이션 (PR-19.3) — "캐시됨" 과 "홈 노출" 분리.
+            # 승인·비critical 인 것만 실제 칩으로 나감(휴가신청 등은 OFF 유지).
+            hc1, hc2, hc3 = st.columns([1, 2, 1])
+            _show_home = hc1.checkbox(
+                "\U0001F3E0 홈 칩 노출", value=bool(row.get("show_on_home")),
+                key=f"faq_home_{fid}",
+                help="승인·비critical 만 실제 노출. 범위밖(휴가신청 등)은 OFF.",
+            )
+            _home_label = hc2.text_input(
+                "칩 라벨(짧게)", value=row.get("home_label") or "",
+                key=f"faq_hlabel_{fid}", placeholder="예: 선물 받았어요",
+            )
+            _home_order = hc3.number_input(
+                "순서", value=int(row.get("home_order") or 0), step=1,
+                key=f"faq_horder_{fid}",
+            )
+            if st.button("\U0001F3E0 홈 칩 설정 저장", key=f"faq_homesave_{fid}"):
+                if faq_cache_set_home(
+                    fid, show_on_home=_show_home,
+                    home_label=_home_label, home_order=int(_home_order),
+                ):
+                    _audit(sb_admin, action="faq_set_home",
+                           target=row["query_display"])
+                    st.toast("홈 칩 설정 저장됨.", icon="\u2705")
+                    st.rerun()
+                else:
+                    st.error("저장 실패.")
+
             b1, b2, b3, b4, b5 = st.columns(5)
 
             if b1.button("🔄 Pre-compute", key=f"faq_pre_{fid}"):
