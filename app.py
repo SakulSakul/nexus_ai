@@ -405,10 +405,24 @@ html, body, .stApp {
   background: #FFFFFF !important;
   box-shadow: 0 1px 3px rgba(31,30,29,0.05) !important;
 }
-/* user 질문 — 레드 계열 옅은 틴트로 구분 (Image 1 의 구분 버블) */
+/* user 질문 — 목업: 오른쪽 진한 말풍선 + 아바타 숨김 (PR-UI8) */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-  background: var(--c-accent-bg) !important;
-  border-color: #F1D5DB !important;
+  background: #2C2B28 !important;
+  border-color: #2C2B28 !important;
+  width: fit-content !important;
+  max-width: 78% !important;
+  margin-left: auto !important;
+  margin-right: 0 !important;
+  padding: 0.7rem 1.1rem !important;
+  border-radius: 16px !important;
+  box-shadow: 0 1px 3px rgba(31,30,29,0.12) !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageAvatarUser"] { display: none !important; }
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown,
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown p,
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown li {
+  color: #FFFFFF !important;
+  max-width: none !important;
 }
 
 /* ── Chat input ── */
@@ -2160,7 +2174,7 @@ def _render_action_buttons(
     # 보조 다시답변. 컬럼 2분할 → 세로 스택으로 주 액션 강조. 분기 logic 동일.
     st.markdown(
         '<div style="font-size:11.5px;font-weight:700;letter-spacing:0.06em;'
-        'color:#9A968D;margin:8px 0 6px 2px;">다음 단계</div>',
+        'color:#9A968D;margin:8px 0 6px 2px;">다음 단계 예측</div>',
         unsafe_allow_html=True,
     )
     hr_clicked = st.button(
