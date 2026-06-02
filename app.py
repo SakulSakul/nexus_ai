@@ -438,23 +438,24 @@ html, body, .stApp {
   max-width: none !important;
 }
 
-/* ── Chat input ── */
+/* ── Chat input (홈 입력창과 동일하게 흰색 · 빨간 포커스 테두리 제거) ── */
 [data-testid="stChatInput"] textarea {
   font-family: var(--font) !important;
   border: 0 !important;
   border-top: 1px solid var(--c-border) !important;
   border-radius: 0 !important;
-  background: var(--c-bg) !important;
+  background: #fff !important;
   font-size: 14.5px !important;
   line-height: 1.6 !important;
   min-height: 54px !important;
   padding: 14px 16px !important;
   color: var(--c-text) !important;
   box-shadow: none !important;
+  outline: none !important;
   resize: none !important;
 }
 [data-testid="stChatInput"] textarea:focus {
-  border-top: 2px solid var(--c-primary) !important;
+  border-top: 1px solid var(--c-border) !important;
   box-shadow: none !important;
 }
 [data-testid="stChatInput"] {
@@ -462,7 +463,16 @@ html, body, .stApp {
   border-top: 1px solid var(--c-border) !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  background: var(--c-bg) !important;
+  background: #fff !important;
+}
+[data-testid="stChatInput"] > div,
+[data-testid="stChatInput"] [data-testid="stChatInputTextArea"] {
+  background: #fff !important;
+}
+[data-testid="stChatInput"] > div:focus-within,
+[data-testid="stChatInput"]:focus-within {
+  border-color: var(--c-border) !important;
+  box-shadow: none !important;
 }
 
 /* ── Bottom 영역 여백 축소 (입력창 아래 흰 여백 과다) ── */
@@ -1737,7 +1747,7 @@ def _render_empty_state(sb) -> None:
         '.st-key-hero_ask_input div[data-baseweb="base-input"]{height:100% !important;background:transparent !important;}'
         '.st-key-hero_ask_input input{height:56px !important;font-size:17px !important;padding:0 22px !important;color:var(--c-primary) !important;}'
         '.st-key-hero_ask_input input::placeholder{font-size:15.5px !important;color:#9A968D !important;}'
-        '.st-key-hero_send_btn button{height:58px !important;min-height:58px !important;border-radius:14px !important;font-size:21px !important;font-weight:700 !important;}'
+        '.st-key-hero_send_btn button{height:58px !important;min-height:58px !important;border-radius:14px !important;font-size:28px !important;font-weight:700 !important;line-height:1 !important;}'
         '[class*="st-key-hchip_"] button{min-height:60px !important;display:flex !important;align-items:center !important;justify-content:center !important;text-align:center !important;white-space:normal !important;line-height:1.45 !important;padding:8px 14px !important;}'
         "</style>",
         unsafe_allow_html=True,
