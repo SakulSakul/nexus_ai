@@ -90,6 +90,20 @@ ANSWER_HR_GRACEFUL_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# PR-Fix-Clean-Report-Precedence: clean_report 단락을 회피시키는 "광역 신고
+# 채널" 신호. ANSWER_REPORT_KEYWORDS 와 달리 "클린신고"(clean 과 중복)를 제외 —
+# 핫라인/SRMS/사건사고 등 broad 채널 신호만. 답변이 클린신고 + broad 채널을 모두
+# 안내하면 broad 패널(핫라인 포함)을 우선해 표시.
+ANSWER_BROAD_REPORT_KEYWORDS: tuple[str, ...] = (
+    "신고·조사",
+    "SRMS",
+    "신세계면세점 핫라인",
+    "일반 사건사고 보고지침",
+    "중대 사건사고 보고지침",
+    "사건사고 보고지침",
+)
+
+
 def _extract_context_domains(contexts: list[dict] | None) -> set[str]:
     """contexts 의 doc_title / title 에서 (도메인) 추출.
 
@@ -145,6 +159,7 @@ def classify_button(
 
     answer_has_graceful = any(kw in answer_text for kw in ANSWER_HR_GRACEFUL_KEYWORDS)
     answer_has_report = any(kw in answer_text for kw in ANSWER_REPORT_KEYWORDS)
+    answer_has_broad_report = any(kw in answer_text for kw in ANSWER_BROAD_REPORT_KEYWORDS)
     answer_has_clean_report = any(kw in answer_text for kw in ANSWER_CLEAN_REPORT_KEYWORDS)
 
     context_domains = _extract_context_domains(contexts)
@@ -163,7 +178,7 @@ def classify_button(
     # ═══ 4. Clean Report (자진신고) — 답변에 클린신고 keyword 있으면 우선 ═══
     # PR-Hotline-Branch (사용자 피드백 memory #11 issue 1):
     # 클린신고 (SHRS CSR경영란) 와 사건사고 신고 (SRMS) 채널 분리.
-    if answer_has_clean_report:
+    if answer_has_clean_report and not answer_has_broad_report:
         return "clean_report"
 
     # ═══ 5. Report intent (query / contexts / answer) → report ═══
