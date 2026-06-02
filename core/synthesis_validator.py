@@ -717,8 +717,10 @@ def validate_and_repair_answer(
             file=sys.stderr, flush=True,
         )
 
-    # PR-Universal-Routing-Cleanup: DEPT_NORMALIZE (인사팀 → 인사교육팀 강제 변환) 제거.
-    # 사규 본문이 진실 (사쿨 운영 원칙) — 본문 '인사팀' 표기를 강제 변환하지 않음.
+    # PR-Universal-Routing-Cleanup: 블랭킷 DEPT_NORMALIZE 제거 ('사규 본문이 진실'
+    # 원칙 — 사규-필드 인용까지 뭉개던 문제). 현재는 chatbot._normalize_hr_dept_name
+    # 가 본문 최종 조립 직후 '맥락 인식' enforce: 안내·권장 문구의 '인사팀'만
+    # '인사교육팀' 변환, "관리부서: 인사팀" 사규-필드 인용은 보존 (rule 4-1-A).
 
     # 종료 로그 — repair 수 / regex miss 진단.
     if not repairs:
