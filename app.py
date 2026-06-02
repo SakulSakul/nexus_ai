@@ -1632,7 +1632,7 @@ def _build_verdict_card_html(d) -> str:
         ".nx-vd-cite{display:inline-block;font-size:11px;color:#5F5E5A;background:var(--c-surface,#F4F1EB);border-radius:6px;padding:3px 9px;margin-top:7px;}"
         ".nx-vd-foot{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:11.5px;color:var(--c-caption,#7A766E);}"
         ".nx-vd-foot .dot{width:7px;height:7px;border-radius:50%;background:" + color + ";flex:0 0 7px;}"
-        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]),[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarCustom"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
         "</style>"
     )
     parts = [css, '<div class="nx-vd">',
@@ -1658,7 +1658,7 @@ def _answer_card_header_html() -> str:
         ".nx-ach .dot{width:7px;height:7px;border-radius:50%;background:var(--c-accent,#C8102E);flex:0 0 7px;}"
         ".nx-ach b{font-size:11.5px;font-weight:700;letter-spacing:.07em;color:var(--c-primary,#1F1E1D);white-space:nowrap;}"
         ".nx-ach .rule{flex:1;height:1px;background:var(--c-border,#E7E3DC);}"
-        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]),[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarCustom"]){border-left:3px solid var(--c-accent,#C8102E) !important;}'
         "</style>"
         '<div class="nx-ach"><span class="dot"></span><b>DF COMPASS 답변</b><span class="rule"></span></div>'
     )
@@ -2629,7 +2629,7 @@ def _run_ask(
 
     if reroll_of is None:
         _push_history(("user", q, {}))
-        with st.chat_message("user", avatar="👤"):
+        with st.chat_message("user"):
             st.markdown(q)
 
     ans = None
@@ -3545,7 +3545,7 @@ def main():
     else:
         _start = 0
     for idx, (role, content, meta) in enumerate(_history[_start:], start=_start):
-        with st.chat_message(role, avatar=("🧭" if role == "assistant" else "👤")):
+        with st.chat_message(role, avatar=("🧭" if role == "assistant" else None)):
             if role == "assistant" and meta.get("thinking"):
                 with st.expander("🧠 AI 검토 과정", expanded=False):
                     st.caption("AI가 답변을 생성한 검토 단계입니다. 답변 신뢰도 판단에 참고하세요.")
