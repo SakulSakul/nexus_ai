@@ -465,6 +465,21 @@ html, body, .stApp {
   background: var(--c-bg) !important;
 }
 
+/* ── Bottom 영역 여백 축소 (입력창 아래 흰 여백 과다) ── */
+[data-testid="stBottomBlockContainer"] {
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.6rem !important;
+}
+
+/* ── 역질문 칩: 글 길이와 무관하게 카드 높이 통일 ── */
+[class*="st-key-sugg_"] button {
+  min-height: 60px !important;
+  white-space: normal !important;
+  line-height: 1.4 !important;
+  padding: 10px 14px !important;
+  text-align: center !important;
+}
+
 /* ── Expander ── */
 [data-testid="stExpander"] {
   border: 1px solid var(--c-border) !important;
