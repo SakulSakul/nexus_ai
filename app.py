@@ -13,7 +13,11 @@ def _nx_iframe(html: str, *, height: int = 0) -> None:
     둘 다 HTML 문자열을 iframe 으로 렌더 -> 내부 JS sandbox 동작 보존.
     """
     _fn = getattr(st, "iframe", None)
-    if _fn is not None:
+    # st.iframe 는 height<=0 을 거부(StreamlitInvalidHeightError).
+    # 보이지 않는 JS/CSS 주입 슬롯(height=0, parent window 접근)은 구
+    # components.html 로 처리 — 해당 버전에 존재하며 0 허용. 동작 보존.
+    # 가시 콘텐츠(height>0)만 st.iframe 로 마이그레이션.
+    if _fn is not None and height > 0:
         _fn(html, height=height)
     else:
         components.html(html, height=height)
