@@ -56,7 +56,7 @@ def auto_classify(query: str, *, use_cache: bool = True) -> tuple:
             max_output_tokens=256,
         )
         res = cli.models.generate_content(
-            model="gemini-3.5-flash",
+            model="gemini-3.1-flash-lite",
             contents=f"질문: {query}\n\nstrict JSON 출력.",
             config=cfg,
         )
@@ -64,7 +64,7 @@ def auto_classify(query: str, *, use_cache: bool = True) -> tuple:
         raw = json.loads(raw_text)
         nodes = [n for n in raw.get("incident_nodes", []) if n in AVAILABLE_INCIDENT_NODES]
         if use_cache and nodes:
-            classification_cache_set(query, nodes, "gemini-3.5-flash")
+            classification_cache_set(query, nodes, "gemini-3.1-flash-lite")
         return nodes, "llm"
     except Exception as e:
         print(
