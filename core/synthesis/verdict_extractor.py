@@ -5,12 +5,18 @@
 - 인용문은 LLM 이 짓지 않는다: LLM 은 evidence_index 만 지목, 코드가 chunk 본문에서 verbatim 복사.
 - 모든 실패/불확실 → None → 호출측 fallback(헤더 없이 본문만). 답변 무손실.
 - nexus_critical_classifier 와 동일 패턴(_gen_claude · JSON only · fail-safe).
+
+인용(quote) 선택 — 사규봇 보수 정책:
+- A) 주 지침(최빈 doc) 문장 우선 → 엉뚱한 다른 지침 인용 차단.
+- B) badge(판정 핵심어) 정합 우선 + 게이트 → badge 와 전혀 안 겹치면 인용 생략.
+     겉도는 인용보다 무인용이 안전(카드는 pill+본문 유지).
 """
 from __future__ import annotations
 
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, asdict
 
 VERDICT_STANCES = ("금지", "신고대상", "조건부", "허용", "확인필요")
@@ -123,45 +129,67 @@ def _score_sentence(sent: str, kw: set) -> float:
     return hits + sig
 
 
-def _pick_quote_global(chunks: list, kw: set, max_len: int = 135) -> tuple:
-    """전체 chunk 의 모든 문장 중 답변 키워드와 가장 겹치는 '실제 규칙 문장' 선택.
-       반환: (문장, chunk_index) 또는 (None, None).
-       선택 동작은 기존과 동일(최고점→동점 시 짧은 문장). 진단 로그만 추가."""
-    scored = []   # (score, length, idx, sent) — 길이 필터 통과
-    longish = []  # (score, length, idx, sent) — max_len 초과(점수>0): 길이로 배제됐는지 확인용
+def _pick_quote_global(chunks: list, kw: set, badge_kw: set, dom_doc: str,
+                       max_len: int = 135) -> tuple:
+    """전체 chunk 의 모든 문장 중 verdict 와 가장 정합하는 '실제 규칙 문장' 선택.
+       반환: (문장, chunk_index) 또는 (None, None) — 사규봇 보수적 정책:
+
+       A) 주 지침(dom_doc) 문장 가산 → 엉뚱한 다른 지침 인용 차단.
+       B) badge(판정 핵심어) 정합 우선 + 게이트 → badge 와 전혀 안 겹치는
+          문장만 남으면 인용 생략(None). 겉도는 인용보다 무인용이 안전.
+       (stance/conf 안전 판정은 호출측에서 이미 확정 — 여기는 인용 선택만)
+
+       record: (score, badge_hits, same_doc, length, idx, sent)
+    """
+    scored, longish = [], []
     for i, c in enumerate(chunks):
         if not isinstance(c, dict):
             continue
+        same = 1 if (dom_doc and _chunk_title(c) == dom_doc) else 0
         for sent in _sentences_of(c):
             L = len(sent)
-            if L < 12:
+            if L < 12 or any(a in sent for a in _ADMIN):
                 continue
-            sc = _score_sentence(sent, kw)
+            kwh = sum(1 for w in kw if w in sent)
+            bh = sum(1 for w in badge_kw if w in sent)
+            sig = 0.5 if any(g in sent for g in _SIG) else 0.0
+            sc = kwh + sig + 2.0 * bh + (3.0 if same else 0.0)
             if sc <= 0:
                 continue
-            (scored if L <= max_len else longish).append((sc, L, i, sent))
-    # ── 진단 (로그 전용, 동작 무영향) ──
+            (scored if L <= max_len else longish).append((sc, bh, same, L, i, sent))
+
+    _gate = bool(badge_kw)
+    # 정렬: (badge 정합 우선) → 점수 → 짧은 문장 → 먼저 나온 것
+    _key = lambda x: (-(1 if (_gate and x[1] > 0) else 0), -x[0], x[3])
     try:
-        _t = sorted(scored, key=lambda x: (-x[0], x[1]))[:5]
+        _t = sorted(scored, key=_key)[:5]
         print("[verdict_extractor:quote_cands] " + " || ".join(
-            f"#{ci} s={s:.1f} L={ln} {st[:36]!r}" for (s, ln, ci, st) in _t
-        ), file=sys.stderr, flush=True)
-        _l = sorted(longish, key=lambda x: (-x[0], x[1]))[:3]
+            f"#{ci} s={s:.1f} b={bh} d={sd} L={ln} {st[:30]!r}"
+            for (s, bh, sd, ln, ci, st) in _t), file=sys.stderr, flush=True)
+        _l = sorted(longish, key=_key)[:3]
         if _l:
             print("[verdict_extractor:quote_long] " + " || ".join(
-                f"#{ci} s={s:.1f} L={ln} {st[:44]!r}" for (s, ln, ci, st) in _l
-            ), file=sys.stderr, flush=True)
+                f"#{ci} s={s:.1f} b={bh} L={ln} {st[:40]!r}"
+                for (s, bh, sd, ln, ci, st) in _l), file=sys.stderr, flush=True)
     except Exception:
         pass
+
     if not scored:
         return None, None
-    # 최고 점수 → 동점이면 더 짧은(집중된) 문장 → 그래도 동점이면 먼저 나온 것
-    best = sorted(scored, key=lambda x: (-x[0], x[1]))[0]
-    return best[3], best[2]
+    best = sorted(scored, key=_key)[0]
+    # B) 보수적 게이트: badge 가 있는데 최선 후보가 badge 핵심어와 0개 겹침 → 인용 생략
+    if _gate and best[1] == 0:
+        try:
+            print("[verdict_extractor:quote_gate] suppressed (no badge-term match)",
+                  file=sys.stderr, flush=True)
+        except Exception:
+            pass
+        return None, None
+    return best[5], best[4]
 
 
 def _pick_quote(chunk: dict, max_len: int = 135) -> str:
-    """단일 chunk fallback (글로벌 선택 실패 시)."""
+    """단일 chunk fallback (보존 — 현재 경로 미사용)."""
     sents = _sentences_of(chunk)
     if not sents:
         return ""
@@ -212,28 +240,28 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
         quote = doc_title = clause = ""
         ev = parsed.get("evidence_index")
         _all = [c for c in chunks if isinstance(c, dict)]
-        # 인용 선택 = 문장 단위 (chunk 단위 X — 문서안내 요약 chunk 가 항상 이김).
-        #   변별 키워드 = label+badge+답변본문, 단 모든 chunk 공통 문서명 토큰 제거.
-        #   (stance/conf 안전 판정은 위에서 이미 확정 — 여기는 인용 문장 선택만)
+        # 인용 선택 = 문장 단위 + 사규봇 보수 정책(A 주지침 우선 / B badge 정합 게이트).
+        #   변별 키워드 = label+badge+답변본문(공통 문서명 토큰 제거).
+        #   badge_kw = 판정 핵심어만 — 정합 우선·게이트 기준.
+        #   (stance/conf 안전 판정은 위에서 이미 확정 — 여기는 인용 선택만)
         _title_toks = _keywords(" ".join(_chunk_title(c) for c in _all), drop=set())
         _kw = _keywords(
             f"{parsed.get('label') or ''} {parsed.get('badge') or ''} {answer[:400]}",
             drop=_title_toks,
         )
-        _qs, _cand = _pick_quote_global(_all, _kw)
+        _badge_kw = _keywords(str(parsed.get("badge") or ""), drop=_title_toks)
+        # 주 지침 = 최빈 doc_title (동률 시 첫 등장)
+        _titles = [t for t in (_chunk_title(c) for c in _all) if t]
+        _dom_doc = Counter(_titles).most_common(1)[0][0] if _titles else ""
+        _qs, _cand = _pick_quote_global(_all, _kw, _badge_kw, _dom_doc)
+        # 보수적: 정합 인용이 없으면(_qs None) 억지 fallback 금지 → 인용 생략(카드는 pill+본문).
         if _qs is not None:
             quote = _qs
-        elif isinstance(ev, int) and 0 <= ev < len(_all):
-            _cand = ev
-            quote = _pick_quote(_all[_cand])
-        elif _all:
-            _cand = 0
-            quote = _pick_quote(_all[0])
         if _cand is not None and 0 <= _cand < len(_all):
             doc_title, clause = _chunk_title(_all[_cand]), _chunk_clause(_all[_cand])
         try:
             print(f"[verdict_extractor:quote_pick] chosen={_cand} kw={len(_kw)} "
-                  f"q={quote[:48]!r}", file=sys.stderr, flush=True)
+                  f"badge_kw={len(_badge_kw)} q={quote[:48]!r}", file=sys.stderr, flush=True)
         except Exception:
             pass
 
