@@ -1709,6 +1709,32 @@ def _answer_card_header_html() -> str:
     )
 
 
+_HERO_PILLS_FALLBACK = [
+    ("선물 받았어요", "거래처에서 선물을 받아도 되나요?"),
+    ("동료 부상", "동료가 다쳤어요. 긴급 보고는 어떻게 하나요?"),
+    ("법인카드", "법인카드를 개인 용도로 사용해도 되나요?"),
+]
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _home_chip_items() -> list:
+    """FAQ 캐시(show_on_home) 기반 홈 칩 [(label, query)]. 실패/빈 결과 시 []."""
+    try:
+        from core.faq_cache import faq_cache_home_chips
+        out = []
+        for _r in faq_cache_home_chips(limit=3):
+            _q = (_r.get("query_display") or "").strip()
+            if not _q:
+                continue
+            _label = (_r.get("home_label") or "").strip() or (
+                _q[:12] + ("\u2026" if len(_q) > 12 else "")
+            )
+            out.append((_label, _q))
+        return out
+    except Exception:
+        return []
+
+
 def _render_empty_state(sb) -> None:
     """첫 진입(빈 홈) — 목업 정렬: 상단 바 + 히어로 + 중앙 입력 + 트러스트 + 그룹 칩.
 
@@ -1797,11 +1823,7 @@ def _render_empty_state(sb) -> None:
         '</style>',
         unsafe_allow_html=True,
     )
-    _hero_pills = [
-        ("선물 받았어요", "거래처에서 선물을 받아도 되나요?"),
-        ("동료 부상", "동료가 다쳤어요. 긴급 보고는 어떻게 하나요?"),
-        ("법인카드", "법인카드를 개인 용도로 사용해도 되나요?"),
-    ]
+    _hero_pills = _home_chip_items() or _HERO_PILLS_FALLBACK
     _pcols = st.columns(len(_hero_pills))
     for _pi, (_plabel, _pq) in enumerate(_hero_pills):
         if _pcols[_pi].button(_plabel, key="hpill_" + str(_pi), use_container_width=True):
