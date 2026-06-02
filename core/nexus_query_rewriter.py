@@ -719,9 +719,20 @@ def nexus_classify_to_incident_nodes(text: str) -> list[str]:
     """
     if not text:
         return []
+    # PR-19.x 사내 동의어 인지 — 트리거 매칭 전, 동일 모듈의 단일 출처
+    # _NEXUS_NL_TO_REGULATORY 로 text 확장. "파견사원"/"판촉사원" 이 "협력사"
+    # 트리거에 도달 → 공정거래위반 노드 발동 → retriever L1_RPC 가 "협력사원" 과
+    # 동일하게 작동(수렴).
+    _match_text = text
+    _extra: list[str] = []
+    for _k, _syns in _NEXUS_NL_TO_REGULATORY.items():
+        if _k in text:
+            _extra.extend(_syns)
+    if _extra:
+        _match_text = text + " " + " ".join(dict.fromkeys(_extra))
     nodes: set[str] = set()
     for trigger, node_list in _NEXUS_NL_TO_INCIDENT_NODES.items():
-        if trigger in text:
+        if trigger in _match_text:
             for level1, level2 in node_list:
                 if level1:
                     nodes.add(level1)

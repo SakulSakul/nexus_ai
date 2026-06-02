@@ -158,10 +158,24 @@ def infer_categories(question: str, max_cats: int = 3) -> list[str] | None:
     """
     if not question or not question.strip():
         return None
+    # PR-19.x 사내 동의어 인지 — 매칭 전 단일 출처(_NEXUS_NL_TO_REGULATORY)로
+    # question 을 확장한 사본(_match_text)으로 카테고리 매칭. 원문 보존(표시/로그
+    # 영향 0). 협력사원=파견사원=판촉사원 등 synonym 클래스를 한 길목에서 정렬.
+    _match_text = question
+    try:
+        from .nexus_query_rewriter import _NEXUS_NL_TO_REGULATORY
+        _extra: list[str] = []
+        for _k, _syns in _NEXUS_NL_TO_REGULATORY.items():
+            if _k in question:
+                _extra.extend(_syns)
+        if _extra:
+            _match_text = question + " " + " ".join(dict.fromkeys(_extra))
+    except Exception:
+        _match_text = question  # 회귀 안전 — 실패 시 원문
     hits: dict[str, int] = {}
     for cat, kws in CATEGORY_KEYWORDS.items():
         for kw in kws:
-            if kw in question:
+            if kw in _match_text:
                 hits[cat] = hits.get(cat, 0) + 1
     if not hits:
         return None
