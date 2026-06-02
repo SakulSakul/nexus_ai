@@ -125,20 +125,39 @@ def _score_sentence(sent: str, kw: set) -> float:
 
 def _pick_quote_global(chunks: list, kw: set, max_len: int = 135) -> tuple:
     """전체 chunk 의 모든 문장 중 답변 키워드와 가장 겹치는 '실제 규칙 문장' 선택.
-       반환: (문장, chunk_index) 또는 (None, None)."""
-    best_s, best_i, best_score = None, None, 0.0
+       반환: (문장, chunk_index) 또는 (None, None).
+       선택 동작은 기존과 동일(최고점→동점 시 짧은 문장). 진단 로그만 추가."""
+    scored = []   # (score, length, idx, sent) — 길이 필터 통과
+    longish = []  # (score, length, idx, sent) — max_len 초과(점수>0): 길이로 배제됐는지 확인용
     for i, c in enumerate(chunks):
         if not isinstance(c, dict):
             continue
         for sent in _sentences_of(c):
-            if not (12 <= len(sent) <= max_len):
+            L = len(sent)
+            if L < 12:
                 continue
             sc = _score_sentence(sent, kw)
-            # 더 높은 점수 우선 / 동점이면 더 짧은(집중된) 문장
-            if sc > best_score or (sc == best_score and best_s is not None and len(sent) < len(best_s)):
-                if sc > 0:
-                    best_s, best_i, best_score = sent, i, sc
-    return best_s, best_i
+            if sc <= 0:
+                continue
+            (scored if L <= max_len else longish).append((sc, L, i, sent))
+    # ── 진단 (로그 전용, 동작 무영향) ──
+    try:
+        _t = sorted(scored, key=lambda x: (-x[0], x[1]))[:5]
+        print("[verdict_extractor:quote_cands] " + " || ".join(
+            f"#{ci} s={s:.1f} L={ln} {st[:36]!r}" for (s, ln, ci, st) in _t
+        ), file=sys.stderr, flush=True)
+        _l = sorted(longish, key=lambda x: (-x[0], x[1]))[:3]
+        if _l:
+            print("[verdict_extractor:quote_long] " + " || ".join(
+                f"#{ci} s={s:.1f} L={ln} {st[:44]!r}" for (s, ln, ci, st) in _l
+            ), file=sys.stderr, flush=True)
+    except Exception:
+        pass
+    if not scored:
+        return None, None
+    # 최고 점수 → 동점이면 더 짧은(집중된) 문장 → 그래도 동점이면 먼저 나온 것
+    best = sorted(scored, key=lambda x: (-x[0], x[1]))[0]
+    return best[3], best[2]
 
 
 def _pick_quote(chunk: dict, max_len: int = 135) -> str:
