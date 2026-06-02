@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections import Counter
 from dataclasses import dataclass, asdict
 
 VERDICT_STANCES = ("금지", "신고대상", "조건부", "허용", "확인필요")
@@ -160,7 +159,8 @@ def _pick_quote_global(chunks: list, kw: set, badge_kw: set, dom_doc: str,
 
     _gate = bool(badge_kw)
     # 정렬: (badge 정합 우선) → 점수 → 짧은 문장 → 먼저 나온 것
-    _key = lambda x: (-(1 if (_gate and x[1] > 0) else 0), -x[0], x[3])
+    # 정렬: (1) 주지침 우선(하드) → (2) badge 정합 → (3) 점수 → (4) 짧은 문장
+    _key = lambda x: (-x[2], -(1 if (_gate and x[1] > 0) else 0), -x[0], x[3])
     try:
         _t = sorted(scored, key=_key)[:5]
         print("[verdict_extractor:quote_cands] " + " || ".join(
@@ -250,9 +250,8 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
             drop=_title_toks,
         )
         _badge_kw = _keywords(str(parsed.get("badge") or ""), drop=_title_toks)
-        # 주 지침 = 최빈 doc_title (동률 시 첫 등장)
-        _titles = [t for t in (_chunk_title(c) for c in _all) if t]
-        _dom_doc = Counter(_titles).most_common(1)[0][0] if _titles else ""
+        # 주 지침 = 최상위(rerank 1위) chunk 의 doc — 최빈은 SOP/곁가지 doc 으로 오검출됨.
+        _dom_doc = _chunk_title(_all[0]) if _all else ""
         _qs, _cand = _pick_quote_global(_all, _kw, _badge_kw, _dom_doc)
         # 보수적: 정합 인용이 없으면(_qs None) 억지 fallback 금지 → 인용 생략(카드는 pill+본문).
         if _qs is not None:
