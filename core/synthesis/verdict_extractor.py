@@ -146,27 +146,32 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
 
         quote = doc_title = clause = ""
         ev = parsed.get("evidence_index")
-        # LLM evidence_index 는 ev=0 고정 편향이 잦음(같은 doc 의 첫 청크만 지목).
-        # → badge/label 키워드와 본문 겹침이 가장 큰 chunk 를 결정적으로 우선 채택.
-        #   (안전 판정 stance/conf 는 위에서 이미 확정 — 여기는 인용 문장 선택만)
+        # 인용 chunk 선택: LLM ev 는 0 고정 편향 + 근거 chunk 가 top6 밖일 수 있음.
+        # → 전체 chunks 대상으로 label+badge+답변본문 토큰 겹침이 최대인 chunk 선택.
+        #   (stance/conf 안전 판정은 위에서 이미 확정 — 여기는 인용 문장 선택만)
         import re as _re2
-        _cand = ev if (isinstance(ev, int) and 0 <= ev < len(top)) else None
+        _all = [c for c in chunks if isinstance(c, dict)]
         _kw = [w for w in _re2.findall(
             r"[가-힣A-Za-z0-9]+",
-            f"{parsed.get('label') or ''} {parsed.get('badge') or ''}",
+            f"{parsed.get('label') or ''} {parsed.get('badge') or ''} {answer[:400]}",
         ) if len(w) >= 2]
-        if _kw:
-            _bi, _bs = None, 0
-            for _i, _c in enumerate(top):
-                _ct = _chunk_text(_c)
-                _sc = sum(1 for _w in _kw if _w in _ct)
-                if _sc > _bs:
-                    _bi, _bs = _i, _sc
-            if _bi is not None and _bs >= 1:
-                _cand = _bi
-        if _cand is not None:
-            ch = top[_cand]
+        _kw = list(dict.fromkeys(_kw))
+        _cand, _bs = None, 0
+        for _i, _c in enumerate(_all):
+            _sc = sum(1 for _w in _kw if _w in _chunk_text(_c))
+            if _sc > _bs:
+                _cand, _bs = _i, _sc
+        if _cand is None and isinstance(ev, int) and 0 <= ev < len(_all):
+            _cand = ev
+        if _cand is not None and 0 <= _cand < len(_all):
+            ch = _all[_cand]
             quote, doc_title, clause = _pick_quote(ch), _chunk_title(ch), _chunk_clause(ch)
+        try:
+            print(f"[verdict_extractor:quote_pick] chosen={_cand} score={_bs} "
+                  f"n={len(_all)} head={(_chunk_text(_all[_cand])[:42] if (_cand is not None and 0 <= _cand < len(_all)) else None)!r}",
+                  file=sys.stderr, flush=True)
+        except Exception:
+            pass
 
         v = Verdict(
             stance=stance,

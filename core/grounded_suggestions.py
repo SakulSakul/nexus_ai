@@ -62,13 +62,17 @@ def grounded_suggestions(
         return []
     q_norm = _norm(question)
     out: list[str] = []
+    import difflib as _difflib
     for ex in examples:
         if not isinstance(ex, str) or not ex.strip():
             continue
         ex_norm = _norm(ex)
         if not ex_norm:
             continue
-        if ex_norm == q_norm or (q_norm and q_norm in ex_norm):
+        # 완전일치·부분문자열 + 근사중복(편집 유사도) 제외 — 이미 물어본 질문 재등장 방지
+        if ex_norm == q_norm or (q_norm and q_norm in ex_norm) or (ex_norm in q_norm):
+            continue
+        if q_norm and _difflib.SequenceMatcher(None, q_norm, ex_norm).ratio() >= 0.70:
             continue
         out.append(ex.strip())
         if len(out) >= _MAX_SUGGESTIONS:
