@@ -627,6 +627,10 @@ _TRANSIENT_HINTS = (
 # 정상 응답 흐름엔 무영향(transient 미발생 시 backoff 진입 자체 안 함).
 _GEMINI_BACKOFF_BASE = float(os.getenv("GEMINI_BACKOFF_BASE", "15"))
 _GEMINI_BACKOFF_ATTEMPTS = int(os.getenv("GEMINI_BACKOFF_ATTEMPTS", "5"))
+# PR-fix-synth-timeout: 합성 호출(스트리밍/비스트리밍)이 Streamlit run 을
+# 무한정/수 분 블록 → dangling 유발하던 근본원인 차단. 하드 한도 가드.
+_SYNTH_OVERALL_TIMEOUT = float(os.getenv("NEXUS_SYNTH_OVERALL_TIMEOUT", "150"))
+_SYNTH_STREAM_CHUNK_TIMEOUT = float(os.getenv("NEXUS_SYNTH_STREAM_CHUNK_TIMEOUT", "45"))
 
 
 def _is_transient(e: Exception) -> bool:
@@ -692,23 +696,36 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
     last_err: Exception | None = None
     _eval_model = _resolve_eval_model("gemini")
     _model_to_use = _eval_model or s.chat_model
+    # PR-fix-synth-timeout: 전체 wall-clock deadline 으로 60초×최대5회 백오프
+    # 누적(최악 수 분) 블록 차단. 회당 timeout 을 잔여 예산으로 cap + deadline
+    # 초과 시 더 이상 재시도/sleep 안 함 → 친화 메시지로 빠른 전환.
+    _ask_deadline = time.monotonic() + _SYNTH_OVERALL_TIMEOUT
     for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
         _ex = ThreadPoolExecutor(max_workers=1)
         try:
+            _rem = _ask_deadline - time.monotonic()
+            if _rem <= 0:
+                last_err = RuntimeError(
+                    f"Gemini 합성이 전체 {_SYNTH_OVERALL_TIMEOUT:.0f}초 한도 초과 — 응답 지연 중단(deadline guard)"
+                )
+                break
             _fut = _ex.submit(cli.models.generate_content,
                               model=_model_to_use, contents=user, config=cfg)
-            res = _fut.result(timeout=60.0)
+            res = _fut.result(timeout=max(1.0, min(60.0, _rem)))
             break
         except _Timeout as e:
             last_err = RuntimeError("Gemini 호출이 60초 내 응답하지 않았습니다.")
-            if attempt < _GEMINI_BACKOFF_ATTEMPTS - 1:
-                time.sleep(_GEMINI_BACKOFF_BASE * (2 ** attempt))
+            if attempt < _GEMINI_BACKOFF_ATTEMPTS - 1 and time.monotonic() < _ask_deadline:
+                time.sleep(min(_GEMINI_BACKOFF_BASE * (2 ** attempt),
+                               max(0.0, _ask_deadline - time.monotonic())))
                 continue
             raise last_err from e
         except Exception as e:
             last_err = e
-            if _is_transient(e) and attempt < _GEMINI_BACKOFF_ATTEMPTS - 1:
-                wait = _GEMINI_BACKOFF_BASE * (2 ** attempt)
+            if (_is_transient(e) and attempt < _GEMINI_BACKOFF_ATTEMPTS - 1
+                    and time.monotonic() < _ask_deadline):
+                wait = min(_GEMINI_BACKOFF_BASE * (2 ** attempt),
+                           max(0.0, _ask_deadline - time.monotonic()))
                 print(
                     f"[Gemini backoff] attempt {attempt+1}/"
                     f"{_GEMINI_BACKOFF_ATTEMPTS} sleep {wait:.0f}s",
@@ -1550,6 +1567,51 @@ def ask(
     )
 
 
+def _stall_guarded_stream(cli, model, user, cfg):
+    """generate_content_stream 을 백그라운드 스레드+큐로 감싸 stall 시 abort.
+    다음 chunk 를 _SYNTH_STREAM_CHUNK_TIMEOUT 초 이상 안 주거나 전체
+    _SYNTH_OVERALL_TIMEOUT 초 초과 시 RuntimeError → 호출부가 친화 메시지로
+    전환(분 단위 무한 hang 차단). 비스트리밍 ask() 의 deadline 가드와 정합.
+    PR-fix-synth-timeout."""
+    import queue as _q, threading as _th, time as _t
+    _out = _q.Queue()
+    _SENT = object()
+    _errbox = {}
+    def _pump():
+        try:
+            for _c in cli.models.generate_content_stream(
+                model=model, contents=user, config=cfg,
+            ):
+                _out.put(_c)
+        except Exception as _e:  # noqa: BLE001
+            _errbox["e"] = _e
+        finally:
+            _out.put(_SENT)
+    _th.Thread(target=_pump, daemon=True).start()
+    _deadline = _t.monotonic() + _SYNTH_OVERALL_TIMEOUT
+    while True:
+        _remain = _deadline - _t.monotonic()
+        if _remain <= 0:
+            raise RuntimeError(
+                f"Gemini 스트림 전체 {_SYNTH_OVERALL_TIMEOUT:.0f}초 초과 — 응답 지연 중단(stall guard)"
+            )
+        try:
+            _item = _out.get(timeout=min(_SYNTH_STREAM_CHUNK_TIMEOUT, _remain))
+        except _q.Empty:
+            if _remain <= _SYNTH_STREAM_CHUNK_TIMEOUT:
+                raise RuntimeError(
+                    f"Gemini 스트림 전체 {_SYNTH_OVERALL_TIMEOUT:.0f}초 초과 — 응답 지연 중단(stall guard)"
+                )
+            raise RuntimeError(
+                f"Gemini 스트림이 {_SYNTH_STREAM_CHUNK_TIMEOUT:.0f}초간 무응답 — 응답 지연 중단(stall guard)"
+            )
+        if _item is _SENT:
+            if _errbox.get("e") is not None:
+                raise _errbox["e"]
+            return
+        yield _item
+
+
 def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
     """Gemini streaming generator. 청크 단위 yield. transient backoff 동일.
 
@@ -1597,8 +1659,8 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
     last_um = None
     for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
         try:
-            for chunk in cli.models.generate_content_stream(
-                model=s.chat_model, contents=user, config=cfg,
+            for chunk in _stall_guarded_stream(
+                cli, s.chat_model, user, cfg,
             ):
                 # usage_metadata 는 stream 종료 chunk 에 최종 값. 매 chunk 추적
                 # 으로 중간 값도 cover (SDK 변경 시 안전).
