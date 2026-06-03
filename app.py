@@ -2600,6 +2600,11 @@ def _render_critical_banner() -> None:
     )
 
 
+def _request_stop():
+    """⏹ 생성 중지 버튼 on_click — 진행 중 질문 취소 플래그. main() 상단이 처리."""
+    st.session_state["_stop_requested"] = True
+
+
 def _run_ask(
     sb, q: str, cat: str, hotlines: dict,
     *,
@@ -2789,6 +2794,12 @@ def _run_ask(
         )
         progress_placeholder = st.empty()
         progress_bar = st.progress(0, text="진행 중...")
+        # PR-stop: 생성 중지 — 잘못 입력 시 1분 안 기다리고 즉시 취소. 처리 중 유일하게
+        # 허용되는 위젯. 클릭 → on_click 플래그 → rerun → main() 상단이 진행 질문 취소.
+        _stop_ph = st.empty()
+        with _stop_ph.container():
+            st.button("⏹ 생성 중지", key="_stop_gen_btn",
+                      on_click=_request_stop, use_container_width=True)
 
         def _spinner_html(line: str, sub: str = "") -> str:
             _sub = f'<div class="nx-think-sub">{sub}</div>' if sub else ""
@@ -3112,6 +3123,10 @@ def _run_ask(
             unsafe_allow_html=True,
         )
         progress_bar.empty()
+        try:
+            _stop_ph.empty()
+        except Exception:
+            pass
 
         print(
             f"[_run_ask] post-stream ans_present={ans is not None} "
@@ -3615,6 +3630,20 @@ def main():
     st.markdown(_CSS, unsafe_allow_html=True)
     # 4px top frame line
     st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
+    # PR-stop: 생성 중지 처리 — 진행 질문 취소(턴 제거+상태 리셋)+입력 재활성.
+    # 외부종료 오탐 방지를 위해 breadcrumb 보다 _먼저_ 실행.
+    if st.session_state.pop("_stop_requested", False):
+        import sys as _syss
+        st.session_state["clicked_q"] = None
+        st.session_state.pop("_pending_reroll", None)
+        st.session_state["_inflight_q"] = None
+        st.session_state["_inflight_n"] = 0
+        st.session_state["_last_abort"] = None
+        st.session_state["_run_phase"] = "done"
+        _h = st.session_state.get("history", [])
+        if _h and _h[-1][0] == "user":
+            st.session_state["history"] = _h[:-1]
+        print("[STOP] 사용자 생성 중지 — 진행 질문 취소", file=_syss.stderr, flush=True)
     # PR-diag: run breadcrumb + 외부종료 감지. sid 변화=재연결. 직전 run 이 mid-phase
     # 인데 예외 마커 없음 = Python 예외 없이 프로세스 사망(인프라/리소스/웹소켓).
     import sys as _sysd
