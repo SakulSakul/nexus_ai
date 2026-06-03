@@ -2704,14 +2704,7 @@ def _run_ask(
     last_err: Exception | None = None
     tb_str = ""
     friendly_msg = ""
-    # PR-Fun3a 페이즈 2: streaming 시 자동 scroll 추적 JS 주입 (session 1회).
-    # MutationObserver 가 body subtree 변경 감지 → near-bottom 이면 끝까지
-    # smooth scroll. 사용자가 위로 scroll 한 상태면 추적 정지.
-    _inject_streaming_scroll_js_once()
-    # PR-Fun3b 페이즈 3: typography·smoothing visual polish CSS 주입 (1회).
-    # write_stream 위에서 한국어 가독성·font-smoothing·smooth scroll 보강.
-    # 진정한 token-append render 는 phase 4 (custom React component) 영역.
-    _inject_streaming_visual_polish_once()
+    # PR-fix-no-iframes: 스트리밍 보조 주입 iframe 2개 제거 (마운트 rerun 원인).
 
     with st.chat_message("assistant", avatar="🧭"):
         # 답변 본문 placeholder — streaming 점진 표시 + 후처리 단일 update.
@@ -2741,29 +2734,18 @@ def _run_ask(
         # self-contained 동작 — st.markdown(unsafe_allow_html) sandbox 우회.
         # 답변 완료 시 timer_placeholder.markdown(...) 으로 정적 메시지 교체
         # → iframe 자체가 사라지면서 setInterval 도 자동 cleanup.
-        with timer_placeholder.container():
-            _nx_iframe(
-                f"""
-<div id="dfc-elapsed-wrap" style="background:#FAF6F1;padding:10px 14px;
-     border-radius:10px;font-family:-apple-system,'Segoe UI',sans-serif;
-     font-size:13px;color:#666;display:flex;justify-content:space-between;
-     align-items:center;border:1px solid #EDE6DC;box-sizing:border-box;">
-  <span>⏱️ <span id="dfc-elapsed" style="font-weight:600;color:#C8102E;">0</span>초 경과</span>
-</div>
-<script>
-  (function() {{
-    var start = Date.now();
-    var elem = document.getElementById('dfc-elapsed');
-    if (!elem) return;
-    setInterval(function() {{
-      elem.innerText = Math.round((Date.now() - start) / 1000);
-    }}, 250);
-  }})();
-</script>
-""",
-                height=60,
-            )
-
+        # PR-fix-no-iframes: 라이브 JS 타이머 iframe 제거 — _run_ask 안 iframe
+        # 첫 마운트가 rerun 을 유발하는 잔여 위험까지 제거(콜드 첫 질문 중단).
+        # 정적 표시로 대체: 스피너가 진행감, 완료 시 _render_answer_meta 가 실제
+        # 소요시간 표기. _run_ask 는 이제 iframe 0개.
+        timer_placeholder.markdown(
+            "<div style='background:#FAF6F1;padding:10px 14px;border-radius:10px;"
+            "font-family:-apple-system,Segoe UI,sans-serif;font-size:13px;color:#666;"
+            "border:1px solid #EDE6DC;'>"
+            "⏱️ <span style='font-weight:600;color:#C8102E;'>답변 생성 중…</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
         # PR-Fun1.6: st.empty placeholder + emoji progress 한 줄 패턴.
         # PR-Fun1.8: CSS keyframes (nx-spin / nx-pulse) class + st.progress
         # bar 단계별 갱신. emoji 자체 애니메이션 + 시각적 진행률.
@@ -3587,21 +3569,6 @@ def main():
     cat = _sidebar(sb, hotlines)
 
     _render_beta_banner()
-
-    # PR-fix-cold-iframe-warm: components.html / st.iframe 프론트엔드 번들을
-    # 홈/스타트업에서 미리 로드(warm). 콜드 서버에서 첫 질문 시 _run_ask 의
-    # 보조 iframe(스트리밍 JS 주입 + 라이브 타이머)이 번들 콜드로딩 시점에
-    # 마운트 rerun 을 일으켜 답변 스트리밍을 끊고 _run_ask 를 재진입시키던
-    # 결함의 근본 원인 제거 — 세션당 1회, 0/1px 무해 슬롯으로 번들만 선로딩.
-    if not st.session_state.get("_iframe_warmed"):
-        try:
-            components.html("<span></span>", height=0)
-            _warm_iframe = getattr(st, "iframe", None)
-            if _warm_iframe is not None:
-                _warm_iframe("<span></span>", height=1)
-        except Exception:
-            pass
-        st.session_state["_iframe_warmed"] = True
 
     # PR-Fun1.2 hotfix: PR-Fun1.1 의 pending_q early exit 폐기. early exit
     # 의 return 이 main() 의 chat_input 영역까지 도달 못 하게 해서 답변 후
