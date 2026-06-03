@@ -2621,6 +2621,11 @@ def _run_ask(
     # 세팅 → interrupt 로 history 가 빈 채로 재렌더돼도 빈 홈 재등장·칩
     # 재클릭 루프 차단. 새 세션(history init)에서만 False 로 리셋.
     st.session_state["_chat_active"] = True
+    # PR-diag/auto-resume: 실행 시작 — abort 마커 리셋 + inflight 등록.
+    st.session_state["_last_abort"] = None
+    st.session_state["_run_phase"] = "start"
+    st.session_state["_inflight_q"] = q or None
+    st.session_state["_inflight_n"] = st.session_state.get("_inflight_n", 0) + 1
     import sys
     import traceback
     # ── 진단 로그 (PR fix/run-ask-answer-display) ──
@@ -3079,6 +3084,7 @@ def _run_ask(
                     prev_turn=prev_turn,
                     hard_category=hard_category,
                 )
+                st.session_state["_run_phase"] = "synthesis_stream"
                 stream_buffer = answer_placeholder.write_stream(
                     _chunks_to_str_stream(_stream_iter, _stream_holder)
                 ) or ""
@@ -3087,6 +3093,9 @@ def _run_ask(
             except Exception as e:
                 last_err = e
                 tb_str = traceback.format_exc()
+                st.session_state["_last_abort"] = {"type": "llm_error",
+                    "phase": "synthesis_stream",
+                    "detail": f"{type(e).__name__}: {e}"[:300], "attempt": attempt}
                 print(f"\n=== ASK ERROR (attempt {attempt}) ===\n{tb_str}", file=sys.stderr, flush=True)
                 if "client has been closed" in str(e).lower() and attempt < 2:
                     continue
@@ -3149,6 +3158,7 @@ def _run_ask(
             with st.expander("🔧 기술 세부정보 (관리자용)", expanded=False):
                 st.code(tb_str or str(last_err) or "(no traceback)", language="python")
         else:
+            st.session_state["_run_phase"] = "post_stream_render"
             s = settings()
             # PR-Ambiguity-Askback: 모호성 역질문 — 본문 + 선택지 버튼만 렌더,
             # 일반 chrome(카테고리/신뢰도 chip·contexts·suggestions·액션·피드백)
@@ -3171,6 +3181,9 @@ def _run_ask(
                      "masked_question": getattr(ans, "masked_question", None),
                      "clarify_choices": list(ans.clarify_choices)},
                 ))
+                st.session_state["_inflight_q"] = None
+                st.session_state["_inflight_n"] = 0
+                st.session_state["_run_phase"] = "done"
                 return
             if ans.thinking:
                 with st.expander("🧠 AI 검토 과정", expanded=False):
@@ -3267,6 +3280,9 @@ def _run_ask(
             {"contexts": [], "critical": False, "kind": None, "thinking": "",
              "elapsed": 0.0, "original_q": _saved_orig_q},
         ))
+        st.session_state["_inflight_q"] = None
+        st.session_state["_inflight_n"] = 0
+        st.session_state["_run_phase"] = "done"
         return
 
     # PR-2.5: reroll 시 query_logs.query_masked 에 _REROLL_PREFIX 가 mask_pii
@@ -3292,6 +3308,9 @@ def _run_ask(
             print(f"[PR-2.5 reroll fixup failed] id={ans.query_log_id} err={e}",
                   file=sys.stderr, flush=True)
 
+    st.session_state["_run_phase"] = "committing"
+    st.session_state["_inflight_q"] = None
+    st.session_state["_inflight_n"] = 0
     _push_history((
         "assistant", ans.text,
         {
@@ -3315,6 +3334,7 @@ def _run_ask(
     # 호출하지 않음(이전 답변이 에러인 메시지에 "관련 질문" 노출은 무의미).
     msg_idx = len(st.session_state["history"]) - 1
     _render_mode_buttons(msg_idx)
+    st.session_state["_run_phase"] = "done"
 
 
 _CONSENT_BODY_MD = """
@@ -3427,6 +3447,12 @@ def _consent_gate(sb) -> bool:
         return True
 
     cur_ver = s.consent_version
+    # PR-rootfix: CookieManager 양방향 컴포넌트는 매 run 비동기 post-back → rerun.
+    # _run_ask 중 그 rerun 이 터지면 답변 커밋 전 인터럽트(dangling). 동의 완료 세션 +
+    # 쿠키 set 대기 없음이면 컴포넌트를 안 그려 채팅 중 rerun 소스 제거.
+    _session_ok = st.session_state.get("beta_consent_v") == cur_ver
+    if _session_ok and not st.session_state.get("_pending_consent_cookie"):
+        return True
     cm = _consent_cookie_manager()
 
     # PR-Fun1.1 hotfix3: pending cookie set 처리 — 직전 submit 의 deferred
@@ -3444,8 +3470,8 @@ def _consent_gate(sb) -> bool:
         except Exception:
             pass
 
-    # 분기 1: 같은 session 통과
-    if st.session_state.get("beta_consent_v") == cur_ver:
+    # 분기 1: 같은 session 통과 (pending cookie set 처리 후 재확인)
+    if _session_ok:
         return True
 
     # 분기 2: cookie 30일 영속 통과
@@ -3538,10 +3564,78 @@ def _consent_gate(sb) -> bool:
     return False
 
 
+def _run_ask_guarded(*args, **kwargs):
+    """_run_ask 의 모든-단계 예외/인터럽트 포착·가시화 (조용한 dangling 박멸).
+    - RerunException/StopException = Streamlit 흐름제어 → 마커+rerun_data 기록 후 재-raise.
+    - 그 외 예외(retrieval·합성·렌더·커밋 어느 단계든) → 마커+화면+에러턴 노출."""
+    import sys as _sysg, traceback as _tbg
+    try:
+        _run_ask(*args, **kwargs)
+    except BaseException as _e:
+        _cls = type(_e).__name__
+        _ph = st.session_state.get("_run_phase", "?")
+        if _cls in ("RerunException", "StopException"):
+            _rd = getattr(_e, "rerun_data", None); _rdi = ""
+            try:
+                if _rd is not None:
+                    _rdi = (f"qs={getattr(_rd,'query_string',None)!r} "
+                            f"page={getattr(_rd,'page_script_hash',None)!r} "
+                            f"widgets={'Y' if getattr(_rd,'widget_states',None) else 'N'} "
+                            f"frag={getattr(_rd,'fragment_id_queue',None)!r}")
+            except Exception:
+                _rdi = "(rerun_data introspect fail)"
+            st.session_state["_last_abort"] = {"type": "streamlit_interrupt",
+                "phase": _ph, "cls": _cls, "rerun_data": _rdi}
+            print(f"[RUN_ABORT] Streamlit interrupt ({_cls}) phase={_ph} {_rdi} "
+                  f"— 답변 커밋 전 중단(=dangling 원인)", file=_sysg.stderr, flush=True)
+            raise
+        _det = f"{_cls}: {_e}"
+        st.session_state["_last_abort"] = {"type": "runtime_error", "phase": _ph,
+            "detail": _det[:300]}
+        print(f"[RUN_ERROR] phase={_ph} {_det}\n{_tbg.format_exc()}",
+              file=_sysg.stderr, flush=True)
+        try:
+            st.error(f"\u274c 답변 처리 중 오류 (단계 {_ph}): {_det}")
+        except Exception:
+            pass
+        try:
+            _h = st.session_state.get("history", [])
+            if _h and _h[-1][0] == "user":
+                _h.append(("assistant",
+                    f"\u26a0\ufe0f 답변 처리 중 오류가 발생했습니다 (단계 {_ph}): {_det}",
+                    {"contexts": [], "critical": False, "elapsed": 0.0,
+                     "original_q": _h[-1][1]}))
+        except Exception:
+            pass
+        st.session_state["_inflight_q"] = None
+        st.session_state["_inflight_n"] = 0
+
+
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
     # 4px top frame line
     st.markdown('<div class="nx-topbar"></div>', unsafe_allow_html=True)
+    # PR-diag: run breadcrumb + 외부종료 감지. sid 변화=재연결. 직전 run 이 mid-phase
+    # 인데 예외 마커 없음 = Python 예외 없이 프로세스 사망(인프라/리소스/웹소켓).
+    import sys as _sysd
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx as _gctx
+        _ctxd = _gctx()
+        _sidd = (_ctxd.session_id[:8] if _ctxd and getattr(_ctxd, "session_id", None) else "?")
+    except Exception:
+        _sidd = "?"
+    _pp = st.session_state.get("_run_phase")
+    if (_pp in ("start", "synthesis_stream", "post_stream_render", "committing")
+            and not st.session_state.get("_last_abort")):
+        st.session_state["_last_abort"] = {"type": "external_kill", "phase": _pp}
+        print(f"[RUN_KILLED] 직전 run phase={_pp} 예외없이 종료 → 외부종료 추정"
+              f"(인프라/리소스/웹소켓/서버재시작)", file=_sysd.stderr, flush=True)
+    st.session_state["_diag_run_n"] = st.session_state.get("_diag_run_n", 0) + 1
+    print(f"[RUN_DIAG] run#{st.session_state['_diag_run_n']} sid={_sidd} "
+          f"clicked_q={bool(st.session_state.get('clicked_q'))} "
+          f"inflight={st.session_state.get('_inflight_q') is not None}:{st.session_state.get('_inflight_n',0)} "
+          f"last_phase={_pp} last_abort={st.session_state.get('_last_abort')}",
+          file=_sysd.stderr, flush=True)
 
     # Boot-time secrets validation — 누락·이상값을 부팅 직후 가시화.
     # INFO: 로 시작하는 항목은 차단하지 않고 caption 으로만 노출 (예: Claude 키 미설정).
@@ -3727,14 +3821,54 @@ def main():
         and not st.session_state.get("_pending_reroll")
         and not q_input
     ):
-        st.warning("\u26a0\ufe0f 답변 생성이 중단된 것 같습니다. 아래 버튼으로 다시 시도해 주세요.")
+        _inflight = st.session_state.get("_inflight_q")
+        _n = st.session_state.get("_inflight_n", 0)
+        _CAP = 6
+        if _inflight and _n < _CAP:
+            import sys as _sysar
+            print(f"[AUTO_RESUME] n={_n}/{_CAP} q={str(_inflight)[:40]!r} — 커밋전 중단 자동복구",
+                  file=_sysar.stderr, flush=True)
+            st.session_state["history"] = _hist_now[:-1]
+            st.session_state["clicked_q"] = _inflight
+            st.rerun()
+        st.session_state["_inflight_q"] = None
+        st.session_state["_inflight_n"] = 0
+        _ab = st.session_state.get("_last_abort") or {}
+        _ph = st.session_state.get("_run_phase", "?")
+        _t = _ab.get("type")
+        if _t == "streamlit_interrupt":
+            st.warning(
+                f"\u26a0\ufe0f 직전 답변이 **Streamlit rerun 으로 중단** "
+                f"({_ab.get('cls')} · 단계 {_ab.get('phase')} · {_n}회 자동재시도 후).\n\n"
+                f"rerun 트리거: `{_ab.get('rerun_data','?')}`\n\n다시 시도해 주세요."
+            )
+        elif _t == "llm_error":
+            st.warning(
+                f"\u26a0\ufe0f 직전 답변이 **LLM 오류로 중단** (단계 {_ab.get('phase')}):\n\n"
+                f"`{_ab.get('detail')}`\n\n다시 시도해 주세요."
+            )
+        elif _t == "runtime_error":
+            st.warning(
+                f"\u26a0\ufe0f 직전 답변이 **처리 중 오류로 중단** (단계 {_ab.get('phase')}):\n\n"
+                f"`{_ab.get('detail')}`\n\n다시 시도해 주세요."
+            )
+        elif _t == "external_kill":
+            st.warning(
+                f"\u26a0\ufe0f 직전 답변이 단계 **{_ab.get('phase')}** 에서 "
+                f"**예외 없이 종료** = Streamlit/인프라가 프로세스를 종료(리소스·웹소켓·서버재시작). "
+                f"앱/LLM 코드 오류가 아닙니다.\n\n다시 시도해 주세요."
+            )
+        else:
+            st.warning(
+                f"\u26a0\ufe0f 직전 답변이 커밋 전 종료 (마지막 단계: {_ph}, 원인 미기록). 다시 시도해 주세요."
+            )
         if st.button(
             "\U0001f504 이 질문 다시 실행",
             use_container_width=True,
             key=f"_retry_dangling_{len(_hist_now)}",
         ):
             _dangling_q = _hist_now[-1][1]
-            st.session_state["history"] = _hist_now[:-1]  # 댕글링 user 턴 제거(중복 방지)
+            st.session_state["history"] = _hist_now[:-1]
             st.session_state["clicked_q"] = _dangling_q
             st.rerun()
 
@@ -3766,7 +3900,7 @@ def main():
     _clicked_hard = st.session_state.pop("clicked_hard_cat", None)
     if _clicked:
         _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
-        _run_ask(sb, _clicked, _clicked_cat or cat, hotlines,
+        _run_ask_guarded(sb, _clicked, _clicked_cat or cat, hotlines,
                  hard_category=_clicked_hard)
         st.rerun()
 
@@ -3775,7 +3909,7 @@ def main():
     # pop 으로 즉시 제거 — 동일 reroll 이 두 번 실행되는 일을 차단.
     pending = st.session_state.pop("_pending_reroll", None)
     if pending is not None:
-        _run_ask(sb, q="", cat=cat, hotlines=hotlines, reroll_of=pending)
+        _run_ask_guarded(sb, q="", cat=cat, hotlines=hotlines, reroll_of=pending)
         return
 
     # chat_input 직접 입력만 처리 (clicked_q 는 위에서 처리).
@@ -3783,7 +3917,7 @@ def main():
         return
 
     _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
-    _run_ask(sb, q_input, cat, hotlines)
+    _run_ask_guarded(sb, q_input, cat, hotlines)
 
 
 if __name__ == "__main__":
