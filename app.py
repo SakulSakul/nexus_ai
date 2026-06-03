@@ -3588,6 +3588,21 @@ def main():
 
     _render_beta_banner()
 
+    # PR-fix-cold-iframe-warm: components.html / st.iframe 프론트엔드 번들을
+    # 홈/스타트업에서 미리 로드(warm). 콜드 서버에서 첫 질문 시 _run_ask 의
+    # 보조 iframe(스트리밍 JS 주입 + 라이브 타이머)이 번들 콜드로딩 시점에
+    # 마운트 rerun 을 일으켜 답변 스트리밍을 끊고 _run_ask 를 재진입시키던
+    # 결함의 근본 원인 제거 — 세션당 1회, 0/1px 무해 슬롯으로 번들만 선로딩.
+    if not st.session_state.get("_iframe_warmed"):
+        try:
+            components.html("<span></span>", height=0)
+            _warm_iframe = getattr(st, "iframe", None)
+            if _warm_iframe is not None:
+                _warm_iframe("<span></span>", height=1)
+        except Exception:
+            pass
+        st.session_state["_iframe_warmed"] = True
+
     # PR-Fun1.2 hotfix: PR-Fun1.1 의 pending_q early exit 폐기. early exit
     # 의 return 이 main() 의 chat_input 영역까지 도달 못 하게 해서 답변 후
     # chat_input 자체가 안 그려졌다 (사용자 다음 질문 불가). 원래 흐름
