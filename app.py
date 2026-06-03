@@ -323,6 +323,23 @@ from ui.render import (  # PR-refactor(5): 답변 부가 렌더 헬퍼 분리(�
 )
 
 
+from ui.cards import (  # PR-refactor(2): 카드 빌더 분리(동작 무변경)
+    _slim_structured, _build_structured_card_html, _build_verdict_card_html,
+    _answer_card_header_html, _ENABLE_VERDICT_SHADOW, _ENABLE_VERDICT_CARD,
+)
+
+from ui.home import _render_empty_state  # PR-refactor(3): 빈 홈 분리(동작 무변경)
+
+_PROD_ENV_VALUES = {"prod", "production"}
+
+_HISTORY_CAP = 100  # session_state["history"] 최대 entry 수 (FIFO 자르기)
+
+_REROLL_PREFIX = (
+    "[다시 답변 요청] 이전 답변과 다른 관점·다른 근거 사규·다른 측면을 "
+    "강조하여 답변해주세요. 단, 사실관계는 정확해야 합니다.\n\n원 질문: "
+)
+
+
 def _push_history(item) -> None:
     """history 에 push 후 cap 초과 시 앞쪽부터 자른다 (FIFO).
     session_state 메모리 누적 방어 — 100건 = user/assistant 50쌍."""
