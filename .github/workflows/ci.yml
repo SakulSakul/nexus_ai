@@ -106,3 +106,6 @@ jobs:
               f"regex high-confidence 패턴 실패: {hits}"
           print("[SPOT OK] SIM⊆_VALID · OOS 존재 · SIM>=26 · 3 flag 기본 OFF · regex 매칭")
           PY
+
+      - name: Verdict 골든 회귀 가드 (#336류 인용 회귀 차단)
+        run: python tests/test_verdict_golden.py
