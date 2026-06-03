@@ -1,0 +1,32 @@
+name: keepalive
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 6시간마다 (sleep 임계 12h 보다 짧게)
+  workflow_dispatch: {}      # 수동 트리거(배포 직후 즉시 warm-up 용)
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright && python -m playwright install --with-deps chromium
+      - run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          URL = "https://df-nexus-ai.streamlit.app/"
+          with sync_playwright() as p:
+              b = p.chromium.launch()
+              pg = b.new_page()
+              pg.goto(URL, wait_until="domcontentloaded", timeout=120000)
+              pg.wait_for_timeout(5000)
+              btn = pg.get_by_role("button", name="Yes, get this app back up!")
+              if btn.count() > 0:
+                  print("WAKE: 앱이 자고 있어 깨움")
+                  btn.click()
+                  pg.wait_for_timeout(60000)
+              else:
+                  print("OK: 이미 awake")
+              b.close()
+          PY
