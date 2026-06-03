@@ -36,8 +36,6 @@ def _render_empty_state(sb) -> None:
     """첫 진입(빈 홈) — 목업 정렬: 상단 바 + 히어로 + 중앙 입력 + 트러스트 + 그룹 칩.
 
     옛 날씨·인사 카드와 평면 SAMPLE_QUESTIONS 는 빈 홈 렌더에서 제외(목업 일치).
-    `_cached_dynamic_greeting` / `get_daily_tip` / `_show_example_questions` 등
-    함수·로직은 코드에 보존 — 미래 재배치 여지.
     """
     # 빈 홈 한정 CSS: 본문 880px 가운데 정렬(전 요소 정렬) + 하단 chat_input 숨김
     # (중앙 입력과 중복 방지). 답변 화면에선 본 함수 미호출 → 자동 원복.
