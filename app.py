@@ -3682,7 +3682,15 @@ def main():
 
     # chat_input 을 먼저 호출(하단 sticky) → 첫 질문이 하단 입력으로 와도
     # 빈 홈이 답변과 동시에 렌더되지 않도록 게이트에 q_input 반영.
-    q_input = st.chat_input("질문을 입력하세요…", max_chars=2000)
+    # PR-concurrent-guard: 처리 중(clicked_q/reroll)인 run 에서는 모든 제출 위젯을
+    # 비활성/미렌더 → 답 생성(합성) 도중 새 제출이 run 을 폐기(external_kill)하는 것을
+    # 원천 차단. (로그 확정: 동시 제출 시 진행 run 이 synthesis_stream 에서 외부종료됨.)
+    _q_processing = bool(st.session_state.get("clicked_q")) or (
+        st.session_state.get("_pending_reroll") is not None
+    )
+    q_input = st.chat_input(
+        "질문을 입력하세요…", max_chars=2000, disabled=_q_processing
+    )
     # PR-Fun1.4: hero 는 history 비어있고 진행 중 질문(clicked_q·q_input) 없을 때만.
     # 빈 홈을 placeholder 에 렌더 → 같은 run 에서 질문이 처리되면 _home_ph.empty()
     # 로 즉시 제거. chip 의 st.rerun() 이 run 을 못 끊는 경우에도 답변과 동시
@@ -3732,11 +3740,12 @@ def main():
             # PR-Ambiguity-Askback: 모호성 역질문 turn replay — 선택지 버튼만,
             # 일반 chrome 생략 (continue 로 이하 chip/contexts/suggestions/피드백 skip).
             if role == "assistant" and meta.get("clarify_choices"):
-                _render_clarify_choices(
-                    list(meta.get("clarify_choices") or []),
-                    msg_idx=idx,
-                    masked_question=meta.get("masked_question"),
-                )
+                if not _q_processing:
+                    _render_clarify_choices(
+                        list(meta.get("clarify_choices") or []),
+                        msg_idx=idx,
+                        masked_question=meta.get("masked_question"),
+                    )
                 continue
             # PR-Fun1 작업 4: 카테고리 chip — replay 시 contexts 있으면 표시.
             # PR-Fix-Category-Citation-Based: content (답변 본문) 전달 → 인용 prefix 기반 결정.
@@ -3766,7 +3775,7 @@ def main():
             # PR-Fun1.6: query_log_id 가드 제거 — RLS RETURNING 차단으로
             # query_log_id 가 None 이어도 suggestions/closing 은 그려야 함.
             # 함수 내부 자체 가드 (suggestions 비어있으면 return).
-            if role == "assistant":
+            if role == "assistant" and not _q_processing:
                 _render_suggestion_cards(
                     list(meta.get("suggestions") or []),
                     is_critical=bool(meta.get("critical")),
@@ -3779,7 +3788,8 @@ def main():
                 )
             # 액션 버튼 — 정상 답변(query_log_id 있음) 한정. 에러 답변은 다시
             # 답변 시 동일 에러 반복 가능성 + 인사교육팀 문의는 의미 없으므로 미노출.
-            if (role == "assistant" and meta.get("query_log_id") is not None):
+            if (role == "assistant" and meta.get("query_log_id") is not None
+                    and not _q_processing):
                 _render_action_buttons(
                     idx,
                     original_q=meta.get("original_q"),
@@ -3792,7 +3802,7 @@ def main():
                 )
             # PR-Fun1.5: history replay 도 query_log_id None 케이스 처리.
             # query_log_id 또는 masked_question 둘 중 하나라도 있으면 표시.
-            if role == "assistant" and (
+            if role == "assistant" and not _q_processing and (
                 meta.get("query_log_id") or meta.get("masked_question")
             ):
                 _render_feedback(
@@ -3804,7 +3814,8 @@ def main():
             # 중간 메시지나 에러 답변에 버튼 노출 시 disabled 노이즈 발생 → 차단.
             if (role == "assistant"
                     and idx == len(_history) - 1
-                    and meta.get("query_log_id") is not None):
+                    and meta.get("query_log_id") is not None
+                    and not _q_processing):
                 _render_mode_buttons(idx)
 
     # PR-retry-dangling: 답변이 안 만들어진 채 끝난 턴 감지 → 재실행 버튼.
@@ -3912,12 +3923,13 @@ def main():
         _run_ask_guarded(sb, q="", cat=cat, hotlines=hotlines, reroll_of=pending)
         return
 
-    # chat_input 직접 입력만 처리 (clicked_q 는 위에서 처리).
+    # chat_input 직접 입력 → clicked_q 경로로 통일 후 rerun.
+    # 처리 run 은 _q_processing=True 라 chat_input·칩 전부 비활성 → 합성 도중
+    # 동시 제출(폐기) 불가. (인라인 처리 제거 — co-render 는 다음 run 게이트가 처리.)
     if not q_input:
         return
-
-    _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
-    _run_ask_guarded(sb, q_input, cat, hotlines)
+    st.session_state["clicked_q"] = q_input
+    st.rerun()
 
 
 if __name__ == "__main__":
