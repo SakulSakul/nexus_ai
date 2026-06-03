@@ -250,8 +250,32 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
             drop=_title_toks,
         )
         _badge_kw = _keywords(str(parsed.get("badge") or ""), drop=_title_toks)
-        # 주 지침 = 최상위(rerank 1위) chunk 의 doc — 최빈은 SOP/곁가지 doc 으로 오검출됨.
+        # 주 지침 = 답변 본문이 실제로 가장 많이 인용한 doc (= LLM 이 사용한 주 지침).
+        #   rerank 1위 chunk 는 검색 노이즈(AEO/SOP 등)로 자주 오검출되므로, 본문 인용
+        #   빈도를 우선 신호로 사용하고, 본문 인용이 전혀 없을 때만 rerank 1위로 폴백.
+        #   (검색목록 최빈이 아니라 '답변이 인용한' 빈도 — SOP/곁가지는 본문 인용이 적어 오검출 사라짐.)
         _dom_doc = _chunk_title(_all[0]) if _all else ""
+        try:
+            _seen, _best_t, _best_n = set(), "", 0
+            for _c in _all:
+                _t = _chunk_title(_c)
+                if not _t or _t in _seen:
+                    continue
+                _seen.add(_t)
+                # "(공정거래) 협력회사…" → prefix 없는 본문 인용도 잡도록 prefix 제거 변형도 카운트
+                _t_bare = _t.split(") ", 1)[1] if _t.startswith("(") and ") " in _t else _t
+                _n = answer.count(_t)
+                if _t_bare != _t:
+                    _n += answer.count(_t_bare)
+                if _n > _best_n:
+                    _best_n, _best_t = _n, _t
+            if _best_n > 0:
+                _dom_doc = _best_t
+            print(f"[verdict_extractor:dom_doc] body_cited={_best_t!r}x{_best_n} "
+                  f"rerank1={(_chunk_title(_all[0]) if _all else '')!r} -> dom={_dom_doc!r}",
+                  file=sys.stderr, flush=True)
+        except Exception:
+            pass
         _qs, _cand = _pick_quote_global(_all, _kw, _badge_kw, _dom_doc)
         # 보수적: 정합 인용이 없으면(_qs None) 억지 fallback 금지 → 인용 생략(카드는 pill+본문).
         if _qs is not None:
