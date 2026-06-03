@@ -2704,7 +2704,14 @@ def _run_ask(
     last_err: Exception | None = None
     tb_str = ""
     friendly_msg = ""
-    # PR-fix-no-iframes: 스트리밍 보조 주입 iframe 2개 제거 (마운트 rerun 원인).
+    # PR-Fun3a 페이즈 2: streaming 시 자동 scroll 추적 JS 주입 (session 1회).
+    # MutationObserver 가 body subtree 변경 감지 → near-bottom 이면 끝까지
+    # smooth scroll. 사용자가 위로 scroll 한 상태면 추적 정지.
+    _inject_streaming_scroll_js_once()
+    # PR-Fun3b 페이즈 3: typography·smoothing visual polish CSS 주입 (1회).
+    # write_stream 위에서 한국어 가독성·font-smoothing·smooth scroll 보강.
+    # 진정한 token-append render 는 phase 4 (custom React component) 영역.
+    _inject_streaming_visual_polish_once()
 
     with st.chat_message("assistant", avatar="🧭"):
         # 답변 본문 placeholder — streaming 점진 표시 + 후처리 단일 update.
@@ -2734,18 +2741,29 @@ def _run_ask(
         # self-contained 동작 — st.markdown(unsafe_allow_html) sandbox 우회.
         # 답변 완료 시 timer_placeholder.markdown(...) 으로 정적 메시지 교체
         # → iframe 자체가 사라지면서 setInterval 도 자동 cleanup.
-        # PR-fix-no-iframes: 라이브 JS 타이머 iframe 제거 — _run_ask 안 iframe
-        # 첫 마운트가 rerun 을 유발하는 잔여 위험까지 제거(콜드 첫 질문 중단).
-        # 정적 표시로 대체: 스피너가 진행감, 완료 시 _render_answer_meta 가 실제
-        # 소요시간 표기. _run_ask 는 이제 iframe 0개.
-        timer_placeholder.markdown(
-            "<div style='background:#FAF6F1;padding:10px 14px;border-radius:10px;"
-            "font-family:-apple-system,Segoe UI,sans-serif;font-size:13px;color:#666;"
-            "border:1px solid #EDE6DC;'>"
-            "⏱️ <span style='font-weight:600;color:#C8102E;'>답변 생성 중…</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        with timer_placeholder.container():
+            _nx_iframe(
+                f"""
+<div id="dfc-elapsed-wrap" style="background:#FAF6F1;padding:10px 14px;
+     border-radius:10px;font-family:-apple-system,'Segoe UI',sans-serif;
+     font-size:13px;color:#666;display:flex;justify-content:space-between;
+     align-items:center;border:1px solid #EDE6DC;box-sizing:border-box;">
+  <span>⏱️ <span id="dfc-elapsed" style="font-weight:600;color:#C8102E;">0</span>초 경과</span>
+</div>
+<script>
+  (function() {{
+    var start = Date.now();
+    var elem = document.getElementById('dfc-elapsed');
+    if (!elem) return;
+    setInterval(function() {{
+      elem.innerText = Math.round((Date.now() - start) / 1000);
+    }}, 250);
+  }})();
+</script>
+""",
+                height=60,
+            )
+
         # PR-Fun1.6: st.empty placeholder + emoji progress 한 줄 패턴.
         # PR-Fun1.8: CSS keyframes (nx-spin / nx-pulse) class + st.progress
         # bar 단계별 갱신. emoji 자체 애니메이션 + 시각적 진행률.
@@ -3177,29 +3195,6 @@ def _run_ask(
             # PR-Coding-Policy-Defense: retrieval/LLM critical path 에서 silent
             # 처리된 내부 오류를 운영자에게 가시화 (접힌 expander). chunk_incident_nodes
             # 같은 스키마 오류가 force-include 를 무력화한 사고 재발 조기 감지.
-            # PR-fix-commit-early: 답변을 무거운 렌더(컴포넌트 포함) 전에
-            # history 에 즉시 커밋 → 콜드 스타트 등 렌더 단계 rerun 에도 답변
-            # 유실 없이 replay 재렌더 (댕글링/재계산 차단). 모든 진입점이
-            # _run_ask 후 st.rerun 하므로 아래 라이브 렌더는 replay 로 덮어써짐.
-            _answer_idx = len(st.session_state["history"])
-            _commit_orig_q = (reroll_of["original_q"]
-                              if reroll_of is not None else q)
-            _push_history((
-                "assistant", ans.text,
-                {
-                    "contexts": ans.contexts,
-                    "critical": ans.is_critical,
-                    "kind": ans.critical_kind,
-                    "thinking": ans.thinking,
-                    "elapsed": ans.elapsed,
-                    "query_log_id": ans.query_log_id,
-                    "original_q": _commit_orig_q,
-                    "confidence": getattr(ans, "confidence", "high"),
-                    "verdict": _verdict_dict,
-                    "suggestions": list(getattr(ans, "suggestions", []) or []),
-                    "masked_question": getattr(ans, "masked_question", None),
-                },
-            ))
             _critical_errs = st.session_state.pop("_critical_errors", None)
             if _critical_errs:
                 with st.expander(
@@ -3228,7 +3223,7 @@ def _run_ask(
             _render_suggestion_cards(
                 getattr(ans, "suggestions", []) or [],
                 is_critical=ans.is_critical,
-                msg_idx=_answer_idx,
+                msg_idx=len(st.session_state["history"]),
                 ans_id=getattr(ans, "query_log_id", None),
                 masked_question=getattr(ans, "masked_question", None),
                 source_category=_domain_from_contexts(ans.contexts),
@@ -3236,12 +3231,12 @@ def _run_ask(
             # PR-Fun1 작업 5: 랜덤 격려 멘트 (critical 시 critical_pool).
             _render_closing_remark(
                 ans.is_critical,
-                msg_idx=_answer_idx,
+                msg_idx=len(st.session_state["history"]),
             )
             # 액션 버튼 (📞 인사교육팀 문의 / 🔄 다시 답변) — 답변 본문 직후, 피드백 위.
             # msg_idx 는 곧 push 될 assistant 엔트리의 인덱스 (= 현재 history 길이).
             # original_q: reroll 모드면 reroll_of 의 원 질문, 정상이면 직전 user 메시지(q).
-            _action_msg_idx = _answer_idx
+            _action_msg_idx = len(st.session_state["history"])
             _action_orig_q = (reroll_of["original_q"]
                               if reroll_of is not None else q)
             _render_action_buttons(
@@ -3297,8 +3292,24 @@ def _run_ask(
             print(f"[PR-2.5 reroll fixup failed] id={ans.query_log_id} err={e}",
                   file=sys.stderr, flush=True)
 
-    # PR-fix-commit-early: assistant 턴은 위(verdict 직후)에서 이미 history 에
-    # 커밋됨 — 렌더 단계 rerun(콜드 스타트 등)으로부터 답변 보호. 중복 push 차단.
+    _push_history((
+        "assistant", ans.text,
+        {
+            "contexts": ans.contexts,
+            "critical": ans.is_critical,
+            "kind": ans.critical_kind,
+            "thinking": ans.thinking,
+            "elapsed": ans.elapsed,
+            "query_log_id": ans.query_log_id,
+            "original_q": _saved_orig_q,
+            "confidence": getattr(ans, "confidence", "high"),
+            "verdict": _verdict_dict,
+            "suggestions": list(getattr(ans, "suggestions", []) or []),
+            # PR-Fun1.5: query_log_id None (RLS RETURNING 차단) 시 피드백
+            # update fallback 매칭 식별자.
+            "masked_question": getattr(ans, "masked_question", None),
+        },
+    ))
 
     # 멀티 턴 모드 버튼 — 정상 답변 한정. 에러 흐름(line 1164-1169)에서는
     # 호출하지 않음(이전 답변이 에러인 메시지에 "관련 질문" 노출은 무의미).
@@ -3772,13 +3783,7 @@ def main():
         return
 
     _home_ph.empty()  # 같은 run co-render 방지 — 답변 전 빈 홈 강제 제거
-    # PR-fix-home-firstask: 질문창 입력을 검증된 clicked_q 경로로 수렴.
-    # st.chat_input 제출 run 에서 곧바로 긴 스트리밍 _run_ask 를 돌리면 홈
-    # 게이트 전이 + chat_input 위젯 상태변화가 스트림 도중 rerun 을 유발해
-    # 답변이 중단된다. 칩 경로처럼 clicked_q + st.rerun 으로 _run_ask 를
-    # '제출 run 바깥의 깨끗한 rerun' 에서 실행 → 중단 없음. 모든 진입점 단일화.
-    st.session_state["clicked_q"] = q_input
-    st.rerun()
+    _run_ask(sb, q_input, cat, hotlines)
 
 
 if __name__ == "__main__":
