@@ -3195,6 +3195,29 @@ def _run_ask(
             # PR-Coding-Policy-Defense: retrieval/LLM critical path 에서 silent
             # 처리된 내부 오류를 운영자에게 가시화 (접힌 expander). chunk_incident_nodes
             # 같은 스키마 오류가 force-include 를 무력화한 사고 재발 조기 감지.
+            # PR-fix-commit-early: 답변을 무거운 렌더(컴포넌트 포함) 전에
+            # history 에 즉시 커밋 → 콜드 스타트 등 렌더 단계 rerun 에도 답변
+            # 유실 없이 replay 재렌더 (댕글링/재계산 차단). 모든 진입점이
+            # _run_ask 후 st.rerun 하므로 아래 라이브 렌더는 replay 로 덮어써짐.
+            _answer_idx = len(st.session_state["history"])
+            _commit_orig_q = (reroll_of["original_q"]
+                              if reroll_of is not None else q)
+            _push_history((
+                "assistant", ans.text,
+                {
+                    "contexts": ans.contexts,
+                    "critical": ans.is_critical,
+                    "kind": ans.critical_kind,
+                    "thinking": ans.thinking,
+                    "elapsed": ans.elapsed,
+                    "query_log_id": ans.query_log_id,
+                    "original_q": _commit_orig_q,
+                    "confidence": getattr(ans, "confidence", "high"),
+                    "verdict": _verdict_dict,
+                    "suggestions": list(getattr(ans, "suggestions", []) or []),
+                    "masked_question": getattr(ans, "masked_question", None),
+                },
+            ))
             _critical_errs = st.session_state.pop("_critical_errors", None)
             if _critical_errs:
                 with st.expander(
@@ -3223,7 +3246,7 @@ def _run_ask(
             _render_suggestion_cards(
                 getattr(ans, "suggestions", []) or [],
                 is_critical=ans.is_critical,
-                msg_idx=len(st.session_state["history"]),
+                msg_idx=_answer_idx,
                 ans_id=getattr(ans, "query_log_id", None),
                 masked_question=getattr(ans, "masked_question", None),
                 source_category=_domain_from_contexts(ans.contexts),
@@ -3231,12 +3254,12 @@ def _run_ask(
             # PR-Fun1 작업 5: 랜덤 격려 멘트 (critical 시 critical_pool).
             _render_closing_remark(
                 ans.is_critical,
-                msg_idx=len(st.session_state["history"]),
+                msg_idx=_answer_idx,
             )
             # 액션 버튼 (📞 인사교육팀 문의 / 🔄 다시 답변) — 답변 본문 직후, 피드백 위.
             # msg_idx 는 곧 push 될 assistant 엔트리의 인덱스 (= 현재 history 길이).
             # original_q: reroll 모드면 reroll_of 의 원 질문, 정상이면 직전 user 메시지(q).
-            _action_msg_idx = len(st.session_state["history"])
+            _action_msg_idx = _answer_idx
             _action_orig_q = (reroll_of["original_q"]
                               if reroll_of is not None else q)
             _render_action_buttons(
@@ -3292,24 +3315,8 @@ def _run_ask(
             print(f"[PR-2.5 reroll fixup failed] id={ans.query_log_id} err={e}",
                   file=sys.stderr, flush=True)
 
-    _push_history((
-        "assistant", ans.text,
-        {
-            "contexts": ans.contexts,
-            "critical": ans.is_critical,
-            "kind": ans.critical_kind,
-            "thinking": ans.thinking,
-            "elapsed": ans.elapsed,
-            "query_log_id": ans.query_log_id,
-            "original_q": _saved_orig_q,
-            "confidence": getattr(ans, "confidence", "high"),
-            "verdict": _verdict_dict,
-            "suggestions": list(getattr(ans, "suggestions", []) or []),
-            # PR-Fun1.5: query_log_id None (RLS RETURNING 차단) 시 피드백
-            # update fallback 매칭 식별자.
-            "masked_question": getattr(ans, "masked_question", None),
-        },
-    ))
+    # PR-fix-commit-early: assistant 턴은 위(verdict 직후)에서 이미 history 에
+    # 커밋됨 — 렌더 단계 rerun(콜드 스타트 등)으로부터 답변 보호. 중복 push 차단.
 
     # 멀티 턴 모드 버튼 — 정상 답변 한정. 에러 흐름(line 1164-1169)에서는
     # 호출하지 않음(이전 답변이 에러인 메시지에 "관련 질문" 노출은 무의미).
