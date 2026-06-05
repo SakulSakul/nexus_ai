@@ -29,6 +29,13 @@
     { "id": "weather_oos", "query": "오늘 날씨", "expect": { "classifier": "out_of_scope" } },
     { "id": "salary_oos", "query": "내 연봉", "expect": { "classifier": "out_of_scope" } },
     { "id": "lunch_menu_oos", "query": "점심 메뉴", "expect": { "classifier": "out_of_scope" } },
-    { "id": "vpn_oos", "query": "VPN 장애", "expect": { "classifier": "out_of_scope" } }
+    { "id": "vpn_oos", "query": "VPN 장애", "expect": { "classifier": "out_of_scope" } },
+    { "id": "promo_staff_dispatch_q2", "query": "판촉사원에게 다른 납품업체 상품을 팔라고 시켜도 되나요?", "expect": { "category": "공정거래", "expect_retrieved_doc": "판촉사원 파견 지침" }, "note": "#353 가드 — 파견 지침이 입점/퇴점 지침에 밀려 drop 되던 회귀. PASS 예상" },
+    { "id": "promo_staff_dispatch_q6", "query": "협력회사 입점하면서 판촉사원도 파견받는데 다른 업체 상품까지 팔게 해도 되나요?", "expect": { "category": "공정거래", "expect_retrieved_doc": "판촉사원 파견 지침" }, "note": "#353 가드 — 입점 어휘 혼입 시에도 파견 지침 생존. PASS 예상" },
+    { "id": "sales_commission_fairtrade", "query": "판매수수료를 우리가 임의로 올려서 협력사에 청구해도 되나요?", "expect": { "category": "공정거래", "expect_retrieved_doc": "판매수수료 결정 및 변경" }, "note": "P1 — 정답 doc 검색 가드. PASS 예상" },
+    { "id": "risk_assessment_safety", "query": "새 작업 공정에 대한 위험성평가는 어떻게 하나요?", "expect": { "category": "안전", "expect_retrieved_doc": "안전보건관리규정" }, "note": "P4 — 안전보건관리규정 내 위험성평가 규정. PASS 예상" },
+    { "id": "cost_shift_fairtrade", "query": "협력회사 거래에서 부당하게 비용을 떠넘기면 어떻게 되나요?", "expect": { "category": "공정거래", "expect_retrieved_doc": "비용 분담" }, "note": "A1 적대적 — 비용 분담 지침류 검색. PASS 예상" },
+    { "id": "pii_outsourcing_infosec", "query": "협력업체에 고객 개인정보 처리를 위탁할 때 계약에 뭘 넣어야 하나요?", "expect": { "category": "정보보안", "expect_retrieved_doc": "개인정보보호 지침" }, "note": "P2 — 위탁 필수기재. 검색PASS+답나쁨=과대주입root / FAIL=recall root" },
+    { "id": "delegation_over_limit_finance", "query": "내 전결 권한을 넘는 금액을 결재해도 되나요?", "expect": { "category": "재무", "expect_retrieved_doc": "전결규정", "incident_nodes_exclude": ["안전점검", "근로자안전"] }, "note": "P3 — 전결 결재가 안전 오라우팅. (재무)전결규정 검색+category=재무 기대 (현재 FAIL)" }
   ]
 }
