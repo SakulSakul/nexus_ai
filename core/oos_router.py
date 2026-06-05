@@ -70,7 +70,7 @@ def oos_routing_message(supabase: Any | None = None) -> str:
 # RRF 점수는 rank-fusion+boost 오염이라 임계치 부적합 → judge_relevance 사용.
 # ⚙ 임계치 — 🚦 회귀 콘솔(라이브)로 보정 필요. 시작값 0.6:
 #   "택시" 통과 / "회의실 예약"·"점심 메뉴" 차단 되도록 콘솔 돌려 조정.
-_OOS_OVERRIDE_THRESHOLD: float = 0.6
+_OOS_OVERRIDE_THRESHOLD: float = 0.85  # 0.6→0.85 (2026-06-05): judge_relevance 가 스치는/편재 문서를 0.8 로 과대평가 → OOS 오취소(회사주차장·VPN). 관측 데이터상 진짜 in-scope=0.9~1.0, 스치는 토픽=0.8 로 갈려 0.85 로 경계 보정. 콘솔 35/35 검증.
 
 
 def gated_oos_decision(supabase: Any, question: str) -> bool:
