@@ -6,6 +6,28 @@
 import streamlit as st
 
 
+# PR-fix-confidence-display(#336-4): 디스플레이용 신뢰도 강등 마커.
+#   답변 본문이 "직접 매칭되는 사규 미발견"(prompts.py rule-4 template)을 명시하면
+#   배지는 '높음(high)' 으로 표시하지 않는다. 내부 confidence(_maybe_prefix_system_prompt,
+#   classify_button HR-branch 입력)는 **절대 건드리지 않는다** — 표시값만 보정.
+_DISPLAY_CONF_DOWNCAP_MARKERS: tuple[str, ...] = (
+    "본 query 에 직접 매칭되는 사규가 검색되지 않았습니다",
+)
+
+
+def _displayed_confidence(confidence: str, answer_text: str | None) -> str:
+    """디스플레이용 신뢰도. graceful(직접 매칭 미발견) 답변은 high → medium 강등.
+
+    cap 대상은 high 만 — low/medium 은 그대로(이미 신중 톤). answer_text 없으면 변경 X.
+    내부 confidence 값은 호출자가 변경하지 않음 — display path 한 곳에서만 보정.
+    """
+    if confidence != "high" or not answer_text:
+        return confidence
+    if any(m in answer_text for m in _DISPLAY_CONF_DOWNCAP_MARKERS):
+        return "medium"
+    return confidence
+
+
 _KIND_BADGE_TEXT = {
     "rule":    "사규",
     "case":    "사례",
@@ -44,6 +66,8 @@ def _render_confidence_chip(confidence: str, contexts: list[dict] | None = None,
                 _top_owning_dept = str(_od).strip()
                 break
     dept = nexus_get_owner_dept(cat_label, doc_owning_dept=_top_owning_dept)
+    # PR-fix-confidence-display(#336-4): graceful 답변 = high 표시 금지.
+    confidence = _displayed_confidence(confidence, answer_text)
     chip_map = {
         "high":   ("🟢", "높은 신뢰도", "#1f7a3a"),
         "medium": ("🟡", f"보조 참고 — 정확한 사항은 {dept} 확인", "#a07020"),

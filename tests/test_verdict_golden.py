@@ -96,6 +96,35 @@ def test_dom_doc_keeps_sop_when_only_sop_cited():
     assert _select_dom_doc(chunks, f"{sop} 절차. {sop}.") == sop
 
 
+def test_displayed_confidence_graceful_high_to_medium():
+    """#336-4: graceful 답변(직접 매칭 미발견)은 표시 신뢰도 '높음'으로 안 됨 → medium 강등."""
+    from ui.render import _displayed_confidence
+    body = "[💡 안내] 본 query 에 직접 매칭되는 사규가 검색되지 않았습니다.\n인사 행정 사항은 인사교육팀에 문의."
+    assert _displayed_confidence("high", body) == "medium"
+
+
+def test_displayed_confidence_normal_high_unchanged():
+    """무회귀: graceful 마커 없는 정상 high 답변은 그대로 high 유지."""
+    from ui.render import _displayed_confidence
+    body = "직장 내 괴롭힘은 지체없이 신고하여야 한다."
+    assert _displayed_confidence("high", body) == "high"
+
+
+def test_displayed_confidence_low_unchanged():
+    """무회귀: low/medium 은 cap 무관 (이미 신중 톤) — 강등 안 함."""
+    from ui.render import _displayed_confidence
+    body = "본 query 에 직접 매칭되는 사규가 검색되지 않았습니다. 인사교육팀 문의."
+    assert _displayed_confidence("low", body) == "low"
+    assert _displayed_confidence("medium", body) == "medium"
+
+
+def test_displayed_confidence_empty_text_unchanged():
+    """방어: answer_text 없으면 변경 X (streaming 초기 등 보호)."""
+    from ui.render import _displayed_confidence
+    assert _displayed_confidence("high", "") == "high"
+    assert _displayed_confidence("high", None) == "high"
+
+
 if __name__ == "__main__":
     fails = []
     for _n, _f in sorted(globals().items()):
