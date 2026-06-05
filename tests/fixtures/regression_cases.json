@@ -36,6 +36,6 @@
     { "id": "risk_assessment_safety", "query": "새 작업 공정에 대한 위험성평가는 어떻게 하나요?", "expect": { "category": "안전", "expect_retrieved_doc": "안전보건관리규정" }, "note": "P4 — 안전보건관리규정 내 위험성평가 규정. PASS 예상" },
     { "id": "cost_shift_fairtrade", "query": "협력회사 거래에서 부당하게 비용을 떠넘기면 어떻게 되나요?", "expect": { "category": "공정거래", "expect_retrieved_doc": "비용 분담" }, "note": "A1 적대적 — 비용 분담 지침류 검색. PASS 예상" },
     { "id": "pii_outsourcing_infosec", "query": "협력업체에 고객 개인정보 처리를 위탁할 때 계약에 뭘 넣어야 하나요?", "expect": { "category": "정보보안", "expect_retrieved_doc": "개인정보보호 지침" }, "note": "P2 — 위탁 필수기재. 검색PASS+답나쁨=과대주입root / FAIL=recall root" },
-    { "id": "delegation_over_limit_finance", "query": "내 전결 권한을 넘는 금액을 결재해도 되나요?", "expect": { "category": "재무", "expect_retrieved_doc": "전결규정", "incident_nodes_exclude": ["안전점검", "근로자안전"] }, "note": "P3 — 전결 결재가 안전 오라우팅. (재무)전결규정 검색+category=재무 기대 (현재 FAIL)" }
+    { "id": "delegation_over_limit_finance", "query": "내 전결 권한을 넘는 금액을 결재해도 되나요?", "expect": { "expect_retrieved_doc": "전결규정", "incident_nodes_exclude": ["안전점검", "근로자안전"] }, "note": "P3 — (재무)전결규정 검색 가드. category=재무는 라이브 답변 인용으로 결정되어 콘솔(무합성)은 검증 불가 → category assertion 제외. 라이브 배지=재무 확인(2026-06-05)." }
   ]
 }
