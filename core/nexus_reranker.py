@@ -314,24 +314,6 @@ def rerank_chunks(query: str, raw_chunks: list[dict]) -> list[dict]:
         file=sys.stderr, flush=True,
     )
 
-    # [FIX3_DIAG] grounding-drift 진단 (print-only, 로직 무변경). RAW(후보셋)→HEAD_in(LLM
-    #   리랭크 대상 상위 N)→HEAD_out(재정렬)→TAIL(미리랭크 잔여) 의 *문서* 순서. 진단 후 제거 가능.
-    _fix3_tk = ("doc_title", "document_title", "title")
-
-    def _fix3_docs(chunks: list) -> str:
-        return " > ".join(dict.fromkeys(
-            str(next((c.get(k) for k in _fix3_tk if c.get(k)), "?")) for c in chunks
-        ))
-
-    print(
-        "[FIX3_DIAG:rerank] q=" + ((query or "")[:30])
-        + " || RAW(" + str(len(raw_chunks)) + ")=[" + _fix3_docs(raw_chunks) + "]"
-        + " || HEAD_in(N=" + str(_RERANK_TOP_N) + ")=[" + _fix3_docs(head) + "]"
-        + " || HEAD_out=[" + _fix3_docs(reranked) + "]"
-        + " || TAIL=[" + _fix3_docs(tail) + "]",
-        file=sys.stderr, flush=True,
-    )
-
     return reranked + tail
 
 
