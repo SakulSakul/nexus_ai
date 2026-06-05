@@ -47,6 +47,35 @@ def test_wrong_domdoc_still_suppresses_bad_quote():
     assert "미신고" not in (q or ""), f"방어심층 실패 — 미신고 라인 인용됨: {q!r}"
 
 
+def test_dom_doc_subject_over_penalty():
+    """#336-2: 주제 규정 + 징계기준(결과) 둘 다 인용 + rerank#1 노이즈(미인용)일 때
+    평결 헤드라인 dom 은 결과문서가 아니라 주제 규정이어야 한다."""
+    from core.synthesis.verdict_extractor import _select_dom_doc
+    noise = "(공정거래) 매장 위치이동 지침"
+    subj = "(공정거래) 협력회사 판촉사원 파견 지침"
+    pen = "(공통) 임직원 징계기준"
+    chunks = [{"doc_title": noise}, {"doc_title": subj}, {"doc_title": pen, "doc_kind": "penalty"}]
+    assert _select_dom_doc(chunks, f"{subj} 위배. 위반 시 {pen}. {pen} 적용.") == subj
+
+
+def test_dom_doc_keeps_rerank1_when_cited():
+    """무회귀: rerank#1 이 본문 인용되면 유지(괴롭힘 케이스)."""
+    from core.synthesis.verdict_extractor import _select_dom_doc
+    har = "(인사) 직장 내 괴롭힘 예방·대응지침"
+    pen = "(공통) 임직원 징계기준"
+    chunks = [{"doc_title": har}, {"doc_title": pen, "doc_kind": "penalty"}]
+    assert _select_dom_doc(chunks, f"{har} 위반 시 {pen}") == har
+
+
+def test_dom_doc_keeps_penalty_when_only_penalty_cited():
+    """과교정 방지: 인용된 게 penalty 뿐(진짜 징계 질의)이면 penalty 유지."""
+    from core.synthesis.verdict_extractor import _select_dom_doc
+    noise = "(공정거래) 매장 위치이동 지침"
+    pen = "(공통) 임직원 징계기준"
+    chunks = [{"doc_title": noise}, {"doc_title": pen, "doc_kind": "penalty"}]
+    assert _select_dom_doc(chunks, f"위반 시 {pen} 적용. {pen}.") == pen
+
+
 if __name__ == "__main__":
     fails = []
     for _n, _f in sorted(globals().items()):

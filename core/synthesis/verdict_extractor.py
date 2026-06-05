@@ -215,6 +215,60 @@ def _pick_quote(chunk: dict, max_len: int = 135) -> str:
     return sents[0][:max_len].strip()
 
 
+def _is_penalty(c: dict) -> bool:
+    """결과(징계) 문서 식별 — doc_kind=='penalty' 또는 제목에 '징계기준'.
+    평결 헤드라인 dom_doc 후보에서 결과문서를 배제하기 위한 술어."""
+    return (c.get("doc_kind") or "").strip().lower() == "penalty" or "징계기준" in _chunk_title(c)
+
+
+def _select_dom_doc(all_chunks: list, answer: str) -> str:
+    """평결 주지침(dom_doc) 선택.
+
+    rerank#1 을 기본 유지하되, rerank#1 이 본문에 _인용조차 안 됐을_ 때만(=순수 검색
+    노이즈) 본문 최빈 doc 으로 교체한다. 단 본문최빈이 penalty(징계기준=결과 문서)면
+    비-penalty 인용 문서를 우선한다 — 결과문서가 평결 헤드라인을 가로채는 #336 계열
+    회귀 차단. 인용된 게 penalty 뿐이면(=진짜 징계 질의) penalty 를 유지(과교정 방지).
+    """
+    _all = [c for c in all_chunks if isinstance(c, dict)]
+    _dom = _chunk_title(_all[0]) if _all else ""
+
+    def _cited(_t: str) -> int:
+        if not _t:
+            return 0
+        _tb = _t.split(") ", 1)[1] if _t.startswith("(") and ") " in _t else _t
+        return answer.count(_t) + (answer.count(_tb) if _tb != _t else 0)
+
+    _r1 = _dom
+    _r1_cited = _cited(_r1) > 0
+    if not _r1_cited:
+        _seen = set()
+        _best_np = ("", 0)
+        _best_p = ("", 0)
+        for _c in _all:
+            _t = _chunk_title(_c)
+            if not _t or _t in _seen:
+                continue
+            _seen.add(_t)
+            _n = _cited(_t)
+            if _n <= 0:
+                continue
+            if _is_penalty(_c):
+                if _n > _best_p[1]:
+                    _best_p = (_t, _n)
+            elif _n > _best_np[1]:
+                _best_np = (_t, _n)
+        if _best_np[1] > 0:
+            _dom = _best_np[0]
+        elif _best_p[1] > 0:
+            _dom = _best_p[0]
+    try:
+        print(f"[verdict_extractor:dom_doc] r1={_r1!r} r1_cited={_r1_cited} "
+              f"-> dom={_dom!r}", file=__import__("sys").stderr, flush=True)
+    except Exception:
+        pass
+    return _dom
+
+
 def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None":
     """답변 + chunks → Verdict. 실패/불확실 시 None(호출측 fallback)."""
     if not answer or not chunks:
@@ -263,36 +317,8 @@ def extract_verdict(question: str, answer: str, chunks: list) -> "Verdict | None
             drop=_title_toks,
         )
         _badge_kw = _keywords(str(parsed.get("badge") or ""), drop=_title_toks)
-        # 주 지침(dom_doc): rerank#1 을 기본 유지하되, rerank#1 이 본문에 _인용조차 안 됐을_
-        #   때만(=순수 검색노이즈) 본문 최빈 doc 으로 교체.
-        #   - 괴롭힘: rerank#1=괴롭힘 지침(주제·인용됨) → 유지. (본문최빈 count 를 무조건
-        #     쓰면 STRUCTURED_INJECT 가 끌어온 징계 점수표 인용이 8회로 부풀어 주제를 가림 → 회귀.)
-        #   - 판촉사원: rerank#1=매장위치이동(노이즈·미인용) → 본문최빈=판촉사원 지침으로 교체.
-        _dom_doc = _chunk_title(_all[0]) if _all else ""
-        try:
-            def _cited(_t: str) -> int:
-                if not _t:
-                    return 0
-                _tb = _t.split(") ", 1)[1] if _t.startswith("(") and ") " in _t else _t
-                return answer.count(_t) + (answer.count(_tb) if _tb != _t else 0)
-            _r1 = _dom_doc
-            _r1_cited = _cited(_r1) > 0
-            if not _r1_cited:
-                _seen, _best_t, _best_n = set(), "", 0
-                for _c in _all:
-                    _t = _chunk_title(_c)
-                    if not _t or _t in _seen:
-                        continue
-                    _seen.add(_t)
-                    _n = _cited(_t)
-                    if _n > _best_n:
-                        _best_n, _best_t = _n, _t
-                if _best_n > 0:
-                    _dom_doc = _best_t
-            print(f"[verdict_extractor:dom_doc] r1={_r1!r} r1_cited={_r1_cited} "
-                  f"-> dom={_dom_doc!r}", file=sys.stderr, flush=True)
-        except Exception:
-            pass
+        # 주 지침(dom_doc) 선택은 _select_dom_doc 로 위임(추출+penalty-skip, 테스트 가능).
+        _dom_doc = _select_dom_doc(_all, answer)
         _qs, _cand = _pick_quote_global(_all, _kw, _badge_kw, _dom_doc)
         # 보수적: 정합 인용이 없으면(_qs None) 억지 fallback 금지 → 인용 생략(카드는 pill+본문).
         if _qs is not None:
