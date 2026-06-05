@@ -1772,8 +1772,8 @@ def hybrid_search(
                     if dominant_prefixes else False
                 ),
                 (_chunk_domain(c) == "공통") or bool(c.get("is_universal_sop")),
+                -(c.get("_query_keyword_overlap") or 0),   # 부스트-포화 rrf 위로 승격 (관련도 우선)
                 -(c.get("rrf_score") or 0.0),
-                -(c.get("_query_keyword_overlap") or 0),
                 -(c.get("procedure_keyword_count") or 0),
                 str(c.get("id") or ""),
             )
