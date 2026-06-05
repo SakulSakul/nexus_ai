@@ -1962,17 +1962,6 @@ def ask_stream(
             f"contexts_after_balance={len(contexts)}",
             file=_sys.stderr, flush=True,
         )
-    # [FIX3_DIAG] 최종 합성 컨텍스트 문서 (print-only, 로직 무변경) — 3.1.1 이 합성 LLM
-    #   입력까지 도달하는지 확정용. 진단 후 제거 가능.
-    import sys as _sys_fix3
-    _fix3_ctx = " | ".join(dict.fromkeys(
-        str(next((c.get(k) for k in ("doc_title", "document_title", "title") if c.get(k)), "?"))
-        for c in contexts
-    ))
-    print(
-        "[FIX3_DIAG:synth_ctx] " + str(len(contexts)) + " chunks -> docs=[" + _fix3_ctx + "]",
-        file=_sys_fix3.stderr, flush=True,
-    )
     # PR-Fix-DocKind-Preserve: ask_stream 도 동일 force-kind preserve.
     _kind_preserved: dict[str, int] = {k: 0 for k in _FORCE_KIND_MAX}
     for c in contexts_raw:
