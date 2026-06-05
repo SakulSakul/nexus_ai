@@ -76,6 +76,26 @@ def test_dom_doc_keeps_penalty_when_only_penalty_cited():
     assert _select_dom_doc(chunks, f"위반 시 {pen} 적용. {pen}.") == pen
 
 
+def test_dom_doc_sop_not_hijack_when_subject_cited():
+    """#336-3: universal-SOP(사건사고 보고지침)도 주제 규정이 인용되면 평결 헤드라인을
+    가로채면 안 된다(penalty 와 동일 클래스 — 강제 주입 보일러플레이트)."""
+    from core.synthesis.verdict_extractor import _select_dom_doc
+    noise = "(공정거래) 매장 위치이동 지침"
+    subj = "(공정거래) 협력회사 판촉사원 파견 지침"
+    sop = "(공통) 중대 사건사고 보고지침"
+    chunks = [{"doc_title": noise}, {"doc_title": subj}, {"doc_title": sop, "is_universal_sop": True}]
+    assert _select_dom_doc(chunks, f"{subj} 위배. {sop} 보고. {sop}.") == subj
+
+
+def test_dom_doc_keeps_sop_when_only_sop_cited():
+    """과교정 방지: 보고/신고가 주제라 SOP만 인용되면 SOP 유지(보고질의 회귀 차단)."""
+    from core.synthesis.verdict_extractor import _select_dom_doc
+    noise = "(공정거래) 매장 위치이동 지침"
+    sop = "(공통) 중대 사건사고 보고지침"
+    chunks = [{"doc_title": noise}, {"doc_title": sop, "is_universal_sop": True}]
+    assert _select_dom_doc(chunks, f"{sop} 절차. {sop}.") == sop
+
+
 if __name__ == "__main__":
     fails = []
     for _n, _f in sorted(globals().items()):

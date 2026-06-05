@@ -221,6 +221,17 @@ def _is_penalty(c: dict) -> bool:
     return (c.get("doc_kind") or "").strip().lower() == "penalty" or "징계기준" in _chunk_title(c)
 
 
+_SOP_TITLES = {"(공통) 일반 사건사고 보고지침", "(공통) 중대 사건사고 보고지침"}
+
+
+def _is_nonsubject(c: dict) -> bool:
+    """평결 헤드라인 dom 후보에서 제외할 '비-주제' 문서.
+    penalty(징계기준) 또는 universal-SOP(사건사고 보고지침) — 여기저기 강제 주입/인용
+    되지만 질의의 주제가 아닌 경우. 단 주제 문서가 인용 안 됐으면(=보고/징계 자체가
+    주제) _select_dom_doc 의 2-tier 폴백이 이들을 유지한다(과교정 방지)."""
+    return _is_penalty(c) or bool(c.get("is_universal_sop")) or _chunk_title(c) in _SOP_TITLES
+
+
 def _select_dom_doc(all_chunks: list, answer: str) -> str:
     """평결 주지침(dom_doc) 선택.
 
@@ -252,7 +263,7 @@ def _select_dom_doc(all_chunks: list, answer: str) -> str:
             _n = _cited(_t)
             if _n <= 0:
                 continue
-            if _is_penalty(_c):
+            if _is_nonsubject(_c):
                 if _n > _best_p[1]:
                     _best_p = (_t, _n)
             elif _n > _best_np[1]:
