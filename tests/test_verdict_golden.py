@@ -125,6 +125,27 @@ def test_displayed_confidence_empty_text_unchanged():
     assert _displayed_confidence("high", None) == "high"
 
 
+def test_verdict_trustworthy_graceful_is_false():
+    """#336-5: graceful('직접 매칭 미발견') 답변은 평결카드 stance 비신뢰 → False."""
+    from ui.render import _verdict_trustworthy
+    body = "[💡 안내] 본 query 에 직접 매칭되는 사규가 검색되지 않았습니다.\n인사교육팀 문의."
+    assert _verdict_trustworthy(body) is False
+
+
+def test_verdict_trustworthy_normal_is_true():
+    """무회귀: graceful 마커 없는 정상 답변은 신뢰 가능 → True (평결카드 렌더)."""
+    from ui.render import _verdict_trustworthy
+    body = "직장 내 괴롭힘은 지체없이 신고하여야 한다. 위반 시 임직원 징계기준 적용."
+    assert _verdict_trustworthy(body) is True
+
+
+def test_verdict_trustworthy_empty_is_true():
+    """None-safe: answer_text None/'' 은 True (호출자 별도 가드 책임 — TypeError 방지)."""
+    from ui.render import _verdict_trustworthy
+    assert _verdict_trustworthy(None) is True
+    assert _verdict_trustworthy("") is True
+
+
 if __name__ == "__main__":
     fails = []
     for _n, _f in sorted(globals().items()):

@@ -15,6 +15,19 @@ _DISPLAY_CONF_DOWNCAP_MARKERS: tuple[str, ...] = (
 )
 
 
+def _verdict_trustworthy(answer_text: str | None) -> bool:
+    """평결카드(stance pill) 렌더 가능 여부 — graceful('직접 매칭 미발견') 답변은 False.
+
+    answer_text 가 None/빈문자열이면 True (보수적 — 호출자가 별도 가드를 책임).
+    False 일 때 호출 측은 _verdict_dict 를 None 으로 유지해 단일 변수 흐름이
+    live/history/replay 3 경로 모두 중립 브랜드 헤더 fallback 으로 보내게 한다.
+    _DISPLAY_CONF_DOWNCAP_MARKERS 와 같은 신호를 공유(prompts.py rule-4 template).
+    """
+    if not answer_text:
+        return True
+    return not any(m in answer_text for m in _DISPLAY_CONF_DOWNCAP_MARKERS)
+
+
 def _displayed_confidence(confidence: str, answer_text: str | None) -> str:
     """디스플레이용 신뢰도. graceful(직접 매칭 미발견) 답변은 high → medium 강등.
 
