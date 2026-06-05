@@ -80,16 +80,9 @@ def gated_oos_decision(supabase: Any, question: str) -> bool:
       2) hybrid_search(top_k=2) 프로브 -> 청크 0 이면 OOS 유지(True)
       3) judge_relevance >= 임계치 -> in-scope(False), 미달 -> OOS 유지(True)
     예외는 fail-open(False) -> 정상 파이프라인(기존 안전관 정합)."""
-    import sys  # OOS_GATE_DIAG (print-only)
     try:  # lazy import — chatbot<->oos_router 순환 회피
         from .chatbot import infer_categories
-        _cats = infer_categories(question)
-        if _cats:
-            print(
-                f"[OOS_GATE_DIAG] q={(question or '')[:40]!r} "
-                f"decision=CANCEL_OOS via=infer_categories cats={_cats}",
-                file=sys.stderr, flush=True,
-            )
+        if infer_categories(question):
             return False
     except Exception:
         pass
@@ -101,21 +94,7 @@ def gated_oos_decision(supabase: Any, question: str) -> bool:
             categories=None, top_k=2,
         ) or []
         if not probe:
-            print(
-                f"[OOS_GATE_DIAG] q={(question or '')[:40]!r} "
-                f"decision=KEEP_OOS via=empty_probe",
-                file=sys.stderr, flush=True,
-            )
             return True
-        _rel = judge_relevance(question, probe)
-        _keep = _rel < _OOS_OVERRIDE_THRESHOLD
-        print(
-            f"[OOS_GATE_DIAG] q={(question or '')[:40]!r} "
-            f"decision={'KEEP_OOS' if _keep else 'CANCEL_OOS'} via=judge_relevance "
-            f"relevance={_rel:.3f} threshold={_OOS_OVERRIDE_THRESHOLD} "
-            f"probe_docs={[str(c.get('doc_title') or '') for c in probe]}",
-            file=sys.stderr, flush=True,
-        )
-        return _keep
+        return judge_relevance(question, probe) < _OOS_OVERRIDE_THRESHOLD
     except Exception:
         return False
