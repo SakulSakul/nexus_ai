@@ -316,10 +316,10 @@ def _hotline_button(hotlines: dict[str, str]) -> None:
         st.link_button("신세계면세점 핫라인 제보하기", url, use_container_width=True)
 
 
-from ui.render import (  # PR-refactor(5): 답변 부가 렌더 헬퍼 분리(동작 무변경)
+from ui.render import (  # PR-refactor(5) + #336-5 graceful verdict guard
     _render_confidence_chip, _render_answer_meta, _render_category_chip,
     _domain_from_contexts, _render_suggestion_cards, _render_clarify_choices,
-    _render_closing_remark, _render_contexts,
+    _render_closing_remark, _render_contexts, _verdict_trustworthy,
 )
 
 
@@ -1165,7 +1165,10 @@ def _run_ask(
                 try:
                     from core.synthesis.verdict_extractor import extract_verdict
                     _v = extract_verdict(effective_q, ans.text, list(getattr(ans, "contexts", []) or []))
-                    if _v is not None and getattr(_v, "stance", ""):
+                    # #336-5: graceful 답변(prompts.py rule-4)은 평결카드 stance 렌더 금지 —
+                    # _verdict_dict None 유지 → history 저장·replay 모두 자동 중립 헤더 fallback.
+                    if (_v is not None and getattr(_v, "stance", "")
+                            and _verdict_trustworthy(ans.text)):
                         _verdict_dict = _v.to_dict()
                         _hdr_ph.markdown(_build_verdict_card_html(_verdict_dict), unsafe_allow_html=True)
                 except Exception:
