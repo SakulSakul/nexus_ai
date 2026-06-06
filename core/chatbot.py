@@ -25,7 +25,7 @@ from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
 from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
-from .answer_guard import SAFE_NO_CONTEXT
+from .answer_guard import SAFE_NO_CONTEXT, SAFE_EMPTY_COMPLETION, EmptyCompletionError
 from .config import get_secret as _ncg_get_secret
 ENABLE_NO_CONTEXT_GATE = (_ncg_get_secret("ENABLE_NO_CONTEXT_GATE", "false") or "false").lower() == "true"
 from .ambiguity import detect_bare_ambiguity, ENABLE_AMBIGUITY_ASKBACK
@@ -775,6 +775,9 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
         text_parts = [res.text or ""]
 
     text = "".join(text_parts).strip() or (res.text or "").strip()
+    if not text:
+        # PR-B 게이트 ②: 빈 완료를 예외로 승격 → _gen fallback / ask 백스톱.
+        raise EmptyCompletionError(f"empty completion: model={_model_to_use}")
     return text, "", _model_to_use
 
 
@@ -841,9 +844,11 @@ def _gen_claude(system: str, user: str, *, include_thinking: bool) -> tuple[str,
         if block.type == "text":
             text_parts.append(getattr(block, "text", "") or "")
 
-    return ("".join(text_parts).strip(),
-            "",
-            _model_to_use)
+    _claude_text = "".join(text_parts).strip()
+    if not _claude_text:
+        # PR-B 게이트 ②: 빈 완료를 예외로 승격.
+        raise EmptyCompletionError(f"empty completion: model={_model_to_use}")
+    return (_claude_text, "", _model_to_use)
 
 
 _PROVIDER_FUNCS = {"gemini": _gen_gemini, "claude": _gen_claude}
@@ -885,9 +890,10 @@ def _gen(system: str, user: str, *, include_thinking: bool) -> tuple[str, str, s
             return text, thinking, prov, model_id, used_fallback
         except Exception as e:
             last_err = e
-            if not _is_transient(e):
+            # PR-B 게이트 ②: 빈 완료도 provider 전환(구제) 대상에 포함.
+            if not (_is_transient(e) or isinstance(e, EmptyCompletionError)):
                 raise
-            # transient → 다음 provider 시도. 다음 시도부터는 fallback 분기.
+            # transient/빈완료 → 다음 provider 시도. 다음 시도부터는 fallback 분기.
             used_fallback = True
             continue
     if last_err is not None:
@@ -1415,9 +1421,23 @@ def ask(
 
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
-    raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
-        system_prompt_eff, user, include_thinking=False,
-    )
+    try:
+        raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
+            system_prompt_eff, user, include_thinking=False,
+        )
+    except EmptyCompletionError:
+        # PR-B 게이트 ②: 모든 provider 빈 완료 소진 → 결정적 백스톱.
+        _emit("complete")
+        return Answer(
+            text=SAFE_EMPTY_COMPLETION,
+            is_critical=detection.triggered,
+            critical_kind=detection.kind,
+            contexts=contexts,
+            masked_question=masked,
+            elapsed=time.perf_counter() - t0,
+            query_log_id=None,
+            confidence="low",
+        )
     # [검색 과정] 섹션을 본문에서 분리. 본문 후처리(_ensure_citation,
     # enforce_structure) 는 answer 부분만 받게 해서 [검색 과정] 텍스트가
     # 답변에 raw 로 노출되거나 hotline 구조 안으로 섞이는 사고 차단.
@@ -1675,6 +1695,7 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
     # PR-Add-Gemini-Cache-Monitoring: chunk 마다 usage_metadata 추적 → 종료 시 logs.
     last_um = None
     for attempt in range(_GEMINI_BACKOFF_ATTEMPTS):
+        _yielded_any = False  # PR-B: 빈 완료(yield 0회) 감지용
         try:
             for chunk in _stall_guarded_stream(
                 cli, s.chat_model, user, cfg,
@@ -1699,10 +1720,12 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
                             continue
                         text = getattr(part, "text", None) or ""
                         if text:
+                            _yielded_any = True
                             yield text
                 else:
                     text = getattr(chunk, "text", None) or ""
                     if text:
+                        _yielded_any = True
                         yield text
             # stream 정상 종료 — cache hit 로그 (best-effort).
             try:
@@ -1721,6 +1744,11 @@ def _gen_gemini_stream(system: str, user: str) -> Iterator[str]:
                     f"[chatbot:gemini_stream:cache] WARN log skipped: "
                     f"{type(_cache_log_err).__name__}",
                     flush=True,
+                )
+            if not _yielded_any:
+                # PR-B 게이트 ②: 스트림이 본문 0건으로 정상 종료 → 빈 완료.
+                raise EmptyCompletionError(
+                    f"empty stream completion: model={s.chat_model}"
                 )
             return
         except Exception as e:
