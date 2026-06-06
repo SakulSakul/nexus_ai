@@ -17,6 +17,12 @@ FIXTURE_PATH = (
     Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "regression_cases.json"
 )
 
+# Harness 안정화 (제품 파이프라인 무관 — 콘솔 신뢰성용):
+# transient(임베딩 rate-limit/RPC) 검색 실패가 가짜 FAIL 로 둔갑하던 것 방지.
+_RETRIEVAL_MAX_ATTEMPTS = 3      # hybrid_search transient 자동 재시도
+_RETRIEVAL_RETRY_SLEEP = 1.5     # 재시도 전 대기(초)
+_INTER_CASE_SLEEP = 0.25         # 케이스 간 대기(초) — rate 압박 완화 (0=비활성)
+
 
 @dataclass
 class CaseResult:
@@ -74,29 +80,48 @@ def _route_only(question: str, supabase: Any, *, need_category: bool, need_retri
 
     category = ""
     retrieved_docs: list[str] = []
+    route_error: Optional[str] = None
     if need_category or need_retrieval:
-        try:
-            from core.retriever import hybrid_search
-            from core.personality import category_visual
-            contexts = hybrid_search(
-                supabase, question=question, raw_question=question,
-                categories=None, top_k=None,
-            ) or []
-            for c in contexts:
+        from core.retriever import hybrid_search
+        from core.personality import category_visual
+        contexts = None
+        _last_exc: Optional[Exception] = None
+        for _attempt in range(_RETRIEVAL_MAX_ATTEMPTS):  # transient 자동 재시도
+            try:
+                contexts = hybrid_search(
+                    supabase, question=question, raw_question=question,
+                    categories=None, top_k=None,
+                ) or []
+                _last_exc = None
+                break
+            except Exception as _e:  # noqa: BLE001 — transient 재시도 대상
+                _last_exc = _e
+                if _attempt < _RETRIEVAL_MAX_ATTEMPTS - 1:
+                    time.sleep(_RETRIEVAL_RETRY_SLEEP)
+        if _last_exc is not None:
+            # 재시도 끝에도 실패 → 조용히 삼키지 않고 ERROR 로 표면화
+            route_error = (
+                f"retrieval failed x{_RETRIEVAL_MAX_ATTEMPTS}: "
+                f"{type(_last_exc).__name__}: {_last_exc}"
+            )
+        else:
+            for c in (contexts or []):
                 if isinstance(c, dict):
                     c["_user_incident_nodes"] = list(user_nodes)
             retrieved_docs = sorted({
-                str(c.get("doc_title") or "") for c in contexts
+                str(c.get("doc_title") or "") for c in (contexts or [])
                 if isinstance(c, dict) and c.get("doc_title")
             })
             if need_category:
-                _icon, _color, category = category_visual(contexts)
-        except Exception:
-            category = ""
+                try:
+                    _icon, _color, category = category_visual(contexts or [])
+                except Exception as _e:  # noqa: BLE001
+                    route_error = f"category_visual failed: {type(_e).__name__}: {_e}"
 
     return {
         "category": category, "classifier": classifier,
         "incident_nodes": user_nodes, "retrieved_docs": retrieved_docs,
+        "error": route_error,
     }
 
 
@@ -151,18 +176,32 @@ def run_tier1(
             need_cat = "category" in _exp
             need_ret = "expect_retrieved_doc" in _exp
             routed = _route_only(case["query"], supabase, need_category=need_cat, need_retrieval=need_ret)
-            failures = _check_case(case, routed)
-            results.append(CaseResult(
-                case_id=case.get("id", f"case_{i}"), query=case["query"],
-                passed=(not failures), failures=failures,
-                actual_category=routed["category"], actual_classifier=routed["classifier"],
-                actual_nodes=routed["incident_nodes"], elapsed=time.perf_counter() - t0,
-            ))
+            if routed.get("error"):
+                # transient 등 검색 실패 → 가짜 FAIL 로 둔갑시키지 않고 ERROR 로 분리 표시
+                results.append(CaseResult(
+                    case_id=case.get("id", f"case_{i}"), query=case["query"],
+                    passed=False, error=routed["error"],
+                    failures=[f"\u26a0\ufe0f ERROR(검색 실패·재시도 소진): {routed['error']}"],
+                    actual_category=routed.get("category", ""),
+                    actual_classifier=routed.get("classifier", ""),
+                    actual_nodes=routed.get("incident_nodes", []),
+                    elapsed=time.perf_counter() - t0,
+                ))
+            else:
+                failures = _check_case(case, routed)
+                results.append(CaseResult(
+                    case_id=case.get("id", f"case_{i}"), query=case["query"],
+                    passed=(not failures), failures=failures,
+                    actual_category=routed["category"], actual_classifier=routed["classifier"],
+                    actual_nodes=routed["incident_nodes"], elapsed=time.perf_counter() - t0,
+                ))
         except Exception as e:
             results.append(CaseResult(
                 case_id=case.get("id", f"case_{i}"), query=case.get("query", ""),
                 passed=False, error=f"{type(e).__name__}: {e}",
                 elapsed=time.perf_counter() - t0,
             ))
+        if _INTER_CASE_SLEEP > 0:
+            time.sleep(_INTER_CASE_SLEEP)
     passed = sum(1 for r in results if r.passed)
     return {"total": total, "passed": passed, "failed": total - passed, "results": results}
