@@ -25,6 +25,9 @@ from .retriever import _chunk_domain, hybrid_search
 from .disambiguation import detect_ambiguity, format_choice_suggestion
 from .query_classifier import classify_query, ENABLE_QUERY_CLASSIFIER_LOGGING
 from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
+from .answer_guard import SAFE_NO_CONTEXT
+from .config import get_secret as _ncg_get_secret
+ENABLE_NO_CONTEXT_GATE = (_ncg_get_secret("ENABLE_NO_CONTEXT_GATE", "false") or "false").lower() == "true"
 from .ambiguity import detect_bare_ambiguity, ENABLE_AMBIGUITY_ASKBACK
 from .oos_router import ENABLE_OOS_ROUTING
 from .grounded_suggestions import ENABLE_GROUNDED_SUGGESTIONS, grounded_suggestions
@@ -1396,6 +1399,20 @@ def ask(
         is_critical=detection.triggered, confidence=confidence,
     )
 
+    # PR-A 게이트 ①: 검색 0건 → LLM 미호출 결정적 거절 (R-2/V-1 차단). flag OFF 기본.
+    if ENABLE_NO_CONTEXT_GATE and not contexts:
+        _emit("complete")
+        return Answer(
+            text=SAFE_NO_CONTEXT,
+            is_critical=detection.triggered,
+            critical_kind=detection.kind,
+            contexts=[],
+            masked_question=masked,
+            elapsed=time.perf_counter() - t0,
+            query_log_id=None,
+            confidence="low",
+        )
+
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
     raw, _legacy_thinking, used_provider, used_model, used_fallback = _gen(
@@ -1998,6 +2015,20 @@ def ask_stream(
     system_prompt_eff = _maybe_prefix_system_prompt(
         SYSTEM_PROMPT, is_critical=False, confidence=confidence,
     )
+
+    # PR-A 게이트 ①: 검색 0건 → LLM 미호출 결정적 거절 (R-2/V-1 차단). flag OFF 기본.
+    if ENABLE_NO_CONTEXT_GATE and not contexts:
+        _emit("complete")
+        yield ("done", Answer(
+            text=SAFE_NO_CONTEXT,
+            is_critical=False,
+            critical_kind=None,
+            contexts=[],
+            masked_question=masked,
+            elapsed=time.perf_counter() - t0,
+            confidence="low",
+        ))
+        return
 
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
