@@ -1515,8 +1515,19 @@ def ask(
         final, _ = validate_and_repair_answer(
             final, chunks=contexts_raw, user_incident_nodes=_user_nodes,
         )
-    except Exception:
-        pass
+    except Exception as _val_e:
+        # PR-C: silent → observed. fail-open 유지(raise 안 함). 4단 구조
+        # 소실(format invariant 위반)을 stderr + Admin UI 로 가시화.
+        import sys as _sys
+        print(
+            f"[synthesis:validator:DEGRADED] {type(_val_e).__name__}: {_val_e}",
+            file=_sys.stderr, flush=True,
+        )
+        try:
+            from .retriever import _signal_critical_error
+            _signal_critical_error("validate_and_repair_answer", _val_e)
+        except Exception:
+            pass
 
     # PR-Quality-4: 사용자 질문 원문 quote 줄을 mechanical prepend.
     # LLM 외부에서 강제하여 paraphrase·변형 사고 원천 차단.
@@ -2148,8 +2159,19 @@ def ask_stream(
         answer_text, _ = validate_and_repair_answer(
             answer_text, chunks=contexts_raw, user_incident_nodes=_user_nodes,
         )
-    except Exception:
-        pass
+    except Exception as _val_e:
+        # PR-C: silent → observed. fail-open 유지(raise 안 함). 4단 구조
+        # 소실(format invariant 위반)을 stderr + Admin UI 로 가시화.
+        import sys as _sys
+        print(
+            f"[synthesis:validator:DEGRADED] {type(_val_e).__name__}: {_val_e}",
+            file=_sys.stderr, flush=True,
+        )
+        try:
+            from .retriever import _signal_critical_error
+            _signal_critical_error("validate_and_repair_answer", _val_e)
+        except Exception:
+            pass
     # PR-Quality-4: streaming 중 quote_prefix 를 이미 yield 했으므로 최종
     # Answer.text 에도 동일하게 prepend — 화면 placeholder 갱신 시 누락 방지.
     # hotfix: raw question 사용 (위 quote_prefix 와 동일 기준).
