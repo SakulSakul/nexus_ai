@@ -146,6 +146,18 @@ def test_verdict_trustworthy_empty_is_true():
     assert _verdict_trustworthy("") is True
 
 
+def test_displayed_confidence_graceful_new_wording():
+    from ui.render import _displayed_confidence
+    body = "[💡 안내] 질문하신 내용에 직접 해당하는 사규를 찾지 못했습니다. 정보보안담당 문의."
+    assert _displayed_confidence("high", body) == "medium"
+
+
+def test_verdict_trustworthy_new_wording_is_false():
+    from ui.render import _verdict_trustworthy
+    body = "[💡 안내] 질문하신 내용에 직접 해당하는 사규를 찾지 못했습니다. 정보보안담당 문의."
+    assert _verdict_trustworthy(body) is False
+
+
 if __name__ == "__main__":
     fails = []
     for _n, _f in sorted(globals().items()):

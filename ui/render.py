@@ -11,7 +11,8 @@ import streamlit as st
 #   배지는 '높음(high)' 으로 표시하지 않는다. 내부 confidence(_maybe_prefix_system_prompt,
 #   classify_button HR-branch 입력)는 **절대 건드리지 않는다** — 표시값만 보정.
 _DISPLAY_CONF_DOWNCAP_MARKERS: tuple[str, ...] = (
-    "본 query 에 직접 매칭되는 사규가 검색되지 않았습니다",
+    "본 query 에 직접 매칭되는 사규가 검색되지 않았습니다",  # 옛 (history replay)
+    "질문하신 내용에 직접 해당하는 사규를 찾지 못했습니다",  # 신규
 )
 
 
