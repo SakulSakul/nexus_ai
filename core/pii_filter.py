@@ -119,6 +119,32 @@ _RE_DEPT = re.compile(
     r"[가-힣A-Za-z0-9]{2,15}(팀|실|본부|사업부|센터|그룹|국)"
 )
 
+# ── 부서 오탐 allowlist (V1) ──────────────────────────────────────
+# _RE_DEPT 가 '○○실'·'○○국' 같은 1글자 접미사로 일반명사를 부서명으로
+# 오인 → [익명] 과매칭하는 결함(예: "회의실"→"[익명]") 보정.
+# 패턴 정밀화로는 일반명사(회의실)와 진짜 부서(비서실)를 못 가르므로
+# (둘 다 "○○실"), 명시적 일반명사 allowlist 로만 안전하게 예외 처리.
+# ⚠️ 안전 규칙: allowlist 에는 일반명사만. 진짜 부서·조직명은 절대 금지
+# (넣으면 해당 부서 PII 가 누출됨). 미등록 일반명사는 계속 과마스킹되나
+# 이는 '검색 품질 손해'일 뿐 'PII 누출'이 아니므로 안전 방향의 불완전.
+_DEPT_ALLOWLIST = frozenset({
+    # 시설·공간 (○○실)
+    "회의실", "교육실", "자료실", "상황실", "대기실", "휴게실",
+    "화장실", "사무실", "탕비실", "흡연실", "당직실", "분실",
+    "전산실", "창고실", "안내실", "상담실", "면접실", "강의실",
+    # 시설·기관 (○○국)
+    "방송국", "우체국", "출입국",
+})
+
+def _dept_sub(m):
+    """_RE_DEPT 매치 콜백: 매치 전체가 allowlist 일반명사와 '완전 일치'
+    할 때만 원문 보존(마스킹 스킵). 그 외 부서 후보는 ANON 마스킹.
+    부분 포함이 아닌 완전 일치만 허용 → '회의실장' 등은 보존되지 않음."""
+    token = m.group(0)
+    if token in _DEPT_ALLOWLIST:
+        return token
+    return ANON
+
 # ── 영문 이름 — 매우 보수적: 'Mr./Ms./Dr.' 등 호칭 동반 시만 ──
 # 자유 매칭(예: New York 까지 매치) 은 false-positive 폭증이라 컨텍스트 필수.
 _RE_EN_NAME = re.compile(
@@ -144,7 +170,7 @@ def mask_pii(text: str, extra_terms: Iterable[str] = ()) -> str:
     # PR-Q5: 그룹 1 = honorific (성씨 후보군은 non-capturing). 직책 보존 +
     # 성씨/이름 토큰만 [익명] 으로 치환. 공백 보존을 위해 sub callback 사용.
     out = _RE_NAME_HONOR.sub(lambda m: f"{ANON} {m.group(1)}", out)
-    out = _RE_DEPT.sub(ANON, out)
+    out = _RE_DEPT.sub(_dept_sub, out)
     out = _RE_EN_NAME.sub(ANON, out)
     # 직급(밴드) — 한국어/영어/약어 3종 모두 마스킹
     out = _RE_BAND_KO.sub(ANON, out)
