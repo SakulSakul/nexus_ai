@@ -1028,9 +1028,16 @@ def hybrid_search(
             _emit_sub("synonym_substitution", {"substitutions": _syn_subs})
 
         _t_embed0 = _t_subprog.perf_counter()
-        retrieval_embedding = embed_one(
-            retrieval_query_text, task_type="RETRIEVAL_QUERY",
-        )
+        try:
+            retrieval_embedding = embed_one(
+                retrieval_query_text, task_type="RETRIEVAL_QUERY",
+            )
+        except Exception as _emb_e:
+            # PR-D: 주 검색 경로 embed_one 계측. force-include 경로와 동일하게
+            # 관측(_signal_critical_error) 후 loud-fail raise — 임베딩 인프라
+            # 장애를 빈 결과(success)로 위장하지 않는다.
+            _signal_critical_error("hybrid_search:embed_one", _emb_e)
+            raise
         _emit_sub("search_embed_done", {
             "elapsed_ms": int((_t_subprog.perf_counter() - _t_embed0) * 1000),
         })
@@ -1064,7 +1071,13 @@ def hybrid_search(
             "pool_size": max(30, rpc_match_count * 6),
         }
         _t_rpc0 = _t_subprog.perf_counter()
-        res = supabase.rpc(_rpc_name, payload).execute()
+        try:
+            res = supabase.rpc(_rpc_name, payload).execute()
+        except Exception as _rpc_e:
+            # PR-D: 주 검색 RPC 계측. DB/RPC 장애를 빈 결과로 위장하지 않고
+            # 관측 후 loud-fail raise (force-include 경로 L1133 등과 동일 관례).
+            _signal_critical_error(f"hybrid_search:{_rpc_name}", _rpc_e)
+            raise
         raw_chunks = res.data or []
         _emit_sub("search_rpc_done", {
             "elapsed_ms": int((_t_subprog.perf_counter() - _t_rpc0) * 1000),
