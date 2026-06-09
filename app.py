@@ -326,7 +326,9 @@ from ui.render import (  # PR-refactor(5) + #336-5 graceful verdict guard
 from ui.cards import (  # PR-refactor(2): 카드 빌더 분리(동작 무변경)
     _slim_structured, _build_structured_card_html, _build_verdict_card_html,
     _answer_card_header_html, _ENABLE_VERDICT_SHADOW, _ENABLE_VERDICT_CARD,
+    _build_oos_card_html,
 )
+from core.oos_router import oos_routing_rows
 
 from ui.home import _render_empty_state  # PR-refactor(3): 빈 홈 분리(동작 무변경)
 
