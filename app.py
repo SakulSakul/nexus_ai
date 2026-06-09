@@ -1293,6 +1293,7 @@ def _run_ask(
         {
             "contexts": ans.contexts,
             "critical": ans.is_critical,
+            "oos_rows": (oos_routing_rows(sb) if getattr(ans, "is_oos", False) else None),
             "kind": ans.critical_kind,
             "thinking": ans.thinking,
             "elapsed": ans.elapsed,
