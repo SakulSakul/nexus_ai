@@ -119,7 +119,14 @@ def gated_oos_decision(supabase: Any, question: str) -> bool:
     예외는 fail-open(False) -> 정상 파이프라인(기존 안전관 정합)."""
     try:  # lazy import — chatbot<->oos_router 순환 회피
         from .chatbot import infer_categories
-        if infer_categories(question):
+        # PR-Fix(인사-제외): '인사' 단독 매칭은 in-scope override 에서 제외.
+        #   인사 행정(휴가/근태/인사평가/퇴사)은 분류기가 OOS 로 보냈는데 여기서
+        #   override 되면 정상 파이프라인→무관 문서 오답(휴가→인감). 인사를 빼면
+        #   probe/judge 로 진행 → HR 문서 없으면 OOS 카드. 컴플라이언스 인사
+        #   (괴롭힘/징계)는 ① 분류기가 애초에 OOS 아님 + ② 문서 존재시 probe 가
+        #   in-scope 판정 → 이중 보호로 안전.
+        _cats = infer_categories(question)
+        if _cats and any(c != "인사" for c in _cats):
             return False
     except Exception:
         pass
