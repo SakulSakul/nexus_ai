@@ -28,6 +28,7 @@ from .faq_cache import faq_cache_get, ENABLE_FAST_PATH
 from .answer_guard import SAFE_NO_CONTEXT, SAFE_EMPTY_COMPLETION, EmptyCompletionError
 from .config import get_secret as _ncg_get_secret
 ENABLE_NO_CONTEXT_GATE = (_ncg_get_secret("ENABLE_NO_CONTEXT_GATE", "false") or "false").lower() == "true"
+ENABLE_OOS_RELEVANCE_GATE = (_ncg_get_secret("ENABLE_OOS_RELEVANCE_GATE", "false") or "false").lower() == "true"
 from .ambiguity import detect_bare_ambiguity, ENABLE_AMBIGUITY_ASKBACK
 from .oos_router import ENABLE_OOS_ROUTING
 from .grounded_suggestions import ENABLE_GROUNDED_SUGGESTIONS, grounded_suggestions
