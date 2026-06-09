@@ -1725,7 +1725,12 @@ def main():
                     st.markdown(_build_verdict_card_html(_vd), unsafe_allow_html=True)
                 else:
                     st.markdown(_answer_card_header_html(), unsafe_allow_html=True)
-            if _vc_html:
+            if meta.get("oos_rows"):
+                st.markdown(
+                    _build_oos_card_html(meta["oos_rows"]),
+                    unsafe_allow_html=True,
+                )
+            elif _vc_html:
                 st.markdown(_vc_html, unsafe_allow_html=True)
             else:
                 st.markdown(content)
