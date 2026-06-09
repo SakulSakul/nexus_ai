@@ -1423,6 +1423,34 @@ def ask(
             confidence="low",
         )
 
+    # PR-B 게이트 ②: 검색은 됐으나 관련성 미달 → OOS 카드로 deflect.
+    #   분류기 누락('휴가'=standard 오분류 등)의 최종 안전망. confidence!=high 일
+    #   때만 judge_relevance 1콜(좋은 답엔 지연 0). 임계 0.85=OOS 게이트 동일 보정.
+    #   flag OFF 기본 · judge 실패 시 fail-open(1.0)→정상 진행.
+    if (ENABLE_OOS_RELEVANCE_GATE and contexts and not detection.triggered
+            and confidence != "high"):
+        from .nexus_reranker import judge_relevance
+        from .oos_router import _OOS_OVERRIDE_THRESHOLD, oos_routing_message
+        if judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD:
+            _rg_elapsed = time.perf_counter() - t0
+            _rg_qid = _log_oos_skip(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_rg_elapsed * 1000),
+                provider="oos_relevance_gate",
+            )
+            _emit("complete")
+            return Answer(
+                text=oos_routing_message(supabase),
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=_rg_elapsed,
+                query_log_id=_rg_qid,
+                confidence="high",
+                is_oos=True,
+            )
+
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
     try:
