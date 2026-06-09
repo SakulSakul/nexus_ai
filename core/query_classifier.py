@@ -183,7 +183,6 @@ SIM_DATASET: dict[str, list[str]] = {
     "simple_faq": [
         "자진 신고",
         "외부 강의 강의료",
-        "휴가 신청 방법",
         "신고 방법 안내",
     ],
     "standard": [
