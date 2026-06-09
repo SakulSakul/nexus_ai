@@ -66,6 +66,43 @@ def oos_routing_message(supabase: Any | None = None) -> str:
     return _DEFAULT_OOS_MESSAGE
 
 
+# ── 구조화 OOS 라우팅 데이터 (카드 렌더용) ──────────────────────────
+_OOS_ROUTING_ROWS: tuple[dict[str, str], ...] = (
+    {"icon": "it",  "label": "IT 지원",  "examples": "VPN / 네트워크 / PC / 시스템 오류", "team": "AX시스템팀"},
+    {"icon": "hr",  "label": "인사 행정", "examples": "휴가 / 인사평가 / 연봉 / 인사기록", "team": ""},
+    {"icon": "ga",  "label": "일반 행정", "examples": "회의실 / 명함 / 비품",            "team": "총무팀"},
+    {"icon": "ext", "label": "타사 사규", "examples": "신세계디에프 사규 전용 챗봇입니다", "team": ""},
+)
+
+_OOS_CRITICAL_NOTE: str = (
+    "긴급 사안(폭행 · 성희롱 · 중대재해 · 정보유출 · 강력범죄)은 즉시 핫라인 또는 "
+    "SHRS 로 신고해 주세요. 잘못 안내됐다고 판단되면 '신고/보고/피해' 등 명시적 "
+    "용어를 포함해 다시 질문해 주세요."
+)
+
+
+def oos_routing_rows(supabase: Any | None = None) -> dict[str, Any]:
+    """카드 렌더용 구조화 OOS 데이터. 인사 행은 hr_routing_line(hotlines)으로
+    구동 — hr_chatbot_url 채우면 url 동반(버튼), 비면 hr_contact_text 문구.
+    예외는 빈 url + 기본 문구로 안전 폴백."""
+    from .config import load_hotlines, hr_routing_line
+    try:
+        hotlines = load_hotlines(supabase)
+    except Exception:
+        hotlines = {}
+    rows: list[dict[str, str]] = []
+    for r in _OOS_ROUTING_ROWS:
+        row = dict(r)
+        if r["icon"] == "hr":
+            row["target_text"] = hr_routing_line(hotlines)
+            row["url"] = (hotlines.get("hr_chatbot_url") or "").strip()
+        else:
+            row["target_text"] = r["team"]
+            row["url"] = ""
+        rows.append(row)
+    return {"rows": rows, "critical_note": _OOS_CRITICAL_NOTE}
+
+
 # ── PR-OOS-Gate: Retrieval-gated OOS (Reranker-as-judge) ─────────────────
 # RRF 점수는 rank-fusion+boost 오염이라 임계치 부적합 → judge_relevance 사용.
 # ⚙ 임계치 — 🚦 회귀 콘솔(라이브)로 보정 필요. 시작값 0.6:
