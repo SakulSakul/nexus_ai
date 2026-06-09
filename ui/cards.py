@@ -160,3 +160,49 @@ def _answer_card_header_html() -> str:
         "</style>"
         '<div class="nx-ach"><span class="dot"></span><b>DF COMPASS 답변</b><span class="rule"></span></div>'
     )
+
+
+def _build_oos_card_html(d) -> str:
+    """OOS 라우팅 안내 카드. core.oos_router.oos_routing_rows() dict 소비.
+    헤더리스(_answer_card_header_html 와 중복 방지). HR 행은 url 있으면
+    '인사 챗봇으로 이동' 버튼, 없으면 team(인사교육팀) pill. data 없으면 빈 문자열."""
+    if not d or not isinstance(d, dict):
+        return ""
+    import html as _h
+    rows = d.get("rows") or []
+    if not rows:
+        return ""
+    note = str(d.get("critical_note") or "")
+    css = (
+        "<style>"
+        ".nx-oos{font-family:var(--font);margin:2px 0 12px;}"
+        ".nx-oos-intro{font-size:13.5px;line-height:1.6;color:var(--c-caption,#7A766E);margin:0 0 10px;}"
+        ".nx-oos-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--c-border,#E7E3DC);}"
+        ".nx-oos-row:last-of-type{border-bottom:1px solid var(--c-border,#E7E3DC);}"
+        ".nx-oos-main{flex:1;min-width:0;}"
+        ".nx-oos-label{font-size:14px;font-weight:700;color:var(--c-primary,#1F1E1D);}"
+        ".nx-oos-ex{font-size:12px;color:var(--c-caption,#7A766E);margin-top:2px;}"
+        ".nx-oos-team{font-size:12.5px;font-weight:700;color:#5F5E5A;background:var(--c-surface,#F4F1EB);border-radius:6px;padding:4px 10px;white-space:nowrap;}"
+        ".nx-oos-btn{display:inline-block;font-size:12.5px;font-weight:700;color:#FFFFFF;background:var(--c-accent,#C8102E);border-radius:7px;padding:6px 12px;text-decoration:none;white-space:nowrap;}"
+        ".nx-oos-crit{display:flex;gap:8px;margin-top:14px;padding:10px 12px;background:#FCEEF0;border:1px solid var(--c-accent,#C8102E);border-radius:8px;font-size:12px;line-height:1.55;color:#8A1020;}"
+        "</style>"
+    )
+    parts = [css, '<div class="nx-oos">',
+             '<p class="nx-oos-intro">요청하신 내용은 사규 챗봇의 범위를 벗어납니다. 아래 담당 창구로 안내드립니다.</p>']
+    for r in rows:
+        label = _h.escape(str(r.get("label") or ""))
+        ex = _h.escape(str(r.get("examples") or ""))
+        url = str(r.get("url") or "").strip()
+        team = _h.escape(str(r.get("team") or ""))
+        parts.append('<div class="nx-oos-row"><div class="nx-oos-main">'
+                     '<div class="nx-oos-label">' + label + '</div>'
+                     '<div class="nx-oos-ex">' + ex + '</div></div>')
+        if url:
+            parts.append('<a class="nx-oos-btn" href="' + _h.escape(url) + '" target="_blank" rel="noopener">인사 챗봇으로 이동 ↗</a>')
+        elif team:
+            parts.append('<span class="nx-oos-team">' + team + '</span>')
+        parts.append('</div>')
+    if note:
+        parts.append('<div class="nx-oos-crit"><span>⚠️</span><span>' + _h.escape(note) + '</span></div>')
+    parts.append('</div>')
+    return "".join(parts)
