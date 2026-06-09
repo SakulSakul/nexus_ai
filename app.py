@@ -1161,7 +1161,14 @@ def _run_ask(
             # 후처리(_ensure_citation/_normalize_citation_block) 적용된 final
             # 로 placeholder 단일 update — 커서 ▎ 제거 + [참조:] 정규화 반영.
             # critical / fallback 케이스는 placeholder 가 비어있어 한 번에 표시.
-            answer_placeholder.markdown(ans.text)
+            # PR-2: OOS 라우팅 답변은 평문 대신 구조화 카드로 렌더.
+            if getattr(ans, "is_oos", False):
+                answer_placeholder.markdown(
+                    _build_oos_card_html(oos_routing_rows(sb)),
+                    unsafe_allow_html=True,
+                )
+            else:
+                answer_placeholder.markdown(ans.text)
             # ── [Verdict Stage 1] Shadow: 로그만, UI 무영향 ──
             if _ENABLE_VERDICT_SHADOW:
                 try:
