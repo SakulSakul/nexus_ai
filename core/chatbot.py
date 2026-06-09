@@ -2102,6 +2102,32 @@ def ask_stream(
         ))
         return
 
+    # PR-B 게이트 ②: (sync 동일) 관련성 미달 → OOS 카드 deflect. flag OFF 기본.
+    if (ENABLE_OOS_RELEVANCE_GATE and contexts and not detection.triggered
+            and confidence != "high"):
+        from .nexus_reranker import judge_relevance
+        from .oos_router import _OOS_OVERRIDE_THRESHOLD, oos_routing_message
+        if judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD:
+            _rg_elapsed = time.perf_counter() - t0
+            _rg_qid = _log_oos_skip(
+                supabase, masked=masked, category=category, s=s,
+                elapsed_ms=int(_rg_elapsed * 1000),
+                provider="oos_relevance_gate",
+            )
+            _emit("complete")
+            yield ("done", Answer(
+                text=oos_routing_message(supabase),
+                is_critical=False,
+                critical_kind=None,
+                contexts=[],
+                masked_question=masked,
+                elapsed=_rg_elapsed,
+                query_log_id=_rg_qid,
+                confidence="high",
+                is_oos=True,
+            ))
+            return
+
     user = build_user_prompt(masked, contexts, prev_turn=prev_turn)
     _emit("generate")
 
