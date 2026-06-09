@@ -555,6 +555,8 @@ class Answer:
     # critical 답변에는 빈 list (prompts.py 가 생성 자체 차단). UI 가
     # ans.is_critical 분기로 추가 방어.
     suggestions: list[str] = field(default_factory=list)
+    # PR-1: OOS 라우팅 답변 표식 — render.py 가 전용 카드로 분기. 기본 False.
+    is_oos: bool = field(default=False)
     # PR-Ambiguity-Askback: 의도 명확화 역질문 선택지. 비어있지 않으면 UI 가
     # 일반 답변 chrome 대신 선택지 버튼을 렌더 (클릭 → sub-intent 재질의).
     # 각 항목 = {"label": 버튼 텍스트, "query": 재질의 문구}.
@@ -1294,6 +1296,7 @@ def ask(
                     elapsed=_oos_elapsed,
                     query_log_id=_qid,
                     confidence="high",
+                    is_oos=True,
                 )
             # PR-OOS-Gate: 관련 사규 발견 -> OOS 취소, 정상 파이프라인 진행(override)
             _log_oos_skip(
@@ -1967,6 +1970,7 @@ def ask_stream(
                     elapsed=_oos_elapsed,
                     query_log_id=_qid,
                     confidence="high",
+                    is_oos=True,
                 ))
                 return
             # PR-OOS-Gate: override -> 정상 스트리밍 진행
