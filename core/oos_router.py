@@ -69,7 +69,7 @@ def oos_routing_message(supabase: Any | None = None) -> str:
 # ── 구조화 OOS 라우팅 데이터 (카드 렌더용) ──────────────────────────
 _OOS_ROUTING_ROWS: tuple[dict[str, str], ...] = (
     {"icon": "it",  "label": "IT 지원",  "examples": "VPN / 네트워크 / PC / 시스템 오류", "team": "AX시스템팀"},
-    {"icon": "hr",  "label": "인사 행정", "examples": "휴가 / 인사평가 / 연봉 / 인사기록", "team": ""},
+    {"icon": "hr",  "label": "인사 행정", "examples": "휴가 / 인사평가 / 연봉 / 인사기록", "team": "인사교육팀"},
     {"icon": "ga",  "label": "일반 행정", "examples": "회의실 / 명함 / 비품",            "team": "총무팀"},
     {"icon": "ext", "label": "타사 사규", "examples": "신세계디에프 사규 전용 챗봇입니다", "team": ""},
 )
