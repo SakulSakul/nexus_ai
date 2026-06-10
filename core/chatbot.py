@@ -2084,6 +2084,7 @@ def ask_stream(
     _scores = [float(c.get("score") or 0.0) for c in contexts]
     best_score = max(_scores) if _scores else 0.0
     confidence = calculate_confidence(masked, contexts)
+    _t_lat_retr = time.perf_counter()  # [LATENCY] classify+retrieve+rerank 경계
     system_prompt_eff = _maybe_prefix_system_prompt(
         SYSTEM_PROMPT, is_critical=False, confidence=confidence,
     )
@@ -2145,6 +2146,7 @@ def ask_stream(
     if quote_prefix:
         yield ("chunk", quote_prefix)
 
+    _t_lat_synth0 = time.perf_counter()  # [LATENCY] 합성 시작
     raw_full = ""
     try:
         for kind, val in _stream_filter_process_marker(
@@ -2171,6 +2173,7 @@ def ask_stream(
         yield ("done", ans)
         return
 
+    _t_lat_synth1 = time.perf_counter()  # [LATENCY] 합성 끝
     # 후처리 — ask() 와 동일 순서
     answer_text, process_text_raw = _split_answer_and_process(raw_full)
     process_text = _format_process_section(process_text_raw)
@@ -2237,6 +2240,18 @@ def ask_stream(
     answer_text = _prepend_question_quote(answer_text, question)
 
     elapsed = time.perf_counter() - t0
+
+    try:  # [LATENCY] 단계 진단 (로그 전용, 거동 무변경)
+        import sys as _sys_lat
+        _lat_pre = (_t_lat_retr - t0) * 1000
+        _lat_synth = (_t_lat_synth1 - _t_lat_synth0) * 1000
+        _lat_post = (elapsed - (_t_lat_synth1 - t0)) * 1000
+        print(f"[LATENCY] q='{question[:24]}' "
+              f"pre_cls_retr_rerank={_lat_pre:.0f}ms synth={_lat_synth:.0f}ms "
+              f"post={_lat_post:.0f}ms total={elapsed*1000:.0f}ms",
+              file=_sys_lat.stderr, flush=True)
+    except Exception:
+        pass
 
     # query_logs INSERT — ask() 와 동일 페이로드
     query_log_id: int | None = None
