@@ -197,7 +197,8 @@ def _build_oos_card_html(d) -> str:
         parts.append('<div class="nx-oos-row"><div class="nx-oos-main">'
                      '<div class="nx-oos-label">' + label + '</div>'
                      '<div class="nx-oos-ex">' + ex + '</div></div>')
-        if url:
+        # NEW-A: url 스킴 검증 — http(s) 아니면 버튼 대신 team pill 폴백 (쓰레기 값 방지)
+        if url and url.lower().startswith(("http://", "https://")):
             parts.append('<a class="nx-oos-btn" href="' + _h.escape(url) + '" target="_blank" rel="noopener">인사 챗봇으로 이동 ↗</a>')
         elif team:
             parts.append('<span class="nx-oos-team">' + team + '</span>')
