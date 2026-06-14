@@ -35,7 +35,7 @@ _RERANK_TOP_N = 15          # reranker 가 평가할 raw_chunks 상위 N
 _CHUNK_PREVIEW_LEN = 400    # 청크당 LLM 에 전달할 text preview 길이 (chars)
 _MAX_OUTPUT_TOKENS = 2048   # ranked_ids 30개 + JSON overhead 충분
 _RERANK_TEMPERATURE = 0.0   # 결정적 ranking (재현성)
-_RERANK_TIMEOUT_S = 10.0    # PR-Reranker-Timeout: Gemini Flash-Lite spike (22.8초) 회피
+_RERANK_TIMEOUT_S = 6.0    # PR-Reranker-Timeout-v2: 성공 리랭크 ≤5.5s(관측) 보존 + 스파이크 dead-time 4s 절감 (timeout 시 RRF fallback)
 _RERANK_MAX_RETRIES = 3       # PR-Reranker-Backoff: 503/429 재시도 횟수
 _RERANK_BACKOFF_BASE_S = 1.0  # PR-Reranker-Backoff: exponential backoff base (1s, 2s, 4s)
 
