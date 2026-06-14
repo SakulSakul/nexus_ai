@@ -1730,6 +1730,21 @@ def hybrid_search(
                 file=sys.stderr, flush=True,
             )
 
+        # PR-Reranker-Drift-Observability: 리랭크 *직후*·force-include/cap/dedup
+        # *직전* 순서를 emit. pre_rerank 와 짝지어 리랭커 단독 효과(pre→post)를
+        # 후처리(post→final)와 분리해 admin 패널이 강등 원인을 정밀 귀속.
+        # callback-gated 신규 stage — 프로덕션 callback 동작 변화 0.
+        _emit_sub("search_post_rerank", {
+            "chunks": [
+                {
+                    "id": c.get("id"),
+                    "doc_title": c.get("doc_title"),
+                    "chunk_idx": c.get("chunk_idx"),
+                }
+                for c in raw_chunks
+            ],
+        })
+
         # 4-1) Force-include chunks 는 모든 cap bypass — single source of truth.
         # PR-Force-Include-All-Bypass: force_included_by_intent=True chunks 를
         # 전부 guaranteed 로 채택. best_chunk_per_doc(1/doc)·MAX_CHUNKS_PER_DOC

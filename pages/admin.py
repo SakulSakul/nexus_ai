@@ -2500,29 +2500,31 @@ def _tab_search_compare(sb):
                         or f"{c.get('document_id')}:{c.get('chunk_idx')}"
                     )
 
-                # before = 리랭크 *직전* RRF 순서(retriever 가 emit). after =
-                # hybrid_search 리턴(리랭크 후). 단일 호출 — 더블 리랭크 제거.
+                # 3-stage 캡처: pre_rerank(RRF) → post_rerank(리랭크 직후) →
+                # final(리턴값, +force-include/cap/dedup). before→after = 순수
+                # 리랭커 효과, after→final = 후처리 효과로 강등 원인을 분리 귀속.
                 capture: dict = {}
 
                 def _cap(stage, payload):
                     if stage == "search_pre_rerank":
-                        capture["before"] = payload.get("chunks") or []
+                        capture["pre"] = payload.get("chunks") or []
+                    elif stage == "search_post_rerank":
+                        capture["post"] = payload.get("chunks") or []
 
                 try:
-                    after = _hybrid_search(
+                    final = _hybrid_search(
                         sb, question=rr_q, categories=None, top_k=15,
                         progress_callback=_cap,
                     )
                 except Exception as e:
                     st.error(f"❌ hybrid_search 실패: {type(e).__name__}: {e}")
-                    after = []
+                    final = []
 
-                before = capture.get("before", [])
-                if not after:
-                    st.warning("hybrid_search 결과 비어있음.")
-                elif not before:
+                before = capture.get("pre", [])
+                after = capture.get("post", [])
+                if not before or not after:
                     st.warning(
-                        "ℹ️ search_pre_rerank emit 미수신 — RRF 순서 캡처 실패 "
+                        "ℹ️ pre/post_rerank emit 미수신 — 순서 캡처 실패 "
                         "(리랭크 단계 진입 전 종료 또는 retriever 버전 불일치)."
                     )
                 else:
@@ -2532,28 +2534,36 @@ def _tab_search_compare(sb):
                     after_keys = [_ckey(c) for c in after]
                     after_rank = {k: i + 1 for i, k in enumerate(after_keys)}
                     after_chunk = {_ckey(c): c for c in after}
+                    final_rank = {_ckey(c): i + 1 for i, c in enumerate(final)}
 
+                    st.caption(
+                        "before = RRF · after = 리랭크 직후(순수 리랭커) · "
+                        "final = 리턴값(+force-include/cap/dedup). "
+                        "Δ = before − after (리랭커 단독 효과)."
+                    )
                     # 재정렬 없음(fallback/timeout/RRF 유지) 감지
                     if after_keys == before_keys:
                         st.info(
                             "ℹ️ 리랭커가 순서를 바꾸지 않음 "
                             "(fallback·timeout 또는 RRF 순서 그대로 유지). "
-                            "drift 없음."
+                            "리랭커 drift 없음."
                         )
-                    # before/after 표
-                    rows = ["| after | doc_title | chunk_idx | rrf_score | before | Δ |",
-                            "|---|---|---|---|---|---|"]
+                    # before/after/final 표
+                    rows = ["| after | doc_title | chunk_idx | rrf_score | before | Δ | final |",
+                            "|---|---|---|---|---|---|---|"]
                     for a_rank, k in enumerate(after_keys, start=1):
                         ac = after_chunk.get(k, {})
                         bc = before_chunk.get(k, {})
                         b_rank = before_rank.get(k)
+                        f_rank = final_rank.get(k)
+                        f_str = str(f_rank) if f_rank is not None else ":red[—]"
                         title = ac.get("doc_title") or bc.get("doc_title") or "?"
                         cidx = ac.get("chunk_idx", bc.get("chunk_idx", "?"))
                         score = bc.get("rrf_score")
                         score_s = f"{score:.4f}" if isinstance(score, (int, float)) else "?"
                         if b_rank is None:
                             rows.append(
-                                f"| {a_rank} | {title} | {cidx} | {score_s} | — | — |"
+                                f"| {a_rank} | {title} | {cidx} | {score_s} | — | — | {f_str} |"
                             )
                             continue
                         delta = b_rank - a_rank
@@ -2564,11 +2574,11 @@ def _tab_search_compare(sb):
                         else:
                             d_str = f"{delta:+d}"
                         rows.append(
-                            f"| {a_rank} | {title} | {cidx} | {score_s} | {b_rank} | {d_str} |"
+                            f"| {a_rank} | {title} | {cidx} | {score_s} | {b_rank} | {d_str} | {f_str} |"
                         )
                     st.markdown("\n".join(rows))
 
-                    # RRF→리랭크 순위 변동 (Δ 큰 순). 도구는 숫자만 surface 하고
+                    # RRF→리랭크(순수) 순위 변동 (Δ 큰 순). 도구는 숫자만 surface 하고
                     # "나쁨" 판정은 하지 않는다 — 큰 강등이 곧 버그는 아님(총칙·
                     # 도입부 청크의 정당한 강등일 수 있음). 판단은 사람이.
                     # 주: ranked_ids 미노출로 "LLM 누락(append)" 확정 라벨은 불가.
@@ -2581,7 +2591,7 @@ def _tab_search_compare(sb):
                         key=lambda k: -abs(before_rank[k] - after_rank[k]),
                     )
                     if moved:
-                        st.markdown("**RRF→리랭크 순위 변동 (Δ 큰 순)**")
+                        st.markdown("**RRF→리랭크(순수) 순위 변동 (Δ 큰 순)**")
                         for k in moved:
                             c = after_chunk.get(k) or before_chunk.get(k, {})
                             delta = before_rank[k] - after_rank[k]
@@ -2598,7 +2608,22 @@ def _tab_search_compare(sb):
                                 f"after `{after_rank.get(k)}`)"
                             )
                     else:
-                        st.caption("순위 변동 없음 (모든 Δ=0).")
+                        st.caption("리랭커 순위 변동 없음 (모든 Δ=0).")
+
+                    # 후처리(post→final) 제외 — 리랭크 직후엔 있었으나 force-include/
+                    # cap/dedup 으로 final 에서 빠진 doc. 리랭커 귀속과 분리해 노출.
+                    dropped_post = [k for k in after_keys if final_rank.get(k) is None]
+                    if dropped_post:
+                        st.markdown(
+                            "**post→final 제외 (force-include/cap/dedup, 리랭커 무관)**"
+                        )
+                        for k in dropped_post:
+                            c = after_chunk.get(k, {})
+                            st.markdown(
+                                f"- {c.get('doc_title', '?')} "
+                                f"(chunk_idx=`{c.get('chunk_idx', '?')}`, "
+                                f"리랭크 후 `{after_rank.get(k)}` → final 제외)"
+                            )
 
     q = st.text_input("질문", key="search_compare_q",
                       placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
