@@ -109,3 +109,9 @@ jobs:
 
       - name: Verdict 골든 회귀 가드 (#336류 인용 회귀 차단)
         run: python tests/test_verdict_golden.py
+
+      - name: gen_empty 골든 회귀 가드 (빈완료 fallback B-1/B-2)
+        run: python tests/test_gen_empty_completion.py
+
+      - name: PII dept allowlist 골든 회귀 가드 (#367 V1)
+        run: python tests/test_pii_dept_allowlist.py
