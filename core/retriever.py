@@ -1691,6 +1691,22 @@ def hybrid_search(
             )
         )
 
+        # PR-Reranker-Drift-Observability: 리랭크 *직전* RRF 순서를 emit.
+        # admin before/after 패널이 hybrid_search 리턴(=리랭크 후)을 before 로
+        # 오인하던 버그 수정용. callback-gated 신규 stage — 프로덕션 callback
+        # 동작 변화 0. rerank/RRF/dedup/force-include 로직 일절 무변경.
+        _emit_sub("search_pre_rerank", {
+            "chunks": [
+                {
+                    "id": c.get("id"),
+                    "doc_title": c.get("doc_title"),
+                    "chunk_idx": c.get("chunk_idx"),
+                    "rrf_score": c.get("rrf_score"),
+                }
+                for c in raw_chunks
+            ],
+        })
+
         # === PR-P2A-Reranker: Gemini Flash-Lite 의미 기반 reranker ===
         # RRF + 어휘 매칭의 구조적 한계 (도입부/총칙이 구체 정보 청크보다
         # 우선) 를 LLM 의미 매칭으로 보완. top-N (기본 30) 만 LLM 통과.
@@ -1713,6 +1729,21 @@ def hybrid_search(
                 f"[reranker] FAILED (outer): {type(_rerank_e).__name__}: {_rerank_e}",
                 file=sys.stderr, flush=True,
             )
+
+        # PR-Reranker-Drift-Observability: 리랭크 *직후*·force-include/cap/dedup
+        # *직전* 순서를 emit. pre_rerank 와 짝지어 리랭커 단독 효과(pre→post)를
+        # 후처리(post→final)와 분리해 admin 패널이 강등 원인을 정밀 귀속.
+        # callback-gated 신규 stage — 프로덕션 callback 동작 변화 0.
+        _emit_sub("search_post_rerank", {
+            "chunks": [
+                {
+                    "id": c.get("id"),
+                    "doc_title": c.get("doc_title"),
+                    "chunk_idx": c.get("chunk_idx"),
+                }
+                for c in raw_chunks
+            ],
+        })
 
         # 4-1) Force-include chunks 는 모든 cap bypass — single source of truth.
         # PR-Force-Include-All-Bypass: force_included_by_intent=True chunks 를
