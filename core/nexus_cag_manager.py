@@ -142,7 +142,7 @@ def _delete_cache(cache_name: str) -> None:
 def _default_content_builder() -> tuple[str, str]:
     """SYSTEM_PROMPT + 전체 사규 corpus 빌드.
 
-    Active 사규 (`is_active=True`) 의 모든 chunks 를 chunk_idx 순으로 정렬
+    Active 사규 (`status='active'`) 의 모든 chunks 를 chunk_idx 순으로 정렬
     하여 doc title + article_no 헤더와 함께 단일 텍스트로 concat.
     Returns: (system_instruction, regulation_corpus). 빌드 실패 시 (SYSTEM_PROMPT, "").
     """
@@ -155,8 +155,8 @@ def _default_content_builder() -> tuple[str, str]:
         cli = create_client(s.supabase_url, s.supabase_key)
         docs_resp = (
             cli.table("nexus_documents")
-            .select("id, title, doc_kind, is_active")
-            .eq("is_active", True)
+            .select("id, title, doc_kind, status")
+            .eq("status", "active")
             .execute()
         )
         docs = docs_resp.data or []
