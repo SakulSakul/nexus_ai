@@ -2538,8 +2538,6 @@ def _tab_search_compare(sb):
                         # before/after 표
                         rows = ["| after | doc_title | chunk_idx | rrf_score | before | Δ |",
                                 "|---|---|---|---|---|---|"]
-                        max_up = (0, None)    # (Δ, doc_title) 최대 승격
-                        max_down = (0, None)  # (Δ, doc_title) 최대 강등
                         for a_rank, k in enumerate(after_keys, start=1):
                             c = before_chunk.get(k, {})
                             b_rank = before_rank.get(k)
@@ -2555,12 +2553,8 @@ def _tab_search_compare(sb):
                             delta = b_rank - a_rank
                             if delta >= 3:
                                 d_str = f":orange[🔺 +{delta}]"
-                                if delta > max_up[0]:
-                                    max_up = (delta, title)
                             elif delta <= -3:
                                 d_str = f":red[🔻 {delta}]"
-                                if delta < max_down[0]:
-                                    max_down = (delta, title)
                             else:
                                 d_str = f"{delta:+d}"
                             rows.append(
@@ -2568,42 +2562,37 @@ def _tab_search_compare(sb):
                             )
                         st.markdown("\n".join(rows))
 
-                        # Δ 요약 — 큰 강등(정답 후보 하락)/큰 승격(노이즈 상승)
-                        if max_down[1]:
-                            st.error(
-                                f"🔻 최대 강등: **{max_down[1]}** "
-                                f"({max_down[0]} 랭크 하락) — 정답 후보가 밀렸는지 확인"
-                            )
-                        if max_up[1]:
-                            st.warning(
-                                f"🔺 최대 승격: **{max_up[1]}** "
-                                f"(+{max_up[0]} 랭크 상승) — 노이즈가 올라왔는지 확인"
-                            )
-
-                        # 🚨 리랭커가 강등시킨 상위(정답 후보) doc.
-                        # 주: rerank_chunks 는 ranked_ids 를 노출하지 않으므로
-                        # "ranked_ids 누락(append)" 자체는 반환 순서만으로는 정확히
-                        # 분리 불가(바닥 RRF-연속 구간은 ranked chunk 와 구별 안 됨).
-                        # 대신 정확히 관측 가능한 강등 신호 — RRF top-5 였으나 리랭크
-                        # 후 ≥3 랭크 밀린 chunk(= 사실상 드롭) — 를 노출한다.
-                        demoted = [
-                            k for k in after_keys
-                            if before_rank.get(k, 99) <= 5
-                            and (before_rank[k] - after_rank[k]) <= -3
-                        ]
-                        if demoted:
-                            st.markdown(
-                                "**🚨 리랭커가 강등시킨 상위 doc** "
-                                "(RRF top-5 → ≥3 랭크 하락, 정답 후보 유실 의심):"
-                            )
-                            for k in demoted:
+                        # RRF→리랭크 순위 변동 (Δ 큰 순). 도구는 숫자만 surface 하고
+                        # "나쁨" 판정은 하지 않는다 — 큰 강등이 곧 버그는 아님(총칙·
+                        # 도입부 청크의 정당한 강등일 수 있음). 판단은 사람이.
+                        # 주: rerank_chunks 가 ranked_ids 를 노출하지 않아 "LLM 누락
+                        # (append)" 확정 라벨은 불가. 단, LLM 이 정답 id 를 누락하면
+                        # safety-net 이 바닥에 append → 최대 음수 Δ 로 여기 그대로 보인다.
+                        moved = sorted(
+                            (k for k in after_keys
+                             if before_rank.get(k) is not None
+                             and before_rank[k] != after_rank[k]),
+                            key=lambda k: -abs(before_rank[k] - after_rank[k]),
+                        )
+                        if moved:
+                            st.markdown("**RRF→리랭크 순위 변동 (Δ 큰 순)**")
+                            for k in moved:
                                 c = before_chunk.get(k, {})
+                                delta = before_rank[k] - after_rank[k]
+                                if delta >= 3:
+                                    d_str = f":orange[+{delta}]"
+                                elif delta <= -3:
+                                    d_str = f":red[{delta}]"
+                                else:
+                                    d_str = f"{delta:+d}"
                                 st.markdown(
-                                    f"- {c.get('doc_title', '?')} "
+                                    f"- Δ {d_str} · {c.get('doc_title', '?')} "
                                     f"(chunk_idx=`{c.get('chunk_idx', '?')}`, "
                                     f"before `{before_rank.get(k)}` → "
                                     f"after `{after_rank.get(k)}`)"
                                 )
+                        else:
+                            st.caption("순위 변동 없음 (모든 Δ=0).")
 
     q = st.text_input("질문", key="search_compare_q",
                       placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
