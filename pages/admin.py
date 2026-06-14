@@ -2470,6 +2470,141 @@ def _tab_search_compare(sb):
                         for i, r in enumerate(valid):
                             st.text(f"Call {i+1} docs: {r['unique_docs']}")
 
+    # ── 🔬 리랭커 before/after (grounding drift) ───────────
+    # RRF 가 정답 doc 을 상위에 올렸는데 Flash-Lite 리랭커가 노이즈를 위로
+    # 끌어올리는 현상을 쿼리 단위로 가시화. read-only · live 계산 (DB 저장 X).
+    # 프로덕션 retrieval 경로(retriever/reranker)는 수정하지 않고 공개 함수만 호출.
+    with st.expander("🔬 리랭커 before/after (grounding drift)"):
+        st.caption(
+            "RRF(vector+BM25) 정렬 직후 순서 vs Flash-Lite 리랭크 후 순서를 "
+            "before/after 로 비교합니다. Δ = before − after rank "
+            "(🔺 승격 = 위로, 🔻 강등 = 아래로). DB 저장 없이 live 계산."
+        )
+        rr_q = st.text_input(
+            "검증할 query",
+            value="고객이 매장에서 넘어졌어",
+            key="reranker_drift_q",
+        )
+        if st.button("🔬 리랭크 before/after 실행", key="reranker_drift_btn"):
+            if sb is None:
+                st.error("Supabase 미설정 — 검색 호출 불가.")
+            elif not rr_q.strip():
+                st.warning("query 를 입력하세요.")
+            else:
+                import copy as _copy
+                from core.retriever import hybrid_search as _hybrid_search
+                from core.nexus_reranker import rerank_chunks as _rerank_chunks
+
+                def _ckey(c: dict) -> str:
+                    # rerank 는 c['id'] 로 매칭. 동일 키 + 폴백으로 before/after 매핑.
+                    return (
+                        str(c.get("id") or c.get("chunk_id") or "")
+                        or f"{c.get('document_id')}:{c.get('chunk_idx')}"
+                    )
+
+                try:
+                    raw = _hybrid_search(
+                        sb, question=rr_q, categories=None, top_k=15,
+                    )
+                except Exception as e:
+                    st.error(f"❌ hybrid_search 실패: {type(e).__name__}: {e}")
+                    raw = []
+
+                if not raw:
+                    st.warning("RRF 결과 0건 — 비교할 chunk 없음.")
+                else:
+                    try:
+                        after = _rerank_chunks(rr_q, _copy.deepcopy(raw))
+                    except Exception as e:
+                        st.error(f"❌ rerank_chunks 실패: {type(e).__name__}: {e}")
+                        after = []
+
+                    if not after:
+                        st.warning("리랭크 결과 비어있음.")
+                    else:
+                        before_keys = [_ckey(c) for c in raw]
+                        before_rank = {k: i + 1 for i, k in enumerate(before_keys)}
+                        before_chunk = {_ckey(c): c for c in raw}
+                        after_keys = [_ckey(c) for c in after]
+                        after_rank = {k: i + 1 for i, k in enumerate(after_keys)}
+
+                        # 재정렬 없음(fallback/timeout/RRF 유지) 감지
+                        if after_keys == before_keys:
+                            st.info(
+                                "ℹ️ 리랭커가 순서를 바꾸지 않음 "
+                                "(fallback·timeout 또는 RRF 순서 그대로 유지). "
+                                "drift 없음."
+                            )
+                        # before/after 표
+                        rows = ["| after | doc_title | chunk_idx | rrf_score | before | Δ |",
+                                "|---|---|---|---|---|---|"]
+                        max_up = (0, None)    # (Δ, doc_title) 최대 승격
+                        max_down = (0, None)  # (Δ, doc_title) 최대 강등
+                        for a_rank, k in enumerate(after_keys, start=1):
+                            c = before_chunk.get(k, {})
+                            b_rank = before_rank.get(k)
+                            title = c.get("doc_title", "?")
+                            cidx = c.get("chunk_idx", "?")
+                            score = c.get("score")
+                            score_s = f"{score:.4f}" if isinstance(score, (int, float)) else "?"
+                            if b_rank is None:
+                                rows.append(
+                                    f"| {a_rank} | {title} | {cidx} | {score_s} | — | — |"
+                                )
+                                continue
+                            delta = b_rank - a_rank
+                            if delta >= 3:
+                                d_str = f":orange[🔺 +{delta}]"
+                                if delta > max_up[0]:
+                                    max_up = (delta, title)
+                            elif delta <= -3:
+                                d_str = f":red[🔻 {delta}]"
+                                if delta < max_down[0]:
+                                    max_down = (delta, title)
+                            else:
+                                d_str = f"{delta:+d}"
+                            rows.append(
+                                f"| {a_rank} | {title} | {cidx} | {score_s} | {b_rank} | {d_str} |"
+                            )
+                        st.markdown("\n".join(rows))
+
+                        # Δ 요약 — 큰 강등(정답 후보 하락)/큰 승격(노이즈 상승)
+                        if max_down[1]:
+                            st.error(
+                                f"🔻 최대 강등: **{max_down[1]}** "
+                                f"({max_down[0]} 랭크 하락) — 정답 후보가 밀렸는지 확인"
+                            )
+                        if max_up[1]:
+                            st.warning(
+                                f"🔺 최대 승격: **{max_up[1]}** "
+                                f"(+{max_up[0]} 랭크 상승) — 노이즈가 올라왔는지 확인"
+                            )
+
+                        # 🚨 리랭커가 강등시킨 상위(정답 후보) doc.
+                        # 주: rerank_chunks 는 ranked_ids 를 노출하지 않으므로
+                        # "ranked_ids 누락(append)" 자체는 반환 순서만으로는 정확히
+                        # 분리 불가(바닥 RRF-연속 구간은 ranked chunk 와 구별 안 됨).
+                        # 대신 정확히 관측 가능한 강등 신호 — RRF top-5 였으나 리랭크
+                        # 후 ≥3 랭크 밀린 chunk(= 사실상 드롭) — 를 노출한다.
+                        demoted = [
+                            k for k in after_keys
+                            if before_rank.get(k, 99) <= 5
+                            and (before_rank[k] - after_rank[k]) <= -3
+                        ]
+                        if demoted:
+                            st.markdown(
+                                "**🚨 리랭커가 강등시킨 상위 doc** "
+                                "(RRF top-5 → ≥3 랭크 하락, 정답 후보 유실 의심):"
+                            )
+                            for k in demoted:
+                                c = before_chunk.get(k, {})
+                                st.markdown(
+                                    f"- {c.get('doc_title', '?')} "
+                                    f"(chunk_idx=`{c.get('chunk_idx', '?')}`, "
+                                    f"before `{before_rank.get(k)}` → "
+                                    f"after `{after_rank.get(k)}`)"
+                                )
+
     q = st.text_input("질문", key="search_compare_q",
                       placeholder="예: 거래처가 명절 선물을 보내왔어요. 어떻게 하나요?")
     run = st.button("▶ 비교 실행", key="search_compare_run", type="primary")
