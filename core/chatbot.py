@@ -779,6 +779,24 @@ def _gen_gemini(system: str, user: str, *, include_thinking: bool) -> tuple[str,
 
     text = "".join(text_parts).strip() or (res.text or "").strip()
     if not text:
+        # finish_reason 진단 (PR: Gemini fallback 근본원인 계측 — read-only, control flow 무변경).
+        # 빈 완료 → Claude fallback 직전, candidate finish_reason / prompt-level block_reason /
+        # safety_ratings 를 stderr 로깅. prompt 차단 시 candidates 가 비어있을 수 있어 분리 read.
+        _diag_fr = _diag_sr = None
+        try:
+            _diag_cand = res.candidates[0]
+            _diag_fr = getattr(_diag_cand, "finish_reason", None)
+            _diag_sr = getattr(_diag_cand, "safety_ratings", None)
+        except Exception:
+            pass
+        _diag_pf = getattr(res, "prompt_feedback", None)
+        print(
+            f"[chatbot:gemini:empty-diag] model={_model_to_use} "
+            f"finish_reason={_diag_fr} "
+            f"block_reason={getattr(_diag_pf, 'block_reason', None)} "
+            f"safety_ratings={_diag_sr}",
+            file=sys.stderr, flush=True,
+        )
         # PR-B 게이트 ②: 빈 완료를 예외로 승격 → _gen fallback / ask 백스톱.
         raise EmptyCompletionError(f"empty completion: model={_model_to_use}")
     return text, "", _model_to_use
