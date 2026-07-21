@@ -1462,6 +1462,70 @@ def hybrid_search(
             )
             _signal_critical_error("L2.5_AUTO_KEYWORDS force-include", e)
 
+        # ── Layer R: Semantic Doc Router (UNION) ──────────
+        # PR-Doc-Router: 닫힌 목록 의미 선택 — 의도→문서 매핑의 구조적 해법.
+        # trigger dict/L3 whitelist/auto_keywords 는 전부 수작업 어휘 사전이라
+        # 새 표현("인터뷰 사례" 등)에 동시에 뚫린다. 라우터는 active 사규
+        # 카탈로그에서 LLM 이 관련 doc 0~3개를 의미로 선택 → force-include.
+        # ENABLE_DOC_ROUTER=false (기본) 시 미실행 — byte-identical, 회귀 0.
+        # 질문 단위 캐시 — OOS 게이트가 이미 호출했으면 LLM 재호출 없음.
+        try:
+            from .doc_router import ENABLE_DOC_ROUTER, route_docs
+            if ENABLE_DOC_ROUTER:
+                # 라우팅은 의미 판단이므로 원문(raw) 우선 — Phase-14.4 의
+                # node 분류 선례와 동일 원칙. OOS 게이트도 원문으로 호출해
+                # 캐시가 일치한다. (임베딩/BM25 는 기존대로 masked 유지.)
+                _route = route_docs(supabase, raw_question or question)
+                _router_doc_ids = _route.get("doc_ids") or []
+                if _router_doc_ids:
+                    existing_doc_ids = {
+                        c.get("document_id") for c in force_chunks_raw
+                    }
+                    new_router_ids = [
+                        d for d in _router_doc_ids if d not in existing_doc_ids
+                    ]
+                    if new_router_ids:
+                        # L2.0/L2.5 와 동일 패턴: doc meta enrich + chunks fetch.
+                        _doc_resp = (
+                            supabase.table("nexus_documents")
+                            .select("id, title, doc_kind, meta, owning_department")
+                            .in_("id", new_router_ids)
+                            .execute()
+                        )
+                        for _d in (_doc_resp.data or []):
+                            _doc_meta_enrich[_d["id"]] = _d
+                        chunks_resp = (
+                            supabase.table("nexus_chunks")
+                            .select(
+                                "id, document_id, chunk_idx, article_no, text, "
+                                "categories"
+                            )
+                            .in_("document_id", new_router_ids)
+                            .execute()
+                        )
+                        new_chunks = chunks_resp.data or []
+                        for _nc in new_chunks:
+                            _nc["force_source"] = "doc_router"
+                        force_chunks_raw.extend(new_chunks)
+                        if force_include_source and force_include_source != "none":
+                            force_include_source = f"{force_include_source}+doc_router"
+                        else:
+                            force_include_source = "doc_router"
+                    print(
+                        f"[retriever:force_include:LR_DOC_ROUTER] "
+                        f"routed_docs={len(_router_doc_ids)} "
+                        f"new_docs={len(new_router_ids)} "
+                        f"titles={[t[:30] for t in (_route.get('titles') or [])]}",
+                        file=sys.stderr, flush=True,
+                    )
+        except Exception as e:
+            print(
+                f"[retriever:force_include:LR_DOC_ROUTER] FAILED: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr, flush=True,
+            )
+            _signal_critical_error("LR_DOC_ROUTER force-include", e)
+
         # ── Union into raw_chunks (dedup by chunk id) ───
         # PR-Fix-Force-Include-Dup-Flag: chunks dict map — 중복 chunks 의
         # force_included_by_intent flag 보장. Vector + BM25 단계에서 이미
