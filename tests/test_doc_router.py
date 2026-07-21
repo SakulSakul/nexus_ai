@@ -70,6 +70,15 @@ def test_parse_out_scope_with_empty_selection():
     assert r["doc_ids"] == []
 
 
+def test_parse_rejects_bool_idx():
+    # bool 은 int 서브클래스 — {"idx": true} 가 docs[1] 로 새면 안 된다 (Finding 2).
+    r = _parse_router_response(
+        '{"scope": "in", "selected": [{"idx": true, "why": "bool 누수"}]}', DOCS
+    )
+    assert r is not None
+    assert r["doc_ids"] == []
+
+
 def test_parse_fail_open_cases():
     assert _parse_router_response("", DOCS) is None
     assert _parse_router_response("not json", DOCS) is None

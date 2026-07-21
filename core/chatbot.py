@@ -1449,15 +1449,23 @@ def ask(
             and confidence != "high"):
         from .nexus_reranker import judge_relevance
         from .oos_router import _OOS_OVERRIDE_THRESHOLD, oos_routing_message
-        # PR-Doc-Router: 라우터가 카탈로그에서 지목해 force-include 한 문서가
-        # contexts 에 있으면 deflect 금지. 게이트 ② 의 judge 는 "검색 실패"와
-        # "범위 밖"을 구분 못 한다 — 2026-07-21 운영 로그에서 paraphrase 5건이
-        # 본 게이트에서 차단됨 (matched_docs=0 생짜 vector top-12 를 judge 가
-        # <0.85 평가 → OOS 카드). 라우터 지목 문서는 범위-안 증거이므로 통과.
-        _router_vouched = any(
-            "doc_router" in str(c.get("force_include_source") or "")
-            for c in contexts
-        )
+        # PR-Doc-Router: 라우터가 카탈로그에서 지목한 문서가 있으면 deflect 금지.
+        # 게이트 ② 의 judge 는 "검색 실패"와 "범위 밖"을 구분 못 한다 —
+        # 2026-07-21 운영 로그에서 paraphrase 5건이 본 게이트에서 차단됨
+        # (matched_docs=0 생짜 vector top-12 를 judge 가 <0.85 평가 → OOS 카드).
+        # vouch 는 force_include_source 태그 전파(union 부기)가 아니라 라우터
+        # 판정을 직접 조회 — 라우터 선택 문서가 전부 타 레이어와 중복이면
+        # 태그가 안 붙어 "정답 포함 + judge<0.85" 케이스에서 여전히 deflect 되던
+        # 잔존 결함(리뷰 Finding 1) 제거. route_docs 는 질문 단위 캐시라
+        # retriever 가 이미 raw question 으로 호출했으면 LLM 재호출 없음(키 일치).
+        _router_vouched = False
+        try:
+            from .doc_router import ENABLE_DOC_ROUTER as _EDR, route_docs as _rd
+            if _EDR:
+                _rt = _rd(supabase, question)
+                _router_vouched = bool(_rt.get("ok") and _rt.get("doc_ids"))
+        except Exception:
+            _router_vouched = False
         if (not _router_vouched
                 and judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD):
             _rg_elapsed = time.perf_counter() - t0
@@ -2136,12 +2144,17 @@ def ask_stream(
             and confidence != "high"):
         from .nexus_reranker import judge_relevance
         from .oos_router import _OOS_OVERRIDE_THRESHOLD, oos_routing_message
-        # PR-Doc-Router: (sync 동일) 라우터 지목 문서가 contexts 에 있으면
-        # deflect 금지 — judge 는 검색 실패와 범위 밖을 구분 못 함.
-        _router_vouched = any(
-            "doc_router" in str(c.get("force_include_source") or "")
-            for c in contexts
-        )
+        # PR-Doc-Router: (sync 동일) vouch 는 라우터 판정 직접 조회 — 태그
+        # 전파 결합 결함(리뷰 Finding 1) 제거. route_docs 질문 단위 캐시로
+        # retriever 가 이미 호출했으면 LLM 재호출 없음. flag OFF 시 항상 False.
+        _router_vouched = False
+        try:
+            from .doc_router import ENABLE_DOC_ROUTER as _EDR, route_docs as _rd
+            if _EDR:
+                _rt = _rd(supabase, question)
+                _router_vouched = bool(_rt.get("ok") and _rt.get("doc_ids"))
+        except Exception:
+            _router_vouched = False
         if (not _router_vouched
                 and judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD):
             _rg_elapsed = time.perf_counter() - t0

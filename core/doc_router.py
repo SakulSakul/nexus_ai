@@ -174,7 +174,9 @@ def _parse_router_response(text: str, docs: list[dict]) -> dict | None:
         if not isinstance(item, dict):
             continue
         idx = item.get("idx")
-        if not isinstance(idx, int) or idx < 0 or idx >= len(docs):
+        # bool 은 int 서브클래스 — {"idx": true} 가 docs[1] 로 새는 것 차단.
+        if (not isinstance(idx, int) or isinstance(idx, bool)
+                or idx < 0 or idx >= len(docs)):
             continue  # 닫힌 목록 밖 — 무시
         d = docs[idx]
         if d["id"] in seen:
