@@ -75,3 +75,46 @@
   question: "주말에 영화 뭐 볼지 추천해줘"
   expected_sources: []
   category: negative
+
+# ── PR-Doc-Router: paraphrase robustness 세트 (2026-07-21 운영 실패 재현) ──
+# 동일 의도("외부 리서치 업체 유료 인터뷰 제안")의 표현 변형 6개.
+# 운영에서 6개 중 5개가 OOS 오차단, 통과한 1개도 대외출강 지침 미회수.
+# 기대: 6/6 모두 (CSR) 대외출강 관련 문서 retrieval hit.
+# ⚠️ ENABLE_DOC_ROUTER=true 에서 통과 목표 — flag OFF 상태의 baseline 실패는
+#    알려진 상태(구조적 fix 대상)이며 회귀가 아님.
+
+- id: q11
+  question: "중국 리서치 회사에서 링크드인으로 인터뷰 요청이 접수 됨. 사례는 시간당 50만원 정도"
+  expected_sources:
+    - "대외출강"
+  category: paraphrase
+
+- id: q12
+  question: "중국 리서치 회사에서 링크드인으로 인터뷰 요청이 옴. 사례는 시간당 50만원 정도 준다고 함"
+  expected_sources:
+    - "대외출강"
+  category: paraphrase
+
+- id: q13
+  question: "중국 리서치 회사에서 인터뷰 요청이 접수 됨. 사례는 시간당 50만원 정도 준다고 함."
+  expected_sources:
+    - "대외출강"
+  category: paraphrase
+
+- id: q14
+  question: "중국 리서치 회사에서 인터뷰에 응해주면 시간당 50만원 정도 준다고 함."
+  expected_sources:
+    - "대외출강"
+  category: paraphrase
+
+- id: q15
+  question: "중국 리서치 업체가 인터뷰에 응해주면 시간당 50만원 정도 준다고 함."
+  expected_sources:
+    - "대외출강"
+  category: paraphrase
+
+- id: q16
+  question: "중국 리서치 업체가 인터뷰에 응해주면 시간당 50만원 정도 사례 하겠다고 함."
+  expected_sources:
+    - "대외출강"
+  category: paraphrase

@@ -1449,7 +1449,17 @@ def ask(
             and confidence != "high"):
         from .nexus_reranker import judge_relevance
         from .oos_router import _OOS_OVERRIDE_THRESHOLD, oos_routing_message
-        if judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD:
+        # PR-Doc-Router: 라우터가 카탈로그에서 지목해 force-include 한 문서가
+        # contexts 에 있으면 deflect 금지. 게이트 ② 의 judge 는 "검색 실패"와
+        # "범위 밖"을 구분 못 한다 — 2026-07-21 운영 로그에서 paraphrase 5건이
+        # 본 게이트에서 차단됨 (matched_docs=0 생짜 vector top-12 를 judge 가
+        # <0.85 평가 → OOS 카드). 라우터 지목 문서는 범위-안 증거이므로 통과.
+        _router_vouched = any(
+            "doc_router" in str(c.get("force_include_source") or "")
+            for c in contexts
+        )
+        if (not _router_vouched
+                and judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD):
             _rg_elapsed = time.perf_counter() - t0
             _rg_qid = _log_oos_skip(
                 supabase, masked=masked, category=category, s=s,
@@ -2126,7 +2136,14 @@ def ask_stream(
             and confidence != "high"):
         from .nexus_reranker import judge_relevance
         from .oos_router import _OOS_OVERRIDE_THRESHOLD, oos_routing_message
-        if judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD:
+        # PR-Doc-Router: (sync 동일) 라우터 지목 문서가 contexts 에 있으면
+        # deflect 금지 — judge 는 검색 실패와 범위 밖을 구분 못 함.
+        _router_vouched = any(
+            "doc_router" in str(c.get("force_include_source") or "")
+            for c in contexts
+        )
+        if (not _router_vouched
+                and judge_relevance(question, contexts) < _OOS_OVERRIDE_THRESHOLD):
             _rg_elapsed = time.perf_counter() - t0
             _rg_qid = _log_oos_skip(
                 supabase, masked=masked, category=category, s=s,

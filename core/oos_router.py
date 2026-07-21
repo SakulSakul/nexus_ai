@@ -130,6 +130,23 @@ def gated_oos_decision(supabase: Any, question: str) -> bool:
             return False
     except Exception:
         pass
+    # PR-Doc-Router: 카탈로그 기반 의미 판정 — probe/judge(0.85) 이전 실행.
+    # 기존 구제 경로의 구조적 결함: probe 청크 관련도(judge)로 scope 를 판정
+    # → 검색 어휘 gap = OOS 오판 (검색 실패와 범위 밖은 다른 문제). 라우터는
+    # 사규 카탈로그를 보면서 질문 의도로 직접 판정하므로 이 결합이 끊긴다.
+    # paraphrase 5/6 오차단 사례("중국 리서치 인터뷰 사례") 의 구조적 fix.
+    # fail-open(ok=False) 또는 in+선택 0개(애매) 는 기존 probe/judge 로 폴백.
+    try:
+        from .doc_router import ENABLE_DOC_ROUTER, route_docs
+        if ENABLE_DOC_ROUTER:
+            _route = route_docs(supabase, question)
+            if _route.get("ok"):
+                if _route.get("doc_ids"):
+                    return False  # 관련 사규 존재 → OOS 취소 (in-scope)
+                if _route.get("scope") == "out":
+                    return True   # 카탈로그 무관 + 행정 카테고리 명확 → OOS 유지
+    except Exception:
+        pass
     try:
         from .retriever import hybrid_search
         from .nexus_reranker import judge_relevance
