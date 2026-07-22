@@ -1579,61 +1579,11 @@ def hybrid_search(
                 file=sys.stderr, flush=True,
             )
 
-        # 1.5) Force-include — '응급대응' 의도일 때 chunk_incident_nodes 에
-        # '응급대응' 태그된 청크를 vector/keyword pool 미포함이어도 강제 합류.
-        # AEO 출입통제 위기상황 대응표 같은 청크 보장. doc title/kind/categories
-        # 는 nexus_documents 별도 조회로 enrich.
-        # PR-Remove-chunk-incident-nodes-Select: chunk_incident_nodes 물리 컬럼이
-        # nexus_chunks 테이블에 부재하여 .contains() 필터가 항상 APIError(42703)로
-        # 실패(try/except silent) → 기능이 작동한 적 없음. 컬럼 추가 시 재활성화
-        # 위해 블록 구조는 보존하되 비활성화한다.
-        if False and "응급대응" in user_incident_nodes:
-            try:
-                raw_chunk_ids = {c.get("id") for c in raw_chunks if c.get("id")}
-                em_resp = (
-                    supabase.table("nexus_chunks")
-                    .select("id, document_id, chunk_idx, article_no, text, categories, chunk_incident_nodes")
-                    .contains("chunk_incident_nodes", ["응급대응"])
-                    .execute()
-                )
-                em_rows = em_resp.data or []
-                # 부족한 doc 메타 (title/kind) 보강 — RPC 결과 schema 와 정렬.
-                em_doc_ids = list({
-                    e.get("document_id") for e in em_rows
-                    if e.get("document_id") and e.get("id") not in raw_chunk_ids
-                })
-                em_doc_meta: dict = {}
-                if em_doc_ids:
-                    em_docs_resp = (
-                        supabase.table("nexus_documents")
-                        .select("id, title, doc_kind, meta")
-                        .in_("id", em_doc_ids)
-                        .execute()
-                    )
-                    em_doc_meta = {
-                        d["id"]: d for d in (em_docs_resp.data or [])
-                    }
-                for ec in em_rows:
-                    if ec.get("id") in raw_chunk_ids:
-                        continue
-                    d = em_doc_meta.get(ec.get("document_id"), {}) or {}
-                    _title = d.get("title") or ""
-                    raw_chunks.append({
-                        "id": ec.get("id"),
-                        "document_id": ec.get("document_id"),
-                        "doc_title": _title,
-                        "doc_kind": d.get("doc_kind"),
-                        "article_no": ec.get("article_no"),
-                        "text": ec.get("text") or "",
-                        "categories": ec.get("categories") or [],
-                        "chunk_incident_nodes": ec.get("chunk_incident_nodes") or [],
-                        "rrf_score": 0.0,
-                        "force_included": True,
-                        "is_universal_sop": _title in UNIVERSAL_INCIDENT_SOP_TITLES,
-                    })
-            except Exception:
-                # force-include 실패는 검색 흐름을 막지 않는다.
-                pass
+        # 1.5) (제거됨) chunk_incident_nodes 기반 응급대응 force-include —
+        # 물리 컬럼 부재(2026-07-22 information_schema 리플렉션 확정)로 작동한
+        # 적 없던 데드 블록. 재활성화 방지 위해 질의 참조까지 완전 삭제.
+        # 응급대응 보장은 위 L1 RPC(nexus_force_include_chunks_by_incident_nodes,
+        # doc_incident_nodes 기반)가 담당한다.
 
         # 2) doc meta 일괄 조회 (RPC 결과에 meta 미포함 — 컬럼 미반환).
         doc_meta_map: dict = {}
